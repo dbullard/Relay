@@ -4,7 +4,7 @@ Relay is a free, native dashboard and automation app for production teams. Bring
 
 This repository starts the community edition from the free-version source snapshot. Every feature previously gated by Relay Pro is unlocked. No purchase, license key, or Relay Account is required. We are looking for contributors and future maintainers who want to help carry the project forward.
 
-**Status:** development source for Relay 1.3, not a published, signed release. macOS is the primary supported development target. Relay Mobile is experimental and currently has known build failures.
+**Status:** development source for Relay 2.0, not a published, signed release. macOS is the primary supported development target. Relay Mobile is experimental and currently has known build failures.
 
 ## What Relay does
 
