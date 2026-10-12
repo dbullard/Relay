@@ -1,0 +1,15 @@
+[DAWTransport] daw=proToolsHUI protocol=HUI input="Automatic" output="Automatic" counterSource=automatic appendMTC=false
+[DAWTransport] recv source=-42684340 bytes=90 00 00
+[DAWTransport] recv source=-42684340 bytes=B0 0C 0E B0 2C 04 B0 0C 0E B0 2C 03 B0 0C 0E B0 2C 44 B0 0C 0E B0 2C 43 B0 0C 0E B0 2C 05 B0 0C 0F B0 2C 02 B0 0C 0D B0 2C 02
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 05 05 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 00 00 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 05 03 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 03 09 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 03 04 01 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 04 09 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 07 05 02 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 05 01 03 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 11 06 05 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 10 08 20 20 20 20 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 12 00 50 72 6F 20 54 6F 6F 6C 73 20 F7
+[DAWTransport] recv source=-42684340 bytes=F0 00 00 66 05 00 12 01 68 61 73 20 61 20 64 69 61 6C F7

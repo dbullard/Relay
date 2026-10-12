@@ -1,0 +1,8 @@
+// Copy to Local.xcconfig (gitignored) for your own services.
+// Escape URL slashes in xcconfig: https:/$()/example.com
+// SENTRY_DSN = https:/$()/YOUR_DSN
+// SUFeedURL = https:/$()/example.com/appcast.xml
+// YOUTUBE_OAUTH_CLIENT_ID_MACOS = YOUR_CLIENT_ID
+// YOUTUBE_OAUTH_CLIENT_SECRET_MACOS = YOUR_CLIENT_SECRET
+// YOUTUBE_OAUTH_REDIRECT_URI_MACOS = http:/$()/127.0.0.1:PORT
+// YOUTUBE_OAUTH_CALLBACK_SCHEME = YOUR_CALLBACK_SCHEME

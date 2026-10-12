@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.prodlink.relay.help</string>
+    <key>CFBundleName</key>
+    <string>Relay Help</string>
+    <key>CFBundleDisplayName</key>
+    <string>Relay Help</string>
+    <key>CFBundleHelpBookName</key>
+    <string>Relay Help</string>
+    <key>CFBundleHelpBookFolder</key>
+    <string>RelayHelp.help</string>
+    <key>HPDBookTitle</key>
+    <string>Relay Help</string>
+    <key>HPDBookAccessPath</key>
+    <string>index.html</string>
+</dict>
+</plist>

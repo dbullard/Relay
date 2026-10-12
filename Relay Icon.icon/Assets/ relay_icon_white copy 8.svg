@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="relayGrad" x1="220" y1="760" x2="820" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3A2BE6"/>
+      <stop offset="0.55" stop-color="#2D6BFF"/>
+      <stop offset="1" stop-color="#2FF3FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tunables -->
+  <!-- strokeW = 72 -->
+  <!-- nodeR   = 74 -->
+  <!-- padR    = strokeW/2 + 6  => 42 -->
+
+  <!-- 1) Pipes (strokes only) -->
+  <g fill="none"
+     stroke="url(#relayGrad)"
+     stroke-width="72"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+
+    <!-- Left vertical -->
+    <path d="M 260 280 L 260 700"/>
+
+    <!-- Top horizontal -->
+    <path d="M 260 280 L 740 280"/>
+
+    <!-- Bowl (matches your reference feel; smooth Bézier) -->
+    <path d="M 740 280
+             C 740 360 705 455 610 500
+             C 560 525 525 520 480 520"/>
+
+    <!-- Diagonal leg (END AT NODE CENTER — no extension) -->
+    <path d="M 480 520 L 700 700"/>
+  </g>
+
+  <!-- 2) Connector pads (under nodes) -->
+  <!-- These remove the “not connecting” gap when effects/outline are applied -->
+  <g fill="url(#relayGrad)">
+    <circle cx="740" cy="280" r="42"/>
+    <circle cx="480" cy="520" r="42"/>
+    <circle cx="700" cy="700" r="42"/>
+    <circle cx="260" cy="280" r="42"/>
+    <circle cx="260" cy="700" r="42"/>
+  </g>
+
+  <!-- 3) Nodes on top -->
+  <g fill="url(#relayGrad)">
+    <circle cx="260" cy="280" r="74"/>
+    <circle cx="740" cy="280" r="74"/>
+    <circle cx="260" cy="700" r="74"/>
+    <circle cx="480" cy="520" r="74"/>
+    <circle cx="700" cy="700" r="74"/>
+  </g>
+</svg>

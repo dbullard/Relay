@@ -1,0 +1,1440 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		6F0C66E92FC329CF001FD598 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6F0C66E82FC329CF001FD598 /* PrivacyInfo.xcprivacy */; };
+		6F0C66EC2FC32BA3001FD598 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 6F0C66EB2FC32BA3001FD598 /* Sentry */; };
+		6F1A2B3D2F7A000100618362 /* RelayHelp.help in Resources */ = {isa = PBXBuildFile; fileRef = 6F1A2B3C2F7A000100618362 /* RelayHelp.help */; };
+		6F240E952F93EC0800BDD00E /* TranscriptionHelper.xpc in CopyFiles */ = {isa = PBXBuildFile; fileRef = 7F1000032FA0000000618362 /* TranscriptionHelper.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		6F4CCF082F427A760096A73A /* Relay Icon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 6F4CCF072F427A760096A73A /* Relay Icon.icon */; };
+		6F4CCF092F427A760096A73A /* Relay Icon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 6F4CCF072F427A760096A73A /* Relay Icon.icon */; };
+		6F56292F2F4F80DD0002A81C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6FF9E4FF2ECA2EDB002F0A47 /* Assets.xcassets */; };
+		6F5629302F4F80DD0002A81C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6FF9E4FF2ECA2EDB002F0A47 /* Assets.xcassets */; };
+		6F5DDB1F2F8736A00094C8CB /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 6F5DDB1E2F8736A00094C8CB /* Sparkle */; };
+		6F8907E72F6AEA1B00618362 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6F8907E52F6AE57000618362 /* Localizable.strings */; };
+		6F8907E82F6AEA1B00618362 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6F8907E32F6AE56400618362 /* Localizable.strings */; };
+		6F8907E92F6AEA1B00618362 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6F8907E32F6AE56400618362 /* Localizable.strings */; };
+		6F8907EA2F6AEA1B00618362 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6F8907E52F6AE57000618362 /* Localizable.strings */; };
+		6FF411A42FC349CE009C2384 /* PrivacyInfo 2.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6FF411A32FC349CE009C2384 /* PrivacyInfo 2.xcprivacy */; };
+		70A11E352F9C410000A1B2C3 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 70A11E342F9C410000A1B2C3 /* Sentry */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		6F68B0A22FB24F8400D51E4A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6F473AE52E85D50200BCEA95 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6FA249EE2ECA9E9800542B2A;
+			remoteInfo = Relay;
+		};
+		7F10000B2FA0000000618362 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6F473AE52E85D50200BCEA95 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7F1000042FA0000000618362;
+			remoteInfo = TranscriptionHelper;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6F240E942F93EBF300BDD00E /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolderSpec = 16;
+			files = (
+				6F240E952F93EC0800BDD00E /* TranscriptionHelper.xpc in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FB6E8B22FC0F5BB00E5DAB5 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FE0DAE52FBFA86B0030E9C8 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		C01210120000000000000001 /* Community.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Community.xcconfig; sourceTree = SOURCE_ROOT; };
+		6F0C66E82FC329CF001FD598 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		6F1A2B3C2F7A000100618362 /* RelayHelp.help */ = {isa = PBXFileReference; lastKnownFileType = folder.help; path = RelayHelp.help; sourceTree = "<group>"; };
+		6F4CCDBD2F416D250096A73A /* Relay-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Relay-Info.plist"; sourceTree = "<group>"; };
+		6F4CCF072F427A760096A73A /* Relay Icon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = "Relay Icon.icon"; sourceTree = "<group>"; };
+		6F68B09E2FB24F8400D51E4A /* RelayTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RelayTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6F8907E42F6AE56400618362 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = Localizable.strings; sourceTree = "<group>"; };
+		6F8907E62F6AE57000618362 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = Localizable.strings; sourceTree = "<group>"; };
+		6FA249F72ECA9E9800542B2A /* Relay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Relay.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6FB6E8B32FC0F5D700E5DAB5 /* libndi_ios.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libndi_ios.a; path = ThirdParty/NDI/lib/iOS/libndi_ios.a; sourceTree = "<group>"; };
+		6FCCA63B2F7C330900BF0C0C /* Relay.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Relay.entitlements; sourceTree = "<group>"; };
+		6FE0DAE62FBFA9050030E9C8 /* libndi.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libndi.dylib; path = ThirdParty/NDI/lib/macOS/libndi.dylib; sourceTree = "<group>"; };
+		6FEBD39D2EFAE80A0086D78A /* Relay Mobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Relay Mobile.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6FF411A32FC349CE009C2384 /* PrivacyInfo 2.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "PrivacyInfo 2.xcprivacy"; sourceTree = "<group>"; };
+		6FF43CCB2F465F630006FEB5 /* Relay-Info-iOS.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Relay-Info-iOS.plist"; sourceTree = "<group>"; };
+		6FF9E4FF2ECA2EDB002F0A47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7F1000032FA0000000618362 /* TranscriptionHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = TranscriptionHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		6F0658823009310D001B5F43 /* Exceptions for "TranscriptionShared" folder in "Relay Mobile" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				TranscriptionAuthorization.swift,
+				TranscriptionFailure.swift,
+			);
+			target = 6FEBD39C2EFAE80A0086D78A /* Relay Mobile */;
+		};
+		6F240E932F93EAB400BDD00E /* Exceptions for "TranscriptionHelper" folder in "TranscriptionHelper" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 7F1000042FA0000000618362 /* TranscriptionHelper */;
+		};
+		6F42DFAC2EFAED50004458E2 /* Exceptions for "Dashboard" folder in "Relay Mobile" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Account/AppStoreSubscriptionLinkSheet.swift,
+				Account/DeleteAccountButton.swift,
+				Account/PKCE.swift,
+				Account/RelayAccountAppStoreSubscription.swift,
+				Account/RelayAccountConfig.swift,
+				Account/RelayAccountCoordinator.swift,
+				Account/RelayAccountHeartbeatReporter.swift,
+				Account/RelayAccountKeychainStore.swift,
+				Account/RelayAccountModels.swift,
+				Account/RelayAccountService.swift,
+				Account/UsageDiagnosticsConsentSheet.swift,
+				Account/UsageDiagnosticsPreferences.swift,
+				"Audio Analysis/AudioAnalysisEngine.swift",
+				"Audio Analysis/AudioAnalysisTypes.swift",
+				"Audio Analysis/AudioInputConfig.swift",
+				"Audio Analysis/AudioInputProcessor.swift",
+				"Audio Analysis/AudioInputsConfigStore.swift",
+				"Audio Analysis/AudioInputsConfigView.swift",
+				"Audio Analysis/AudioWeightingFilters.swift",
+				"Audio Analysis/SPLInputLogger.swift",
+				"Audio Analysis/SPLLoggingManager.swift",
+				"Audio Analysis/SPLLoggingSettings.swift",
+				"Audio Analysis/TranscriptionInputConfig.swift",
+				"Audio Analysis/TranscriptionInputsConfigStore.swift",
+				Automation/AutomationScopeResolver.swift,
+				Automation/GraphActionExecutor.swift,
+				Automation/GraphAutomationRuntime.swift,
+				Automation/GraphAutomationTraversal.swift,
+				Automation/GraphCommands.swift,
+				Automation/GraphNotifications.swift,
+				Automation/GraphPorts.swift,
+				Automation/GraphRuntime.swift,
+				Automation/GraphTypes.swift,
+				Automation/UI/ActionGraphNodeView.swift,
+				Automation/UI/AutomationScopeControl.swift,
+				Automation/UI/AutomationScopePopover.swift,
+				Automation/UI/ConsoleDeviceDataAdapter.swift,
+				Automation/UI/ConsoleGraphNodeView.swift,
+				Automation/UI/GraphDashboardCanvasView.swift,
+				Automation/UI/GraphDashboardCoordinator.swift,
+				Automation/UI/GraphDashboardDataModel.swift,
+				Automation/UI/GraphDashboardPersistenceAdapter.swift,
+				Automation/UI/GraphDashboardView.swift,
+				Automation/UI/GraphNodeChrome.swift,
+				Automation/UI/GraphReflectionAdapter.swift,
+				Automation/UI/ModuleGroupNodeView.swift,
+				Automation/UI/TriggerGraphLinkInspector.swift,
+				Automation/UI/TriggerGraphNodeView.swift,
+				Automation/UI/TriggerNodePreferencesAdapter.swift,
+				Automation/UI/VistaGraphNodeView.swift,
+				Automation/VistaIntegration.swift,
+				DashboardCoreModels.swift,
+				DashboardRootView.swift,
+				"Helpers/Audio Helpers/AudioDeviceEnumerator.swift",
+				"Helpers/Audio Helpers/DeviceInputCaptureHAL.swift",
+				"Helpers/Audio Helpers/EngineInputCapture.swift",
+				"Helpers/Audio Helpers/PCMDownmixer.swift",
+				"Helpers/Audio Helpers/TranscriptionHelperCallbackRouter.swift",
+				"Helpers/Audio Helpers/TranscriptionThrottler.swift",
+				"Helpers/Audio Helpers/TranscriptSegmenter.swift",
+				"Helpers/Audio Helpers/TranscriptTypes.swift",
+				"Helpers/File Helpers/DashboardCanvasBoundsStore.swift",
+				"Helpers/File Helpers/DashboardDocument.swift",
+				"Helpers/File Helpers/DashboardDocumentController.swift",
+				"Helpers/File Helpers/DashboardFocusedValues.swift",
+				"Helpers/File Helpers/DashboardUndoManager.swift",
+				"Helpers/File Helpers/DebugFactoryReset.swift",
+				"Helpers/File Helpers/RelayCommands.swift",
+				"Helpers/File Helpers/RelayDiagnosticsStore.swift",
+				"Helpers/File Helpers/RelayLogArchiveDocument.swift",
+				"Helpers/File Helpers/RelayLogManager.swift",
+				"Helpers/File Helpers/RelaySupportContact.swift",
+				"Helpers/File Helpers/SubscriptionManager.swift",
+				"Helpers/File Helpers/WebpageFavoritesStore.swift",
+				"Helpers/File Helpers/WirelessLoggingPreferences.swift",
+				Helpers/Integrations/Connections/ProPresenterAutomationService.swift,
+				Helpers/Integrations/Connections/ProPresenterConnection.swift,
+				Helpers/Integrations/Connections/ProPresenterKeychainStore.swift,
+				Helpers/Integrations/Connections/ResolumeConnection.swift,
+				Helpers/Integrations/Connections/SennheiserWirelessDestinationService.swift,
+				Helpers/Integrations/Connections/PrivateHostPolicy.swift,
+				Helpers/Integrations/Connections/ShureHTTPProbe.swift,
+				Helpers/Integrations/Connections/ShureWirelessDestinationService.swift,
+				Helpers/Integrations/Consoles/ConsoleConnector.swift,
+				Helpers/Integrations/Consoles/DiGiCoConsoleSyncService.swift,
+				Helpers/Integrations/Consoles/DiGiCoOSCClient.swift,
+				Helpers/Integrations/Consoles/DiGiCoRTFParser.swift,
+				Helpers/Integrations/Consoles/VenueConsoleService.swift,
+				Helpers/Integrations/Consoles/WingConsoleService.swift,
+				Helpers/Integrations/Consoles/YamahaConsoleService.swift,
+				Helpers/Integrations/DiscoveryScanCounters.swift,
+				Helpers/Integrations/ExternalDeviceDiscovery.swift,
+				Helpers/Integrations/ExternalDevices.swift,
+				Helpers/Integrations/MIDI/MIDIProcessing.swift,
+				Helpers/Integrations/NDI/NDIDiscoveryService.swift,
+				Helpers/Integrations/NDI/NDIErrorPresenter.swift,
+				Helpers/Integrations/NDI/NDIFramePipeline.swift,
+				Helpers/Integrations/NDI/NDIFrameProcessor.swift,
+				Helpers/Integrations/NDI/NDIInterfaceEnumerator.swift,
+				Helpers/Integrations/NDI/NDIPreferencesStore.swift,
+				Helpers/Integrations/NDI/NDIReceiver.swift,
+				Helpers/Integrations/NDI/NDISDKWrapper.swift,
+				Helpers/Integrations/NDI/NDIStreamRegistry.swift,
+				Helpers/Integrations/NDI/NDIVideoSurfaceRepresentable.swift,
+				Helpers/Integrations/NDI/NDIVideoSurfaceView.swift,
+				Helpers/Integrations/OSC/OSCInboundRouter.swift,
+				Helpers/Integrations/OSC/OSCManager.swift,
+				Helpers/Integrations/PCO/Models.swift,
+				Helpers/Integrations/PCO/OAuthService.swift,
+				Helpers/Integrations/PCO/PCOAutoAdvanceCoordinator.swift,
+				Helpers/Integrations/PCO/PCOClient.swift,
+				Helpers/Integrations/PCO/PCOLiveWebView.swift,
+				Helpers/Integrations/PCO/TokenStore.swift,
+				Helpers/Integrations/QuDiscoveryService.swift,
+				Helpers/Integrations/ShureProtocol.swift,
+				Helpers/Integrations/ShureSLPDiscoveryService.swift,
+				Helpers/Integrations/SmartLights/SmartLightActionService.swift,
+				Helpers/Integrations/SmartLights/SmartLightFeatureFlags.swift,
+				Helpers/Integrations/SmartLights/SmartLightKeychainStore.swift,
+				Helpers/Integrations/SmartLights/SmartLightModels.swift,
+				Helpers/Integrations/SmartLights/SmartLightProfilesStore.swift,
+				Helpers/Integrations/SmartLights/SmartLightProvider.swift,
+				Helpers/Integrations/SmartLights/SmartLightProviders.swift,
+				Helpers/Integrations/SmartLights/SmartLightViews.swift,
+				Helpers/Integrations/TransportEventState.swift,
+				Helpers/Integrations/WingDiscoveryService.swift,
+				Helpers/Integrations/X32M32DiscoveryService.swift,
+				Helpers/Integrations/YouTube/YouTubeLiveIntegration.swift,
+				"Helpers/Network Helpers/DevicePairingStore.swift",
+				"Helpers/Network Helpers/HTTPRequestLimits.swift",
+				"Helpers/Network Helpers/LANPairingKeyAgreement.swift",
+				"Helpers/Network Helpers/LANRequestSigner.swift",
+				"Helpers/Network Helpers/LANSharedTabsService.swift",
+				"Helpers/Network Helpers/NetUtils.swift",
+				"Helpers/Network Helpers/NetworkUtils.swift",
+				"Helpers/Network Helpers/PairingInputSanitizer.swift",
+				"Helpers/Network Helpers/PairingSecretStore.swift",
+				"Helpers/Network Helpers/ProPresenterPasswordPolicy.swift",
+				"Helpers/Network Helpers/SafeFilePath.swift",
+				"Helpers/Network Helpers/SyncedConnectionConfig.swift",
+				"Helpers/Network Helpers/SyncedFileCache.swift",
+				"Helpers/Network Helpers/SyncedTabModels.swift",
+				"Helpers/UI Helpers/AudioReadoutFormatting.swift",
+				"Helpers/UI Helpers/BetaBadgeView.swift",
+				"Helpers/UI Helpers/CanvasGuide.swift",
+				"Helpers/UI Helpers/CornerRounding.swift",
+				"Helpers/UI Helpers/CursorAutoHideModifier.swift",
+				"Helpers/UI Helpers/DashboardCanvasActionCoordinator.swift",
+				"Helpers/UI Helpers/DashboardCanvasCullingPolicy.swift",
+				"Helpers/UI Helpers/DashboardCanvasSupport.swift",
+				"Helpers/UI Helpers/DashboardCanvasViewportHost.swift",
+				"Helpers/UI Helpers/DashboardCanvasVisibility.swift",
+				"Helpers/UI Helpers/DashboardFeatureFlags.swift",
+				"Helpers/UI Helpers/DashboardFlipContainer.swift",
+				"Helpers/UI Helpers/DashboardGlassSurface.swift",
+				"Helpers/UI Helpers/DashboardKeyboardShortcutsView.swift",
+				"Helpers/UI Helpers/DashboardModeBannerOverlay.swift",
+				"Helpers/UI Helpers/DashboardModuleCatalog.swift",
+				"Helpers/UI Helpers/DashboardPlatformCopy.swift",
+				"Helpers/UI Helpers/DashboardPlatformInterceptors.swift",
+				"Helpers/UI Helpers/DashboardResizeHandle.swift",
+				"Helpers/UI Helpers/DashboardResizeSnappingHelper.swift",
+				"Helpers/UI Helpers/DashboardSmartGuidesLayer.swift",
+				"Helpers/UI Helpers/DashboardSnapRegionPreviewLayer.swift",
+				"Helpers/UI Helpers/DashboardSystemImage.swift",
+				"Helpers/UI Helpers/DashboardTabIdentityMutation.swift",
+				"Helpers/UI Helpers/DashboardTileAccessibilityModifier.swift",
+				"Helpers/UI Helpers/DashboardTileArrangement.swift",
+				"Helpers/UI Helpers/DashboardTileBackgroundFill.swift",
+				"Helpers/UI Helpers/DashboardTileCanvas.swift",
+				"Helpers/UI Helpers/DashboardTileChromeViews.swift",
+				"Helpers/UI Helpers/DashboardTileContainer.swift",
+				"Helpers/UI Helpers/DashboardTileContextMenu.swift",
+				"Helpers/UI Helpers/DashboardTileGroupCreateSheet.swift",
+				"Helpers/UI Helpers/DashboardTileInteractionSession.swift",
+				"Helpers/UI Helpers/DashboardTileLiveTransformHost.swift",
+				"Helpers/UI Helpers/DashboardTileMetrics.swift",
+				"Helpers/UI Helpers/DashboardTileModuleBinding.swift",
+				"Helpers/UI Helpers/DashboardTileModuleLayoutPlan.swift",
+				"Helpers/UI Helpers/DashboardTileModuleMetadata.swift",
+				"Helpers/UI Helpers/DashboardTileModuleStack.swift",
+				"Helpers/UI Helpers/DashboardTileResizeHandleLayout.swift",
+				"Helpers/UI Helpers/DashboardTileResizeHandlesLayer.swift",
+				"Helpers/UI Helpers/DashboardTileResizeSizeHUD.swift",
+				"Helpers/UI Helpers/DashboardTileShell.swift",
+				"Helpers/UI Helpers/DashboardTileSnapHighlightOverlay.swift",
+				"Helpers/UI Helpers/DashboardTileSnappingHelper.swift",
+				"Helpers/UI Helpers/DashboardTopToolbarView.swift",
+				"Helpers/UI Helpers/DashboardTutorialOverlay.swift",
+				"Helpers/UI Helpers/DeferredNumberField.swift",
+				"Helpers/UI Helpers/FloatingAddMenuView.swift",
+				"Helpers/UI Helpers/JoinSyncedTabAction.swift",
+				"Helpers/UI Helpers/LeaveSyncedTabAction.swift",
+				"Helpers/UI Helpers/ModernCard.swift",
+				"Helpers/UI Helpers/ModifierTracker.swift",
+				"Helpers/UI Helpers/NameShortener.swift",
+				"Helpers/UI Helpers/PairingApprovalSheet.swift",
+				"Helpers/UI Helpers/PairingWaitingOverlay.swift",
+				"Helpers/UI Helpers/ProBadgeView.swift",
+				"Helpers/UI Helpers/ProLockedModuleView.swift",
+				"Helpers/UI Helpers/ProUpgradeAction.swift",
+				"Helpers/UI Helpers/ProUpgradePromptView.swift",
+				"Helpers/UI Helpers/ProUpgradePromptViewIOS.swift",
+				"Helpers/UI Helpers/ProUpgradeView.swift",
+				"Helpers/UI Helpers/PurchaseErrorNotice.swift",
+				"Helpers/UI Helpers/SelectionActionToolbarView.swift",
+				"Helpers/UI Helpers/SFSymbolLibrary.swift",
+				"Helpers/UI Helpers/SFSymbolPickerView.swift",
+				"Helpers/UI Helpers/SharedSecondTicker.swift",
+				"Helpers/UI Helpers/SyncMirrorPresentation.swift",
+				"Helpers/UI Helpers/SystemUsageOverlayView.swift",
+				"Helpers/UI Helpers/TimecodeService.swift",
+				"Helpers/UI Helpers/TimeUtils.swift",
+				"Helpers/UI Helpers/VariableSuggestionInputs.swift",
+				"Helpers/UI Helpers/ViewportPanZoomModifier.swift",
+				Launch/LaunchNewDashboardSheet.swift,
+				Launch/RelayLaunchScreenView.swift,
+				Licensing/ActivateLicenseSheet.swift,
+				Licensing/LicenseCoordinator.swift,
+				Licensing/LicenseEntitlement.swift,
+				Licensing/LicenseKeychainStore.swift,
+				Licensing/LicenseStatus.swift,
+				Licensing/LicensingDTOs.swift,
+				Licensing/LicensingGateView.swift,
+				Licensing/RelayLicensingClient.swift,
+				Licensing/RelayLicensingConfig.swift,
+				Modules/ButtonModule.swift,
+				Modules/DAWTransportModule.swift,
+				Modules/DAWTransportViewModelStore.swift,
+				Modules/DbReader/DbReaderController.swift,
+				Modules/DbReader/DbReaderModels.swift,
+				Modules/DbReader/DbReaderModule.swift,
+				Modules/DbReader/DbReaderViews.swift,
+				Modules/DocumentModule.swift,
+				Modules/ImageModule.swift,
+				Modules/LiveTranscriptionModule.swift,
+				Modules/ModuleStores.swift,
+				Modules/NDIModule.swift,
+				Modules/PCOTeamAssignmentsModule.swift,
+				Modules/PCOTileView.swift,
+				Modules/PersonTileView.swift,
+				Modules/ProductionTileView.swift,
+				Modules/ProPresenterModule.swift,
+				Modules/ResolumeModule.swift,
+				Modules/RichTextEditor_iOS.swift,
+				Modules/RichTextToolbar_iOS.swift,
+				Modules/RosterPickerModule.swift,
+				Modules/RosterTeamAssignmentsModule.swift,
+				Modules/RTA/RTABandProcessor.swift,
+				Modules/RTA/RTAController.swift,
+				Modules/RTA/RTAModule.swift,
+				Modules/RTA/RTAModuleModel.swift,
+				Modules/RTA/RTAViews.swift,
+				Modules/SennheiserWirelessModule.swift,
+				Modules/SeparatorModule.swift,
+				Modules/ShureOverviewHub.swift,
+				Modules/ShureOverviewModule.swift,
+				Modules/ShureWirelessModule.swift,
+				Modules/Spectrograph/SpectrogramController.swift,
+				Modules/Spectrograph/SpectrogramModule.swift,
+				Modules/Spectrograph/SpectrogramModuleModel.swift,
+				Modules/Spectrograph/SpectrogramViews.swift,
+				Modules/SpeechTranscriber.swift,
+				Modules/TextEditorControllerStore.swift,
+				Modules/TextModuleModel.swift,
+				Modules/TimecodeModuleView.swift,
+				Modules/TimeModuleView.swift,
+				Modules/WebpageModule.swift,
+				Modules/XPCSpeechTranscriberAdapter.swift,
+				Modules/YouTubeStreamMonitorModule.swift,
+				Onboarding/OnboardingCardStyle.swift,
+				Onboarding/OnboardingChecklistRow.swift,
+				Onboarding/OnboardingGhostPreviewLayer.swift,
+				Onboarding/OnboardingPreviewCanvas.swift,
+				Onboarding/OnboardingProLockOverlay.swift,
+				Onboarding/OnboardingReviewLayout.swift,
+				Onboarding/OnboardingStarterTileCatalog.swift,
+				Onboarding/OnboardingStepDotsView.swift,
+				Onboarding/OnboardingTileCandidate.swift,
+				Onboarding/OnboardingWizardController.swift,
+				Onboarding/OnboardingWizardView.swift,
+				Onboarding/Steps/OnboardingAudioInputsStepView.swift,
+				Onboarding/Steps/OnboardingConnectionsStepView.swift,
+				Onboarding/Steps/OnboardingDevicesStepView.swift,
+				Onboarding/Steps/OnboardingReviewStepView.swift,
+				Onboarding/Steps/OnboardingStarterTilesStepView.swift,
+				Onboarding/Steps/OnboardingWelcomeStepView.swift,
+				RelayDashboardApp.swift,
+				Settings/ColorSchemePreference.swift,
+				Settings/DashboardAccessSettingsView.swift,
+				Settings/DashboardLANSettingsView.swift,
+				Settings/DashboardLiveStreamSettingsView.swift,
+				Settings/DashboardPCOSettingsView.swift,
+				Settings/DashboardProPresenterSettingsView.swift,
+				Settings/DashboardResolumeSettingsView.swift,
+				Settings/DashboardRostersManagerView.swift,
+				Settings/DashboardSettingsView.swift,
+				Settings/DashboardTabSettingsView.swift,
+				Settings/ExternalDevicesSettingsView.swift,
+				Settings/MIDISettingsView.swift,
+				Settings/RosterImportSupport.swift,
+				SharedValues/LinkedComputerPersonVariables.swift,
+				SharedValues/LinkedDeviceVariables.swift,
+				SharedValues/SharedValueCatalog.swift,
+				SharedValues/SharedValueModels.swift,
+				SharedValues/SharedValuePickerCoordinator.swift,
+				SharedValues/SharedValueResolver.swift,
+				SharedValues/SharedValueSourceAdapters.swift,
+				SharedValues/SharedValueStore.swift,
+				SharedValues/SharedValuesWindow.swift,
+				"Side Views/DashboardInspectorPanelView.swift",
+				"Side Views/DashboardTileEditView.swift",
+				"Side Views/DashboardTileEditView+ModuleSettings.swift",
+				"Side Views/DashboardTileOverviewSidebar.swift",
+				SyncedProducts.storekit,
+				WhatsNew/WhatsNewClient.swift,
+				WhatsNew/WhatsNewFeatureRow.swift,
+				WhatsNew/WhatsNewFeedView.swift,
+				WhatsNew/WhatsNewModels.swift,
+				WhatsNew/WhatsNewSheet.swift,
+				WhatsNew/WhatsNewStore.swift,
+			);
+			target = 6FEBD39C2EFAE80A0086D78A /* Relay Mobile */;
+		};
+		6FB393A02F71DEF6008A286E /* Exceptions for "Dashboard" folder in "Relay" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Helpers/UI Helpers/ProUpgradePromptViewIOS.swift",
+			);
+			target = 6FA249EE2ECA9E9800542B2A /* Relay */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		6F68B09F2FB24F8400D51E4A /* RelayTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = RelayTests;
+			sourceTree = "<group>";
+		};
+		6FA249FA2ECA9EE000542B2A /* Dashboard */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6FB393A02F71DEF6008A286E /* Exceptions for "Dashboard" folder in "Relay" target */,
+				6F42DFAC2EFAED50004458E2 /* Exceptions for "Dashboard" folder in "Relay Mobile" target */,
+			);
+			path = Dashboard;
+			sourceTree = "<group>";
+		};
+		7F1000012FA0000000618362 /* TranscriptionShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6F0658823009310D001B5F43 /* Exceptions for "TranscriptionShared" folder in "Relay Mobile" target */,
+			);
+			path = TranscriptionShared;
+			sourceTree = "<group>";
+		};
+		7F1000022FA0000000618362 /* TranscriptionHelper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6F240E932F93EAB400BDD00E /* Exceptions for "TranscriptionHelper" folder in "TranscriptionHelper" target */,
+			);
+			path = TranscriptionHelper;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		6F68B09B2FB24F8400D51E4A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FA249F02ECA9E9800542B2A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6F5DDB1F2F8736A00094C8CB /* Sparkle in Frameworks */,
+				70A11E352F9C410000A1B2C3 /* Sentry in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FEBD39A2EFAE80A0086D78A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6F0C66EC2FC32BA3001FD598 /* Sentry in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7F1000052FA0000000618362 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		6F0C66EA2FC32BA3001FD598 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		6F473AE42E85D50200BCEA95 = {
+			isa = PBXGroup;
+			children = (
+				6F0C66E82FC329CF001FD598 /* PrivacyInfo.xcprivacy */,
+				6FB6E8B32FC0F5D700E5DAB5 /* libndi_ios.a */,
+				6FE0DAE62FBFA9050030E9C8 /* libndi.dylib */,
+				6FA249FA2ECA9EE000542B2A /* Dashboard */,
+				7F1000012FA0000000618362 /* TranscriptionShared */,
+				7F1000022FA0000000618362 /* TranscriptionHelper */,
+				6F68B09F2FB24F8400D51E4A /* RelayTests */,
+				6F473AEE2E85D50200BCEA95 /* Products */,
+				6FF9E4FF2ECA2EDB002F0A47 /* Assets.xcassets */,
+				6F1A2B3C2F7A000100618362 /* RelayHelp.help */,
+				6F4CCDBD2F416D250096A73A /* Relay-Info.plist */,
+				6FF43CCB2F465F630006FEB5 /* Relay-Info-iOS.plist */,
+				6F4CCF072F427A760096A73A /* Relay Icon.icon */,
+				6F8907D42F6A475A00618362 /* en.lproj */,
+				6F8907D52F6A476200618362 /* es.lproj */,
+				6FCCA63B2F7C330900BF0C0C /* Relay.entitlements */,
+				6F0C66EA2FC32BA3001FD598 /* Frameworks */,
+				6FF411A32FC349CE009C2384 /* PrivacyInfo 2.xcprivacy */,
+			);
+			sourceTree = "<group>";
+		};
+		6F473AEE2E85D50200BCEA95 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6FA249F72ECA9E9800542B2A /* Relay.app */,
+				6FEBD39D2EFAE80A0086D78A /* Relay Mobile.app */,
+				7F1000032FA0000000618362 /* TranscriptionHelper.xpc */,
+				6F68B09E2FB24F8400D51E4A /* RelayTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6F8907D42F6A475A00618362 /* en.lproj */ = {
+			isa = PBXGroup;
+			children = (
+				6F8907E32F6AE56400618362 /* Localizable.strings */,
+			);
+			path = en.lproj;
+			sourceTree = "<group>";
+		};
+		6F8907D52F6A476200618362 /* es.lproj */ = {
+			isa = PBXGroup;
+			children = (
+				6F8907E52F6AE57000618362 /* Localizable.strings */,
+			);
+			path = es.lproj;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6F68B09D2FB24F8400D51E4A /* RelayTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6F68B0A72FB24F8400D51E4A /* Build configuration list for PBXNativeTarget "RelayTests" */;
+			buildPhases = (
+				6F68B09A2FB24F8400D51E4A /* Sources */,
+				6F68B09B2FB24F8400D51E4A /* Frameworks */,
+				6F68B09C2FB24F8400D51E4A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6F68B0A32FB24F8400D51E4A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				6F68B09F2FB24F8400D51E4A /* RelayTests */,
+			);
+			name = RelayTests;
+			packageProductDependencies = (
+			);
+			productName = RelayTests;
+			productReference = 6F68B09E2FB24F8400D51E4A /* RelayTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		6FA249EE2ECA9E9800542B2A /* Relay */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6FA249F42ECA9E9800542B2A /* Build configuration list for PBXNativeTarget "Relay" */;
+			buildPhases = (
+				6FA249EF2ECA9E9800542B2A /* Sources */,
+				6FA249F02ECA9E9800542B2A /* Frameworks */,
+				6FA249F12ECA9E9800542B2A /* Resources */,
+				6F240E942F93EBF300BDD00E /* CopyFiles */,
+				6FE0DAE52FBFA86B0030E9C8 /* CopyFiles */,
+				6FC029A3301D1E0C00679B1E /* ShellScript */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7F10000C2FA0000000618362 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				6FA249FA2ECA9EE000542B2A /* Dashboard */,
+				7F1000012FA0000000618362 /* TranscriptionShared */,
+			);
+			name = Relay;
+			packageProductDependencies = (
+				6F5DDB1E2F8736A00094C8CB /* Sparkle */,
+				70A11E342F9C410000A1B2C3 /* Sentry */,
+			);
+			productName = PCODiGiCoApp;
+			productReference = 6FA249F72ECA9E9800542B2A /* Relay.app */;
+			productType = "com.apple.product-type.application";
+		};
+		6FEBD39C2EFAE80A0086D78A /* Relay Mobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6FEBD3A52EFAE80B0086D78A /* Build configuration list for PBXNativeTarget "Relay Mobile" */;
+			buildPhases = (
+				6FEBD3992EFAE80A0086D78A /* Sources */,
+				6FEBD39A2EFAE80A0086D78A /* Frameworks */,
+				6FEBD39B2EFAE80A0086D78A /* Resources */,
+				6FB6E8B22FC0F5BB00E5DAB5 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Relay Mobile";
+			packageProductDependencies = (
+				6F0C66EB2FC32BA3001FD598 /* Sentry */,
+			);
+			productName = "ProdLink Dashboard Mobile";
+			productReference = 6FEBD39D2EFAE80A0086D78A /* Relay Mobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+		7F1000042FA0000000618362 /* TranscriptionHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7F1000082FA0000000618362 /* Build configuration list for PBXNativeTarget "TranscriptionHelper" */;
+			buildPhases = (
+				7F1000072FA0000000618362 /* Sources */,
+				7F1000052FA0000000618362 /* Frameworks */,
+				7F1000062FA0000000618362 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7F1000012FA0000000618362 /* TranscriptionShared */,
+				7F1000022FA0000000618362 /* TranscriptionHelper */,
+			);
+			name = TranscriptionHelper;
+			packageProductDependencies = (
+			);
+			productName = TranscriptionHelper;
+			productReference = 7F1000032FA0000000618362 /* TranscriptionHelper.xpc */;
+			productType = "com.apple.product-type.xpc-service";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6F473AE52E85D50200BCEA95 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2650;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					6F68B09D2FB24F8400D51E4A = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 6FA249EE2ECA9E9800542B2A;
+					};
+					6FA249EE2ECA9E9800542B2A = {
+						LastSwiftMigration = 2610;
+					};
+					6FEBD39C2EFAE80A0086D78A = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					7F1000042FA0000000618362 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+				};
+			};
+			buildConfigurationList = 6F473AE82E85D50200BCEA95 /* Build configuration list for PBXProject "Relay" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				es,
+			);
+			mainGroup = 6F473AE42E85D50200BCEA95;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				6F5DDB1D2F8736A00094C8CB /* XCRemoteSwiftPackageReference "Sparkle" */,
+				70A11E332F9C410000A1B2C3 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6F473AEE2E85D50200BCEA95 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6FA249EE2ECA9E9800542B2A /* Relay */,
+				6FEBD39C2EFAE80A0086D78A /* Relay Mobile */,
+				7F1000042FA0000000618362 /* TranscriptionHelper */,
+				6F68B09D2FB24F8400D51E4A /* RelayTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		6F68B09C2FB24F8400D51E4A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FA249F12ECA9E9800542B2A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6F1A2B3D2F7A000100618362 /* RelayHelp.help in Resources */,
+				6F8907E72F6AEA1B00618362 /* Localizable.strings in Resources */,
+				6F8907E82F6AEA1B00618362 /* Localizable.strings in Resources */,
+				6F56292F2F4F80DD0002A81C /* Assets.xcassets in Resources */,
+				6F4CCF082F427A760096A73A /* Relay Icon.icon in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FEBD39B2EFAE80A0086D78A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6F0C66E92FC329CF001FD598 /* PrivacyInfo.xcprivacy in Resources */,
+				6F5629302F4F80DD0002A81C /* Assets.xcassets in Resources */,
+				6F8907E92F6AEA1B00618362 /* Localizable.strings in Resources */,
+				6F8907EA2F6AEA1B00618362 /* Localizable.strings in Resources */,
+				6FF411A42FC349CE009C2384 /* PrivacyInfo 2.xcprivacy in Resources */,
+				6F4CCF092F427A760096A73A /* Relay Icon.icon in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7F1000062FA0000000618362 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		6FC029A3301D1E0C00679B1E /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f \"$BUILT_PRODUCTS_DIR/$FULL_PRODUCT_NAME\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6F68B09A2FB24F8400D51E4A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FA249EF2ECA9E9800542B2A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FEBD3992EFAE80A0086D78A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7F1000072FA0000000618362 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6F68B0A32FB24F8400D51E4A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6FA249EE2ECA9E9800542B2A /* Relay */;
+			targetProxy = 6F68B0A22FB24F8400D51E4A /* PBXContainerItemProxy */;
+		};
+		7F10000C2FA0000000618362 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7F1000042FA0000000618362 /* TranscriptionHelper */;
+			targetProxy = 7F10000B2FA0000000618362 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		6F8907E32F6AE56400618362 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				6F8907E42F6AE56400618362 /* en */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		6F8907E52F6AE57000618362 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				6F8907E62F6AE57000618362 /* es */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		6F473AF62E85D50300BCEA95 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		6F473AF72E85D50300BCEA95 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		6F68B0A42FB24F8400D51E4A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = davidbullard.RelayTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Relay.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Relay";
+			};
+			name = Debug;
+		};
+		6F68B0A52FB24F8400D51E4A /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.3;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = davidbullard.RelayTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Relay.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Relay";
+			};
+			name = Release;
+		};
+		6FA249F52ECA9E9800542B2A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "Relay Icon";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = "Relay-Debug.entitlements";
+				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = "Relay-Debug.entitlements";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 64;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_USB = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/ThirdParty/NDI/include";
+				INFOPLIST_FILE = "Relay-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Relay;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Relay uses local network access to discover and receive NDI feeds and other devices on your LAN.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Relay uses the microphone for live transcription.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Relay uses speech recognition to generate live transcripts.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.3;
+				PRODUCT_BUNDLE_IDENTIFIER = davidbullard.relay;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				RELAY_DISTRIBUTION_CHANNEL = debug;
+				RELAY_PURCHASE_MODE = direct;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Relay/Relay-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		6FA249F62ECA9E9800542B2A /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "Relay Icon";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				AUTOMATION_APPLE_EVENTS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = Relay/RelayRelease.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = Relay/RelayRelease.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 64;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = "";
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/ThirdParty/NDI/include";
+				INFOPLIST_FILE = "Relay-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Relay;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Relay uses local network access to discover and receive NDI feeds and other devices on your LAN.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Relay uses the microphone for live transcription.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Relay uses speech recognition to generate live transcripts.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.3;
+				PRODUCT_BUNDLE_IDENTIFIER = davidbullard.relay;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				REGISTER_APP_GROUPS = YES;
+				RELAY_DISTRIBUTION_CHANNEL = release;
+				RELAY_PURCHASE_MODE = direct;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Relay/Relay-Bridging-Header.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		6FEBD3A62EFAE80B0086D78A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "Relay Icon";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/ThirdParty/NDI/include";
+				INFOPLIST_FILE = "Relay-Info-iOS.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Relay;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Relay uses local network access to discover NDI video sources, sync shared dashboards, and communicate with audio devices on your LAN.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Relay uses the microphone for live transcription.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Relay uses speech recognition to generate live transcripts.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/ThirdParty/NDI/lib/iOS";
+				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-lc++",
+					"-lndi_ios",
+					"-framework",
+					VideoToolbox,
+					"-framework",
+					Accelerate,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = davidbullard.relay;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Relay/Relay-Bridging-Header.h";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
+		};
+		6FEBD3A72EFAE80B0086D78A /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "Relay Icon";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/ThirdParty/NDI/include";
+				INFOPLIST_FILE = "Relay-Info-iOS.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Relay;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Relay uses local network access to discover NDI video sources, sync shared dashboards, and communicate with audio devices on your LAN.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Relay uses the microphone for live transcription.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Relay uses speech recognition to generate live transcripts.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/ThirdParty/NDI/lib/iOS";
+				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-lc++",
+					"-lndi_ios",
+					"-framework",
+					VideoToolbox,
+					"-framework",
+					Accelerate,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = davidbullard.relay;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Relay/Relay-Bridging-Header.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		7F1000092FA0000000618362 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = TranscriptionHelper/TranscriptionHelper.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 20;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TranscriptionHelper/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = davidbullard.relay.TranscriptionHelper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		7F10000A2FA0000000618362 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C01210120000000000000001 /* Community.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = TranscriptionHelper/TranscriptionHelper.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 20;
+				DEAD_CODE_STRIPPING = YES;
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = "";
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TranscriptionHelper/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = davidbullard.relay.TranscriptionHelper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6F473AE82E85D50200BCEA95 /* Build configuration list for PBXProject "Relay" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6F473AF62E85D50300BCEA95 /* Debug */,
+				6F473AF72E85D50300BCEA95 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6F68B0A72FB24F8400D51E4A /* Build configuration list for PBXNativeTarget "RelayTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6F68B0A42FB24F8400D51E4A /* Debug */,
+				6F68B0A52FB24F8400D51E4A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6FA249F42ECA9E9800542B2A /* Build configuration list for PBXNativeTarget "Relay" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6FA249F52ECA9E9800542B2A /* Debug */,
+				6FA249F62ECA9E9800542B2A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6FEBD3A52EFAE80B0086D78A /* Build configuration list for PBXNativeTarget "Relay Mobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6FEBD3A62EFAE80B0086D78A /* Debug */,
+				6FEBD3A72EFAE80B0086D78A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7F1000082FA0000000618362 /* Build configuration list for PBXNativeTarget "TranscriptionHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7F1000092FA0000000618362 /* Debug */,
+				7F10000A2FA0000000618362 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		6F5DDB1D2F8736A00094C8CB /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.1;
+			};
+		};
+		70A11E332F9C410000A1B2C3 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = exactVersion;
+				version = 9.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		6F0C66EB2FC32BA3001FD598 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 70A11E332F9C410000A1B2C3 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
+		6F5DDB1E2F8736A00094C8CB /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6F5DDB1D2F8736A00094C8CB /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+		70A11E342F9C410000A1B2C3 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 70A11E332F9C410000A1B2C3 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 6F473AE52E85D50200BCEA95 /* Project object */;
+}

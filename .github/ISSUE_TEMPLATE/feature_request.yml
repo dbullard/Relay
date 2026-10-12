@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest an improvement or integration.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Suggested behavior
+    validations:
+      required: true
+  - type: textarea
+    id: help
+    attributes:
+      label: Can you help implement or test it?

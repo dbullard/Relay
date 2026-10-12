@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible problem in Relay.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Please remove private information from screenshots and logs. For security issues, follow SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: Relay version and build
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: macOS version and Mac model
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Connected hardware or software
+      description: Include models and firmware versions where relevant; exclude credentials and private addresses.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or reviewed diagnostic information
+      description: Optional. Never upload customer files, access tokens, or private logs.

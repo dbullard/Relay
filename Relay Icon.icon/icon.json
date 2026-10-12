@@ -1,0 +1,62 @@
+{
+  "fill" : {
+    "solid" : "display-p3:0.00000,0.00000,0.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "fill" : "automatic",
+          "glass" : false,
+          "image-name" : " relay_icon_white copy 8.svg",
+          "name" : " relay_icon_white copy 8",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              12.044000000000096,
+              22
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "display-p3:0.24033,0.24033,0.24033,1.00000",
+              "display-p3:0.50000,0.50000,0.50000,1.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 0.8564033434894163
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0.3
+              }
+            }
+          },
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "Geometry Grid 7.svg",
+          "name" : "Geometry Grid 7",
+          "opacity" : 0.4
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

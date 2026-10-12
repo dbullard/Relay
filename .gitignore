@@ -1,0 +1,134 @@
+# =========================
+# XCODE BUILD ARTIFACTS
+# =========================
+build/
+DerivedData/
+*.xcarchive
+*.ipa
+*.app
+*.dSYM
+
+# =========================
+# CODE COVERAGE
+# =========================
+*.profraw
+*.profdata
+
+# =========================
+# XCODE USER DATA (never commit)
+# =========================
+xcuserdata/
+*.xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Keep shared workspace data
+!*.xcworkspace/contents.xcworkspacedata
+
+# =========================
+# SWIFT PACKAGE MANAGER
+# =========================
+.build/
+Packages/
+
+# =========================
+# COCOAPODS (if ever used)
+# =========================
+Pods/
+
+# =========================
+# CARTHAGE (if ever used)
+# =========================
+Carthage/Build/
+
+# =========================
+# FASTLANE (if added later)
+# =========================
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+
+# =========================
+# macOS SYSTEM FILES
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# =========================
+# LOG FILES
+# =========================
+*.log
+logs/
+Relay Logs.txt
+# Exception: test fixtures are intentionally committed
+!RelayTests/Fixtures/*.log
+
+# =========================
+# TEMP FILES
+# =========================
+*.swp
+*.tmp
+*.bak
+*~
+
+# =========================
+# SECRETS / LOCAL CONFIG
+# =========================
+.env
+.env.local
+.env.*.local
+Secrets.plist
+LocalConfig.plist
+
+# =========================
+# ARCHIVES / EXPORTS
+# =========================
+App Exports/
+*.dmg
+*.zip
+*.tar
+*.tar.gz
+
+# =========================
+# NETWORK CAPTURES / DIAGNOSTICS
+# =========================
+*.pcap
+*.pcapng
+*.cap
+*.trace
+
+# =========================
+# USER-SPECIFIED FOLDERS
+# =========================
+gitignore files/
+
+# =========================
+# CLAUDE / SUPERPOWERS
+# =========================
+.agents/
+skills-lock.json
+.claude/worktrees/
+.worktrees/
+.superpowers/
+.claire/
+docs/superpowers/
+ThirdParty/NDI/lib/iOS/libndi_ios.a
+
+# =========================
+# GENERATED SCREENSHOTS
+# =========================
+screenshots/
+
+# Community configuration and proprietary runtimes
+Config/Local.xcconfig
+ThirdParty/NDI/lib/
+*.p12
+*.p8
+*.mobileprovision
+/Assets/
+/ICON/
+
+# Generated Swift test artifacts
+*.swift.plist
