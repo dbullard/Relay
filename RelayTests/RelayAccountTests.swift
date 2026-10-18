@@ -59,7 +59,7 @@ final class RelayAccountTests: XCTestCase {
         {
           "ok": true,
           "message": "Magic link created",
-          "verifyUrl": "https://project-he33k.vercel.app/api/auth/verify?token=abc123"
+          "verifyUrl": "https://api.example.com/api/auth/verify?token=abc123"
         }
         """.data(using: .utf8)!
 
@@ -67,7 +67,7 @@ final class RelayAccountTests: XCTestCase {
 
         XCTAssertTrue(decoded.ok)
         XCTAssertEqual(decoded.message, "Magic link created")
-        XCTAssertEqual(decoded.verifyURL?.absoluteString, "https://project-he33k.vercel.app/api/auth/verify?token=abc123")
+        XCTAssertEqual(decoded.verifyURL?.absoluteString, "https://api.example.com/api/auth/verify?token=abc123")
     }
 
     func test_callbackState_supportsWaitingForEmailAndSigningIn() {

@@ -4,7 +4,7 @@ import XCTest
 final class WhatsNewClientTests: XCTestCase {
 
     func test_feedURL_appendsChannelQueryItem() {
-        let baseURL = URL(string: "https://project-he33k.vercel.app")!
+        let baseURL = URL(string: "https://api.example.com")!
 
         let url = WhatsNewClient.feedURL(baseURL: baseURL, channel: "beta")
 
@@ -14,7 +14,7 @@ final class WhatsNewClientTests: XCTestCase {
     }
 
     func test_feedURL_usesReleaseChannel() {
-        let baseURL = URL(string: "https://project-he33k.vercel.app")!
+        let baseURL = URL(string: "https://api.example.com")!
 
         let url = WhatsNewClient.feedURL(baseURL: baseURL, channel: "release")
 
