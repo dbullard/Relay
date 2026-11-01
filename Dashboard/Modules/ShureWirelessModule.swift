@@ -488,6 +488,28 @@ enum ShureReconnectBackoff {
     }
 }
 
+/// Detects a TCP connection that NWConnection still reports as ready but
+/// that has stopped delivering data (receiver hung, NAT/switch dropped the
+/// flow without a RST). Nothing else notices this: the state handler only
+/// fires on failed/cancelled, so every channel on the device would age into
+/// Stale and then Off (presence evidence expires) until Live Mode was
+/// toggled by hand. While Live Mode is on the shared polling loop keeps
+/// requesting data, so a healthy receiver is never silent this long.
+enum ShureConnectionSilenceWatchdog {
+    static let silenceThresholdSeconds: TimeInterval = 15.0
+    static let checkIntervalSeconds: TimeInterval = 3.0
+
+    static func isSilent(
+        connectionReadyAt: Date,
+        lastHeardAt: Date?,
+        now: Date,
+        threshold: TimeInterval = silenceThresholdSeconds
+    ) -> Bool {
+        let lastActivity = max(connectionReadyAt, lastHeardAt ?? .distantPast)
+        return now.timeIntervalSince(lastActivity) > threshold
+    }
+}
+
 struct ShureAxientAudioDisposition: Equatable {
     let acceptedLevel: Double?
     let shouldClearStoredLevel: Bool
@@ -2923,6 +2945,9 @@ final class ShureWirelessService: ObservableObject {
     /// through the same `.cancelled` handler that already calls
     /// `scheduleReconnectIfNeeded` for a clean failure.
     private var waitingTimeoutTask: Task<Void, Never>?
+    /// Cancels and reconnects a TCP connection that is "ready" but silent;
+    /// see ShureConnectionSilenceWatchdog.
+    private var silenceWatchdogTask: Task<Void, Never>?
 
     /// UDP-path counterpart to `waitingTimeoutTask` -- kept as a separate
     /// property (not shared) because TCP and UDP connections can be active
@@ -3454,6 +3479,7 @@ final class ShureWirelessService: ObservableObject {
                     self.refreshSharedPollingTask()
                     self.scheduleTelemetrySnapshotPublish(immediate: true)
                     self.startReceiveLoop()
+                    self.startSilenceWatchdog(for: device, connection: conn)
                     self.startTcpStartupSequence(for: device, connection: conn)
                     self.maybeStartFastUdpTelemetry(for: device)
                 case .waiting(let error):
@@ -3490,6 +3516,8 @@ final class ShureWirelessService: ObservableObject {
                     // of Live Mode (which calls disconnect(), the only other
                     // place that clears this) to recover.
                     self.connection = nil
+                    self.silenceWatchdogTask?.cancel()
+                    self.silenceWatchdogTask = nil
                     self.waitingTimeoutTask?.cancel()
                     self.waitingTimeoutTask = nil
                     self.refreshSharedPollingTask()
@@ -3501,6 +3529,8 @@ final class ShureWirelessService: ObservableObject {
                     }
                     self.isConnected = false
                     self.connection = nil
+                    self.silenceWatchdogTask?.cancel()
+                    self.silenceWatchdogTask = nil
                     self.waitingTimeoutTask?.cancel()
                     self.waitingTimeoutTask = nil
                     self.refreshSharedPollingTask()
@@ -3517,7 +3547,34 @@ final class ShureWirelessService: ObservableObject {
         conn.start(queue: queue)
     }
 
+    private func startSilenceWatchdog(for device: ExternalDeviceConfig, connection conn: NWConnection) {
+        silenceWatchdogTask?.cancel()
+        let readyAt = Date()
+        silenceWatchdogTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(ShureConnectionSilenceWatchdog.checkIntervalSeconds * 1_000_000_000))
+                guard !Task.isCancelled, let self, self.connection === conn, self.liveModeEnabled else { return }
+                let now = Date()
+                guard ShureConnectionSilenceWatchdog.isSilent(
+                    connectionReadyAt: readyAt,
+                    lastHeardAt: self.lastHeardAt,
+                    now: now
+                ) else { continue }
+                RelayDiagnosticsStore.shared.recordShureTrace(
+                    "module silence_watchdog \(device.name) \(device.host):\(device.port) silent>\(Int(ShureConnectionSilenceWatchdog.silenceThresholdSeconds))s reconnecting"
+                )
+                self.silenceWatchdogTask = nil
+                // Cancelling routes through the .cancelled handler above,
+                // which clears the connection and schedules a backoff reconnect.
+                conn.cancel()
+                return
+            }
+        }
+    }
+
     func disconnect() {
+        silenceWatchdogTask?.cancel()
+        silenceWatchdogTask = nil
         let tcpConnection = connection
         let activeUdpConnection = udpConnection
         let activeProbeConnection = transportProbeConnection

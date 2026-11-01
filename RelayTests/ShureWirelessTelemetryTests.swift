@@ -124,6 +124,30 @@ final class ShureWirelessTelemetryTests: XCTestCase {
         XCTAssertFalse(disposition.shouldClearStoredLevel)
     }
 
+    func testSilenceWatchdogFlagsConnectionWithNoTrafficSinceReady() {
+        let readyAt = Date(timeIntervalSinceReferenceDate: 10_000)
+        XCTAssertFalse(ShureConnectionSilenceWatchdog.isSilent(
+            connectionReadyAt: readyAt, lastHeardAt: nil, now: readyAt.addingTimeInterval(10)))
+        XCTAssertTrue(ShureConnectionSilenceWatchdog.isSilent(
+            connectionReadyAt: readyAt, lastHeardAt: nil, now: readyAt.addingTimeInterval(16)))
+    }
+
+    func testSilenceWatchdogMeasuresFromLastFrameAfterTrafficStops() {
+        let readyAt = Date(timeIntervalSinceReferenceDate: 10_000)
+        let lastHeard = readyAt.addingTimeInterval(60)
+        XCTAssertFalse(ShureConnectionSilenceWatchdog.isSilent(
+            connectionReadyAt: readyAt, lastHeardAt: lastHeard, now: lastHeard.addingTimeInterval(10)))
+        XCTAssertTrue(ShureConnectionSilenceWatchdog.isSilent(
+            connectionReadyAt: readyAt, lastHeardAt: lastHeard, now: lastHeard.addingTimeInterval(16)))
+    }
+
+    func testSilenceWatchdogIgnoresStaleHeardTimeFromPreviousConnection() {
+        let readyAt = Date(timeIntervalSinceReferenceDate: 10_000)
+        let oldHeard = readyAt.addingTimeInterval(-300)
+        XCTAssertFalse(ShureConnectionSilenceWatchdog.isSilent(
+            connectionReadyAt: readyAt, lastHeardAt: oldHeard, now: readyAt.addingTimeInterval(5)))
+    }
+
     func testAxientRecentPositiveEvidenceWinsOverBriefFalseFrames() {
         let now = Date(timeIntervalSinceReferenceDate: 10_000)
         let resolved = ShureAxientPresenceResolver.resolve(
