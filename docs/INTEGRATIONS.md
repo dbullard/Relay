@@ -56,7 +56,7 @@ This module is a Preview feature. Turn on **Settings → Preview** and restart R
    The default redirect is `app.relay.youtube:/oauth2redirect`, and that scheme is declared in `Relay-Info.plist`. If you register a different redirect, its URL scheme must also be added to the app's URL Types.
 5. Rebuild, then open **Settings → External Connections → Live Stream** and choose **Connect YouTube…**.
 
-iOS uses the matching `YOUTUBE_OAUTH_CLIENT_ID_IOS`, `YOUTUBE_OAUTH_REDIRECT_URI_IOS`, and `YOUTUBE_OAUTH_CALLBACK_SCHEME` keys. Relay Mobile is experimental and does not currently build.
+iOS uses the matching `YOUTUBE_OAUTH_CLIENT_ID_IOS`, `YOUTUBE_OAUTH_REDIRECT_URI_IOS`, and `YOUTUBE_OAUTH_CALLBACK_SCHEME` keys. Relay Mobile is experimental: it builds for the iOS Simulator but hasn't been tested on devices.
 
 ## Sparkle updates
 

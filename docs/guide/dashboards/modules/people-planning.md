@@ -9,7 +9,7 @@ These modules help you manage people, roles, and service plans directly from you
 The Planning Center module connects to your PCO account to display service rundowns. It updates automatically as your plans change, ensuring operators always see the latest schedule.
 
 ### Setup
-1. Ensure your Planning Center account is linked in the **Integrations** settings.
+1. Ensure your Planning Center account is connected in `Relay > Settings` → **External Connections** → **Planning Center**.
 2. Add the **Planning Center** module to a tile.
 3. Select the Service Type and the specific Plan you want to monitor.
 

@@ -44,7 +44,7 @@ enum PreviousRelayImporter {
 
     // MARK: - Reading the old preferences
 
-    static func previousPreferencesURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+    static func previousPreferencesURL(home: URL = URL(fileURLWithPath: NSHomeDirectory())) -> URL {
         home.appendingPathComponent("Library/Preferences/\(previousBundleID).plist")
     }
 

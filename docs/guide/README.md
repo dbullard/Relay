@@ -6,6 +6,8 @@ These pages live in the repository so they can be improved with pull requests. F
 
 ## Get started
 
+- [Install Relay](installing.md) — Download, first launch, and connecting services.
+- [Moving from Relay 1.3 or 1.3.1](app/migrating-from-1-3.md) — Bring your settings over from the earlier app.
 - [Introduction](introduction.md) — What Relay is and what it can do.
 - [Quick start](quickstart.md) — Create your first dashboard.
 - [Setup Wizard](guides/setup-wizard.md) — Guided first-run setup.

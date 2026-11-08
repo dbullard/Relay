@@ -10,7 +10,7 @@
 - `Config/`: safe defaults and an example for local service configuration.
 - `docs/guide/`: user documentation in plain Markdown. See [docs/guide/README.md](guide/README.md).
 
-The shipping scheme is `Relay`; local development uses `Relay (DEBUG)`. Both are free. The removed Beta scheme is replaced by the Preview setting.
+Use the `Relay` scheme for everything. Debug and Release builds behave the same: the former Beta and Debug-only features are all behind **Settings → Preview**.
 
 ## Optional local service configuration
 
@@ -38,7 +38,7 @@ Do not add SDK binaries to Git. Packaging NDI in a signed distribution is a sepa
 
 ## Known limitations
 
-Relay Mobile currently fails to build due to pre-existing missing LiveMode behavior, Spectera, ProfanityFilter, and related types. It is not a supported release target yet. The iOS NDI integration also requires the separately licensed iOS SDK; the static library is not included.
+Relay Mobile builds for the iOS Simulator (CI checks this) but is experimental: it hasn't been tested on devices and isn't a supported release target yet. When you add a Swift file that the Mobile target needs, add it to the Mobile target's file list (the "Exceptions for Dashboard folder in Relay Mobile target" entry in `Relay.xcodeproj/project.pbxproj`, or tick the Mobile target in Xcode's File inspector). The iOS NDI integration also requires the separately licensed iOS SDK; the static library is not included.
 
 Some Release behavior is channel-dependent and cannot be verified solely with Debug tests: Preview defaults, crash consent, and configured manual-report delivery need a Release check. Manual verification on real consoles, receivers, and NDI sources is welcome; most contributors will not have every device.
 

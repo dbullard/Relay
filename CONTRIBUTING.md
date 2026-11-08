@@ -6,7 +6,7 @@ Thank you for helping Relay become a community-maintained app. Useful contributi
 
 Documentation lives in `docs/guide/` as plain Markdown, and improvements are welcome. Check existing issues. Open an issue before a substantial feature or architectural change so maintainers can discuss scope. Small, clearly explained bug fixes can go directly to a pull request.
 
-Follow the [development setup](docs/DEVELOPMENT.md). Keep changes focused and follow nearby Swift/SwiftUI conventions. The Mobile target uses explicit source inclusion, so verify target membership when adding shared files.
+Follow the [development setup](docs/DEVELOPMENT.md). Keep changes focused and follow nearby Swift/SwiftUI conventions. The Mobile target uses explicit source inclusion, so verify target membership when adding shared files (CI builds the `Relay Mobile` scheme for the iOS Simulator and fails if a file is missing).
 
 ## Pull requests
 

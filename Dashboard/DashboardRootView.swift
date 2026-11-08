@@ -9039,10 +9039,9 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         resetDocumentForNewDashboard(tab: DashboardTab(name: "Dashboard 1", tiles: []))
         showCanvasTutorialIfNeeded()
 
-        // TODO: If you have explicit APIs to clear PCO login or External Devices
-        // configuration, call them here so New Dashboard also wipes those:
-        // PCOAuthStore.shared.reset()
-        // ExternalDevicesStore.shared.resetToDefaults()
+        // New Dashboard deliberately leaves app-wide settings alone: the Planning Center
+        // login and External Devices belong to this Mac, not to the document. People
+        // disconnect them in Settings > Planning Center / External Devices.
     }
 
     /// Builds real dashboard tiles from the wizard's checked candidates, laid

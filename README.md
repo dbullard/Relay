@@ -2,13 +2,25 @@
 
 Relay is a free, native dashboard and automation app for production teams. Bring show controls, device status, audio tools, and automation together on a canvas you can arrange for your workflow.
 
-This repository starts the community edition from the free-version source snapshot. Every feature previously gated by Relay Pro is unlocked. No purchase, license key, or Relay Account is required. We are looking for contributors and future maintainers who want to help carry the project forward.
+Relay is free and open source under the MIT license. Every feature is unlocked: no purchase, license key, or account is required. We are looking for contributors and future maintainers who want to help carry the project forward.
 
-**Status:** development source for Relay 2.0, not a published, signed release. macOS is the primary supported development target. Relay Mobile is experimental and currently has known build failures.
+## Install
+
+1. Download `Relay-<version>.zip` from the [latest release](https://github.com/dbullard/Relay/releases/latest) (a Mac running macOS 15.6 or later).
+2. Unzip it and drag **Relay** to your **Applications** folder, then open it. Relay is signed and notarized by Apple.
+3. Follow the [Install guide](docs/guide/installing.md) for permissions, the Setup Wizard, and connecting services, then the [Quick start](docs/guide/quickstart.md) to build your first dashboard.
+
+**Already using Relay 1.3 or 1.3.1?** Relay 2.0 is a new app, so it doesn't pick up your old settings automatically. It offers to import them on first launch. See [Moving from Relay 1.3 or 1.3.1](docs/guide/app/migrating-from-1-3.md).
+
+Relay checks this repository's releases for updates (`Relay > Check for Updates…`).
 
 ## What Relay does
 
+![Relay's Home screen, with New Dashboard and Open File](docs/images/home-screen.jpg)
+
 ![Relay's module picker, listing audio, planning, utility, video, and wireless modules](docs/images/module-picker.jpg)
+
+![The Setup Wizard's starter tiles step, with a live layout preview](docs/guide/images/wizard-3-tiles.jpg)
 
 - Custom dashboard layouts with live controls and status tiles.
 - Visual automation graphs, shared values, and universal automation.
@@ -18,9 +30,9 @@ This repository starts the community edition from the free-version source snapsh
 
 Availability depends on connected hardware, platform support, and any separately licensed vendor software. Preview is off by default. Change it in **Settings → Preview**, then restart Relay.
 
-## Build on macOS
+## Build from source (macOS)
 
-Use a Mac with Xcode 26.3 or newer and its command-line tools selected. Some project/helper configurations target newer macOS SDK versions; check the deployment targets in Xcode if your toolchain reports a platform mismatch.
+Most people should install the release above. To build Relay yourself, use a Mac with Xcode 26.3 or newer and its command-line tools selected. Some project/helper configurations target newer macOS SDK versions; check the deployment targets in Xcode if your toolchain reports a platform mismatch.
 
 ```sh
 git clone https://github.com/dbullard/Relay.git
@@ -33,7 +45,7 @@ Choose the **Relay** scheme, select **My Mac**, and choose your own signing team
 For an unsigned local build:
 
 ```sh
-xcodebuild build -project Relay.xcodeproj -scheme 'Relay (DEBUG)' \
+xcodebuild build -project Relay.xcodeproj -scheme Relay \
   -destination 'platform=macOS' \
   CODE_SIGN_IDENTITY='-' CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 ```

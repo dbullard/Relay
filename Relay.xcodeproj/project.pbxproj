@@ -19,7 +19,6 @@
 		6F8907E82F6AEA1B00618362 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6F8907E32F6AE56400618362 /* Localizable.strings */; };
 		6F8907E92F6AEA1B00618362 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6F8907E32F6AE56400618362 /* Localizable.strings */; };
 		6F8907EA2F6AEA1B00618362 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 6F8907E52F6AE57000618362 /* Localizable.strings */; };
-		6FF411A42FC349CE009C2384 /* PrivacyInfo 2.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6FF411A32FC349CE009C2384 /* PrivacyInfo 2.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -84,7 +83,6 @@
 		6FCCA63B2F7C330900BF0C0C /* Relay.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Relay.entitlements; sourceTree = "<group>"; };
 		6FE0DAE62FBFA9050030E9C8 /* libndi.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libndi.dylib; path = ThirdParty/NDI/lib/macOS/libndi.dylib; sourceTree = "<group>"; };
 		6FEBD39D2EFAE80A0086D78A /* Relay Mobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Relay Mobile.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		6FF411A32FC349CE009C2384 /* PrivacyInfo 2.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "PrivacyInfo 2.xcprivacy"; sourceTree = "<group>"; };
 		6FF43CCB2F465F630006FEB5 /* Relay-Info-iOS.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Relay-Info-iOS.plist"; sourceTree = "<group>"; };
 		6FF9E4FF2ECA2EDB002F0A47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7F1000032FA0000000618362 /* TranscriptionHelper.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = TranscriptionHelper.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -402,6 +400,16 @@
 				WhatsNew/WhatsNewModels.swift,
 				WhatsNew/WhatsNewSheet.swift,
 				WhatsNew/WhatsNewStore.swift,
+				Config/ServiceCredentials.swift,
+				"Helpers/UI Helpers/UnavailableModuleView.swift",
+				Modules/ProfanityFilter.swift,
+				Helpers/Integrations/Connections/SpecteraClient.swift,
+				Helpers/Integrations/Connections/SpecteraKeychainStore.swift,
+				Migration/PreviousRelayImporter.swift,
+				Migration/PreviousRelayImportSheet.swift,
+				Diagnostics/GitHubIssueReport.swift,
+				Settings/DashboardIntegrationsSettingsView.swift,
+				Settings/LiveModeBehavior.swift,
 			);
 			target = 6FEBD39C2EFAE80A0086D78A /* Relay Mobile */;
 		};
@@ -506,7 +514,6 @@
 				6F8907D52F6A476200618362 /* es.lproj */,
 				6FCCA63B2F7C330900BF0C0C /* Relay.entitlements */,
 				6F0C66EA2FC32BA3001FD598 /* Frameworks */,
-				6FF411A32FC349CE009C2384 /* PrivacyInfo 2.xcprivacy */,
 			);
 			sourceTree = "<group>";
 		};
@@ -713,7 +720,6 @@
 				6F5629302F4F80DD0002A81C /* Assets.xcassets in Resources */,
 				6F8907E92F6AEA1B00618362 /* Localizable.strings in Resources */,
 				6F8907EA2F6AEA1B00618362 /* Localizable.strings in Resources */,
-				6FF411A42FC349CE009C2384 /* PrivacyInfo 2.xcprivacy in Resources */,
 				6F4CCF092F427A760096A73A /* Relay Icon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -997,7 +1003,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 66;
+				CURRENT_PROJECT_VERSION = 67;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
@@ -1023,7 +1029,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 2.0.2;
+				MARKETING_VERSION = 2.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = app.relay.Relay;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1056,7 +1062,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 66;
+				CURRENT_PROJECT_VERSION = 67;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=macosx*]" = "";
@@ -1090,7 +1096,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 2.0.2;
+				MARKETING_VERSION = 2.0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = app.relay.Relay;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1365,7 +1371,7 @@
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
 			requirement = {
 				kind = exactVersion;
-				version = 2.9.1;
+				version = 2.10.1;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

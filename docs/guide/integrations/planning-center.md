@@ -6,7 +6,7 @@ Relay can use Planning Center for service and plan selection, rundown display, d
 
 ## Before you connect
 
-Relay does not include a shared Planning Center app. Register your own free Public app in the Planning Center developer portal, set the callback URL to `app.relay.pco://oauth/callback`, and add its Client ID to the build. Step-by-step instructions are in [Integrations that need your own credentials](../../INTEGRATIONS.md#planning-center-pco). Without this, **Connect** shows "Planning Center sign-in is not configured".
+The official Relay release you download from GitHub already includes Planning Center sign-in, so you can connect right away. If you build Relay from source, or **Connect** says "not configured", register your own free Public app in the Planning Center developer portal, set the callback URL to `app.relay.pco://oauth/callback`, and enter its Client ID in `Relay > Settings` → **Integrations**. Step-by-step instructions are in [Integrations that need your own credentials](../../INTEGRATIONS.md).
 
 ## Connect your account
 

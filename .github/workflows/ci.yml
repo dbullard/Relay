@@ -27,9 +27,15 @@ jobs:
 
       - name: Build
         run: |
-          xcodebuild build -project Relay.xcodeproj -scheme 'Relay (DEBUG)' \
+          xcodebuild build -project Relay.xcodeproj -scheme Relay \
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY='-' CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+
+      - name: Build Relay Mobile (iOS Simulator)
+        run: |
+          xcodebuild build -project Relay.xcodeproj -scheme "Relay Mobile" \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Test
         run: |

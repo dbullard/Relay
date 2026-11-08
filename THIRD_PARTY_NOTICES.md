@@ -4,7 +4,7 @@ The MIT License in the repository root applies to Relay-owned source. It does no
 
 | Component | Use | License / source |
 |---|---|---|
-| Sparkle 2.9.1 | macOS updates | [Sparkle license and notices](https://github.com/sparkle-project/Sparkle/blob/2.9.1/LICENSE); resolved through Swift Package Manager |
+| Sparkle 2.10.1 | macOS updates | [Sparkle license and notices](https://github.com/sparkle-project/Sparkle/blob/2.10.1/LICENSE); resolved through Swift Package Manager |
 | NDI headers | SDK interface declarations | MIT notices included in each vendored header; those notices apply to the individual files, not the entire SDK |
 | NDI runtime | Optional video discovery/receiving | Proprietary, separately obtained; **not distributed in this repository**. [NDI SDK terms](https://docs.ndi.video/all/developing-with-ndi/sdk/licensing) |
 
