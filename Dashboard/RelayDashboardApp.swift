@@ -467,6 +467,12 @@ private final class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
     func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
         SparkleRelaunchCoordinator.shared.markRelaunchRequested()
         logSparkle("Updater will relaunch application")
+        #if canImport(AppKit)
+        // Sparkle quits the app with NSApp.terminate(_:), which AppKit silently refuses (with
+        // a beep) while a SwiftUI .sheet() is up, and the Home screen is one. Close the sheets
+        // and keep asking until the app actually quits, or the installer waits forever.
+        DispatchQueue.main.async { SparkleRelaunchCoordinator.shared.quitForRelaunch() }
+        #endif
     }
 
     func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
@@ -566,6 +572,24 @@ private final class SparkleRelaunchCoordinator {
         isInstallPrepared = false
         isRelaunchRequested = false
     }
+
+    #if canImport(AppKit)
+    /// Closes any open sheets and retries quitting until the process exits.
+    @MainActor
+    func quitForRelaunch(attempt: Int = 0) {
+        guard attempt < 20 else {
+            print("[Sparkle] Giving up quitting for relaunch after \(attempt) attempts")
+            return
+        }
+        NotificationCenter.default.post(name: .dashboardDismissBlockingModalsRequested, object: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.quitForRelaunch(attempt: attempt + 1)
+            }
+        }
+    }
+    #endif
 }
 #endif
 
