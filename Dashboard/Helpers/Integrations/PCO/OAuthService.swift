@@ -10,16 +10,18 @@ import CryptoKit
 import Foundation
 import AuthenticationServices
 
-/// Planning Center OAuth settings supplied at build time (see docs/INTEGRATIONS.md).
-/// Community builds ship with no client ID; register your own Planning Center app and
-/// set `PCO_OAUTH_CLIENT_ID` in `Config/Local.xcconfig`.
+/// Planning Center OAuth settings (see docs/INTEGRATIONS.md). Community builds ship with no
+/// client ID; register your own Planning Center app and enter its client ID in
+/// Settings > Integrations (or set `PCO_OAUTH_CLIENT_ID` in `Config/Local.xcconfig`).
 public enum PCOOAuthConfiguration {
     /// Redirect URI to register on your Planning Center app. Its scheme is declared in Info.plist.
     public static let redirectURI = "app.relay.pco://oauth/callback"
 
     public static var clientID: String {
-        (Bundle.main.object(forInfoDictionaryKey: "PCO_OAUTH_CLIENT_ID") as? String ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        ServiceCredentials.resolved(
+            defaultsKey: ServiceCredentials.Key.pcoClientID,
+            plistKeys: ["PCO_OAUTH_CLIENT_ID"]
+        )
     }
 
     public static var isConfigured: Bool { !clientID.isEmpty }
@@ -34,7 +36,7 @@ public final class OAuthService: NSObject {
         public var errorDescription: String? {
             switch self {
             case .notConfigured:
-                return "Planning Center sign-in is not configured. Register your own Planning Center app and set PCO_OAUTH_CLIENT_ID (see docs/INTEGRATIONS.md)."
+                return "Planning Center sign-in is not configured. Enter your Planning Center client ID in Settings > Integrations (see docs/INTEGRATIONS.md)."
             case .missingCode:
                 return "Planning Center did not return an authorization code."
             case .cancelled:

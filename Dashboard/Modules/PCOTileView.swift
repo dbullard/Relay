@@ -4931,7 +4931,7 @@ struct PCOTabServiceConfigView: View {
     @State private var autoAdvanceEnabled: Bool = false
     @State private var autoAdvanceCheckWeekday: Int = 2
     @State private var autoAdvanceCheckTimeMinutes: Int = 15 * 60
-    private let clientID = PCOOAuthConfiguration.clientID
+    private var clientID: String { PCOOAuthConfiguration.clientID }
     private let labelWidth: CGFloat = 110
     private let unfiledServiceTypeName: String = "Other"
     private var selectionDisabled: Bool {

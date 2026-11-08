@@ -2,7 +2,9 @@
 
 Relay does not ship any API keys, OAuth clients, or hosted-service settings. Everything below uses **your own** accounts, so nothing in a build is tied to the original maintainer. Unconfigured integrations simply show a "not configured" message; the rest of the app is unaffected.
 
-Build-time values go in `Config/Local.xcconfig` (gitignored). Copy it from the example first:
+**Easiest way:** open **Settings → Integrations** in Relay and paste your Planning Center client ID (and, in debug builds, your YouTube client ID). It takes effect immediately, with no rebuild.
+
+If you build Relay yourself, you can also set build-time values in `Config/Local.xcconfig` (gitignored). They are used whenever the matching field in Settings is empty. Copy the example first:
 
 ```sh
 cp Config/Local.xcconfig.example Config/Local.xcconfig
@@ -12,8 +14,8 @@ In xcconfig files, write URL slashes as `https:/$()/example.com`, because `//` s
 
 | Integration | Needs | Where it is set |
 |---|---|---|
-| [Planning Center](#planning-center-pco) | Your own PCO OAuth app | `PCO_OAUTH_CLIENT_ID` in `Local.xcconfig` |
-| [YouTube Stream Monitor](#youtube-stream-monitor) | Your own Google OAuth client | `YOUTUBE_OAUTH_*` in `Local.xcconfig` |
+| [Planning Center](#planning-center-pco) | Your own PCO OAuth app | Settings → Integrations (or `PCO_OAUTH_CLIENT_ID` in `Local.xcconfig`) |
+| [YouTube Stream Monitor](#youtube-stream-monitor) | Your own Google OAuth client | Settings → Integrations in debug builds (or `YOUTUBE_OAUTH_*` in `Local.xcconfig`) |
 | [Sentry crash reports](#sentry-optional) | Your own Sentry project (optional) | `SENTRY_DSN` in `Local.xcconfig` |
 | [Sparkle updates](#sparkle-updates-optional) | Your own appcast and signing key (optional) | `SUFeedURL` in `Local.xcconfig` |
 | [Hue and Govee smart lights](#smart-lights) | A Hue bridge, or a Govee API key | Entered in the app |
@@ -28,13 +30,8 @@ Relay signs in with OAuth (PKCE), so no client secret is needed.
 1. Sign in to the [Planning Center developer portal](https://api.planningcenteronline.com/oauth/applications) and create a **new OAuth application**.
 2. Set the **Redirect URI** to exactly: `app.relay.pco://oauth/callback`
 3. Copy the application's **Client ID** (the Client Secret is not used).
-4. In `Config/Local.xcconfig`, set:
-
-   ```
-   PCO_OAUTH_CLIENT_ID = your_client_id
-   ```
-
-5. Rebuild, then open **Settings → External Connections → Planning Center** and choose **Connect…**.
+4. Open **Settings → Integrations**, paste the Client ID, and click **Save**. (Building from source? You can set `PCO_OAUTH_CLIENT_ID = your_client_id` in `Config/Local.xcconfig` and rebuild instead.)
+5. Open **Settings → External Connections → Planning Center** and choose **Connect…**.
 
 The scopes requested are `services` and `people`. Your Planning Center account needs access to those products. The access token is stored in your macOS Keychain, not in the repository.
 

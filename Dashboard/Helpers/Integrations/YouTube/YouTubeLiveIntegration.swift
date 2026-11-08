@@ -140,7 +140,7 @@ enum YouTubeConfigurationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingClientID(let key):
-            return "YouTube OAuth is not configured. Add a Google OAuth client ID to Info.plist key \(key)."
+            return "YouTube OAuth is not configured. Enter your Google OAuth client ID in Settings > Integrations (or set \(key) in Config/Local.xcconfig)."
         case .invalidRedirectURI(let uri):
             return "The YouTube OAuth redirect URI is invalid: \(uri)"
         }
@@ -211,26 +211,25 @@ struct YouTubeOAuthConfiguration {
         let genericClientSecretKey = "YOUTUBE_OAUTH_CLIENT_SECRET"
         let genericRedirectKey = "YOUTUBE_OAUTH_REDIRECT_URI"
 
-        let clientID = (
-            Bundle.main.object(forInfoDictionaryKey: clientIDKey) as? String
-            ?? Bundle.main.object(forInfoDictionaryKey: genericClientKey) as? String
-            ?? ""
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let clientID = ServiceCredentials.resolved(
+            defaultsKey: ServiceCredentials.Key.youTubeClientID,
+            plistKeys: [clientIDKey, genericClientKey]
+        )
 
         guard !clientID.isEmpty else {
             throw YouTubeConfigurationError.missingClientID(clientIDKey)
         }
 
-        let clientSecret = (
-            Bundle.main.object(forInfoDictionaryKey: clientSecretKey) as? String
-            ?? Bundle.main.object(forInfoDictionaryKey: genericClientSecretKey) as? String
-        )?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clientSecret = ServiceCredentials.youTubeClientSecret()
+            ?? [clientSecretKey, genericClientSecretKey]
+                .map { ServiceCredentials.trimmed(Bundle.main.object(forInfoDictionaryKey: $0) as? String) }
+                .first { !$0.isEmpty }
 
-        let redirectURI = (
-            Bundle.main.object(forInfoDictionaryKey: redirectKey) as? String
-            ?? Bundle.main.object(forInfoDictionaryKey: genericRedirectKey) as? String
-            ?? "app.relay.youtube:/oauth2redirect"
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        var redirectURI = ServiceCredentials.resolved(
+            defaultsKey: ServiceCredentials.Key.youTubeRedirectURI,
+            plistKeys: [redirectKey, genericRedirectKey]
+        )
+        if redirectURI.isEmpty { redirectURI = "app.relay.youtube:/oauth2redirect" }
 
         guard let url = URL(string: redirectURI),
               let scheme = url.scheme,

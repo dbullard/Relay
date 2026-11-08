@@ -27,6 +27,7 @@ struct DashboardSettingsView: View {
         case general = "General"
         case audio = "Audio"
         case externalConnections = "External Connections"
+        case integrations = "Integrations"
         case devices = "External Devices"
         case controlInputs = "External Control"
         case lan = "Sync & Mirror"
@@ -41,6 +42,7 @@ struct DashboardSettingsView: View {
             case .general: return "gearshape"
             case .audio: return "mic"
             case .externalConnections: return "link.badge.plus"
+            case .integrations: return "key"
             case .devices: return "externaldrive.connected.to.line.below"
             case .lan: return "wifi"
             case .controlInputs: return "dot.radiowaves.left.and.right"
@@ -88,6 +90,8 @@ struct DashboardSettingsView: View {
             AudioInputsConfigView(initialTab: initialAudioTab, presentationStyle: .embedded)
         case .externalConnections:
             ExternalConnectionsSettingsView()
+        case .integrations:
+            DashboardIntegrationsSettingsView()
         case .devices:
             ExternalDevicesSettingsView()
         case .lan:

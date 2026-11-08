@@ -15,7 +15,7 @@ final class PCOOAuthErrorTests: XCTestCase {
 
     func testNotConfiguredOAuthErrorPointsToDocs() {
         let message = OAuthService.OAuthError.notConfigured.errorDescription ?? ""
-        XCTAssertTrue(message.contains("PCO_OAUTH_CLIENT_ID"))
+        XCTAssertTrue(message.contains("Settings > Integrations"))
         XCTAssertTrue(message.contains("docs/INTEGRATIONS.md"))
     }
 
@@ -29,5 +29,28 @@ final class PCOOAuthErrorTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
+    }
+}
+
+final class ServiceCredentialsTests: XCTestCase {
+    private func makeDefaults() -> UserDefaults {
+        let name = "ServiceCredentialsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        return defaults
+    }
+
+    func test_enteredValueWinsAndIsTrimmed() {
+        let defaults = makeDefaults()
+        ServiceCredentials.set("  abc123  ", forKey: "k", defaults: defaults)
+        XCTAssertEqual(ServiceCredentials.resolved(defaultsKey: "k", plistKeys: ["MISSING"], defaults: defaults), "abc123")
+    }
+
+    func test_emptyOrUnsetFallsBackToBlank() {
+        let defaults = makeDefaults()
+        XCTAssertEqual(ServiceCredentials.resolved(defaultsKey: "k", plistKeys: ["MISSING"], defaults: defaults), "")
+        ServiceCredentials.set("x", forKey: "k", defaults: defaults)
+        ServiceCredentials.set("   ", forKey: "k", defaults: defaults)
+        XCTAssertNil(defaults.string(forKey: "k"))
     }
 }
