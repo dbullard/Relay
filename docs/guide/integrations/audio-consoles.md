@@ -30,8 +30,7 @@ Relay can connect to supported digital mixing consoles over your network, turnin
 
 - **Always available, no badge:** DiGiCo, Behringer X32, and Midas M32.
 - **Available with a beta badge:** Allen & Heath Qu.
-- **Preview models:** Allen & Heath dLive, Avantis, and SQ, Behringer WING, and Avid VENUE S6L appear after you turn on `Relay > Settings` → **Preview** and restart Relay.
-- **Debug builds only:** the Yamaha families (DM7, RIVAGE PM, and CL/QL).
+- **Preview models:** Allen & Heath dLive, Avantis, and SQ, Behringer WING, Avid VENUE S6L, and the Yamaha families (DM7, RIVAGE PM, and CL/QL) appear after you turn on `Relay > Settings` → **Preview** and restart Relay.
 
 ## Common model notes
 

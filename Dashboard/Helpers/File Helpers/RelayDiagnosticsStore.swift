@@ -403,10 +403,6 @@ final class RelayDiagnosticsStore: ObservableObject {
             ?? "Relay"
         let version = info["CFBundleShortVersionString"] as? String ?? "Unknown"
         let build = info["CFBundleVersion"] as? String ?? "Unknown"
-        let distributionChannel = (info["RELAY_DISTRIBUTION_CHANNEL"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .nilIfEmpty ?? "release"
 
         #if os(iOS)
         let device = UIDevice.current
@@ -462,7 +458,6 @@ final class RelayDiagnosticsStore: ObservableObject {
         return """
         App: \(appName)
         Version: \(version) (\(build))
-        Distribution Channel: \(distributionChannel)
         Device: \(model)
         OS: \(osVersion)
         Timestamp: \(timestamp)

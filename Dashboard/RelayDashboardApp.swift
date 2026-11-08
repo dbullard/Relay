@@ -9,9 +9,6 @@ import SwiftUI
 #if canImport(Sparkle)
 import Sparkle
 #endif
-#if canImport(Sentry)
-import Sentry
-#endif
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -74,16 +71,9 @@ struct RelayDashboardApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var saveState = DashboardSaveState.shared
     @ObservedObject private var whatsNewStore = WhatsNewStore.shared
-    // Computed synchronously (mirroring launchScreenDismissed below) so the very first
-    // render already knows whether the opt-in prompt is needed. Starting this `false`
-    // and flipping it true from onAppear raced the home-screen sheet becoming true at
-    // the same moment -- that race is what let these launch-time modals stack in an
-    // unpredictable order on iPad, with What's New routinely ending up presented behind
-    // everything else.
-    @State private var showingUsageDiagnosticsPrompt: Bool = UsageDiagnosticsPreferences.shared.shouldPresentPrompt
     // Launch-sequencing gate for the one-time "What's New" popup. Home's sheet (below)
     // stays hidden until this resolves, so the on-launch order is always fixed:
-    // opt-in prompt -> What's New (only if there are unseen releases) -> Home.
+    // What's New (only if there are unseen releases) -> Home.
     @State private var showingWhatsNewSheet = false
     @State private var hasCheckedWhatsNewThisLaunch = false
     @State private var hasResolvedWhatsNewGate = false
@@ -119,9 +109,6 @@ struct RelayDashboardApp: App {
 
         let configuredRootView = baseView
         .preferredColorScheme(colorSchemePreference.colorScheme)
-        .sheet(isPresented: $showingUsageDiagnosticsPrompt) {
-            UsageDiagnosticsConsentSheet()
-        }
         .sheet(isPresented: $showingWhatsNewSheet, onDismiss: { whatsNewStore.markLatestReleaseSeen() }) {
             WhatsNewSheet(releases: whatsNewStore.unseenReleases) {
                 whatsNewStore.markLatestReleaseSeen()
@@ -183,17 +170,12 @@ struct RelayDashboardApp: App {
 
                 _ = YamahaConsoleServiceRegistry.shared
 
-                updateUsageDiagnosticsPromptPresentation()
-                advanceLaunchGateIfNeeded()
-            }
-            .onChange(of: showingUsageDiagnosticsPrompt) { _, isShowing in
-                guard !isShowing else { return }
                 advanceLaunchGateIfNeeded()
             }
 
         configuredRootView
             .sheet(isPresented: Binding(
-                get: { !launchScreenDismissed && !showingUsageDiagnosticsPrompt && !showingWhatsNewSheet && hasResolvedWhatsNewGate },
+                get: { !launchScreenDismissed && !showingWhatsNewSheet && hasResolvedWhatsNewGate },
                 set: { shown in if !shown { launchScreenDismissed = true } }
             )) {
                 RelayLaunchScreenView(
@@ -271,19 +253,9 @@ struct RelayDashboardApp: App {
             }
     }
 
-    private func updateUsageDiagnosticsPromptPresentation() {
-        DispatchQueue.main.async {
-            showingUsageDiagnosticsPrompt = UsageDiagnosticsPreferences.shared.shouldPresentPrompt
-            advanceLaunchGateIfNeeded()
-        }
-    }
-
     /// Runs the one-time "What's New" check and unblocks the Home sheet once it settles.
-    /// Guarded to run at most once per launch, and only once the opt-in prompt is out of
-    /// the way -- see the comment on `showingUsageDiagnosticsPrompt` above for why the
-    /// order matters.
+    /// Guarded to run at most once per launch.
     private func advanceLaunchGateIfNeeded() {
-        guard !showingUsageDiagnosticsPrompt else { return }
         guard !hasCheckedWhatsNewThisLaunch else { return }
         hasCheckedWhatsNewThisLaunch = true
 
@@ -301,7 +273,7 @@ struct RelayDashboardApp: App {
                 group.cancelAll()
             }
 
-            if !showingUsageDiagnosticsPrompt, whatsNewStore.shouldPresentAutoPopup() {
+            if whatsNewStore.shouldPresentAutoPopup() {
                 showingWhatsNewSheet = true
             }
             hasResolvedWhatsNewGate = true
@@ -601,7 +573,6 @@ enum MenuItemLocator {
 
 private final class RelayAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        RelaySentry.applyConsent(enabled: UsageDiagnosticsPreferences.shared.isEnabled)
         installQuitAndCloseKeyMonitor()
         retargetCloseMenuItem()
     }
@@ -706,167 +677,6 @@ private final class RelayAppDelegate: NSObject, NSApplicationDelegate {
 
 }
 #endif
-
-enum RelaySentry {
-    enum UploadError: LocalizedError {
-        case sdkNotAvailable
-        case dsnNotConfigured
-        case sdkDisabled
-        case emptyFeedback
-
-        var errorDescription: String? {
-            switch self {
-            case .sdkNotAvailable: return "Reporting is not available in this build."
-            case .dsnNotConfigured: return "Reporting is not configured in this build."
-            case .sdkDisabled: return "Reporting could not be started."
-            case .emptyFeedback: return "Describe the issue before submitting your report."
-            }
-        }
-    }
-
-    #if canImport(Sentry)
-    private static var consentEnabled = false
-    #endif
-
-    static func applyConsent(enabled: Bool) {
-        #if canImport(Sentry)
-        consentEnabled = enabled
-        if SentrySDK.isEnabled { SentrySDK.close() }
-        if enabled { startIfConfigured(crashReportingEnabled: true) }
-        #endif
-    }
-
-    #if canImport(Sentry)
-    /// Shared by automatic crash reporting and user-initiated feedback. Manual-only startup
-    /// does not turn on automatic crash collection or change the user's consent preference.
-    static func configureReportingOptions(_ options: Options, crashReportingEnabled: Bool) {
-        options.debug = false
-        options.sendDefaultPii = false
-        options.enableCrashHandler = crashReportingEnabled
-        options.enableAppHangTracking = false
-        options.enableAutoSessionTracking = false
-        options.enableAutoBreadcrumbTracking = false
-        options.enableAutoPerformanceTracing = false
-        options.enableNetworkBreadcrumbs = false
-        options.enableNetworkTracking = false
-        options.enableFileIOTracing = false
-        options.enableDataSwizzling = false
-        options.enableFileManagerSwizzling = false
-        options.enableCoreDataTracing = false
-        options.enableWatchdogTerminationTracking = false
-        options.enableCaptureFailedRequests = false
-        options.enableLogs = false
-        options.sendClientReports = false
-        options.enableMetricKit = false
-        options.enableSwizzling = false
-        options.attachStacktrace = false
-        #if canImport(UIKit)
-        options.attachScreenshot = false
-        options.attachViewHierarchy = false
-        #endif
-        options.maxBreadcrumbs = 0
-        options.beforeBreadcrumb = { _ in nil }
-        options.beforeSend = { consentEnabled ? minimizeAutomaticEvent($0) : nil }
-    }
-
-    private static func startIfConfigured(crashReportingEnabled: Bool) {
-        guard let dsn = configuredDSN else { return }
-        SentrySDK.start { options in
-            options.dsn = dsn
-            options.environment = distributionChannel.rawValue
-            options.releaseName = releaseName
-            configureReportingOptions(options, crashReportingEnabled: crashReportingEnabled)
-        }
-    }
-
-    static func makeDiagnosticAttachment(_ diagnostics: String?) -> Attachment? {
-        guard let diagnostics, !diagnostics.isEmpty else { return nil }
-        return Attachment(data: Data(diagnostics.utf8), filename: "relay-diagnostics.txt", contentType: "text/plain")
-    }
-
-    static func makeFeedback(message: String, diagnostics: String?) throws -> SentryFeedback {
-        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw UploadError.emptyFeedback }
-        let attachments = makeDiagnosticAttachment(diagnostics).map { [$0] }
-        return SentryFeedback(message: trimmed, name: nil, email: nil, source: .custom, attachments: attachments)
-    }
-
-    /// Accept only native crash events, including fatal reports without a handled flag.
-    /// Handled exceptions, diagnostic messages, hangs and transactions are not uploaded.
-    static func minimizeAutomaticEvent(_ event: Event) -> Event? {
-        guard event.type != "transaction" else { return nil }
-        let hasCrashDetails = event.exceptions?.isEmpty == false || event.threads?.isEmpty == false
-        let isUnhandled = event.exceptions?.contains { $0.mechanism?.handled?.boolValue == false } == true
-        guard hasCrashDetails, event.level == .fatal || isUnhandled else { return nil }
-
-        event.logger = nil
-        event.serverName = nil
-        event.dist = nil
-        event.transaction = nil
-        event.user = nil
-        event.request = nil
-        event.modules = nil
-        event.extra = [:]
-        event.message = nil
-        event.tags = [:]
-        event.fingerprint = nil
-        event.context = [:]
-        event.breadcrumbs = []
-        event.stacktrace?.registers = [:]
-        event.exceptions?.forEach { exception in
-            exception.value = nil
-            exception.module = nil
-            if let mechanism = exception.mechanism {
-                let minimalMechanism = Mechanism(type: mechanism.type)
-                minimalMechanism.handled = mechanism.handled
-                exception.mechanism = minimalMechanism
-            }
-            exception.stacktrace?.registers = [:]
-        }
-        event.threads?.forEach { thread in
-            thread.name = nil
-            thread.stacktrace?.registers = [:]
-        }
-        return event
-    }
-
-    private static var configuredDSN: String? {
-        #if DEBUG
-        return nil
-        #else
-        guard let raw = Bundle.main.object(forInfoDictionaryKey: "SENTRY_DSN") as? String else { return nil }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-        #endif
-    }
-    #endif
-
-    static func uploadFeedback(message: String, diagnostics: String?) throws {
-        #if canImport(Sentry)
-        let feedback = try makeFeedback(message: message, diagnostics: diagnostics)
-        guard configuredDSN != nil else { throw UploadError.dsnNotConfigured }
-        if !SentrySDK.isEnabled { startIfConfigured(crashReportingEnabled: consentEnabled) }
-        guard SentrySDK.isEnabled else { throw UploadError.sdkDisabled }
-        SentrySDK.capture(feedback: feedback)
-        #else
-        throw UploadError.sdkNotAvailable
-        #endif
-    }
-
-    private static var releaseName: String {
-        let info = Bundle.main.infoDictionary ?? [:]
-        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "Relay"
-        let version = info["CFBundleShortVersionString"] as? String ?? "0"
-        let build = info["CFBundleVersion"] as? String ?? "0"
-        return "\(bundleIdentifier)@\(version)+\(build)"
-    }
-
-    private static var distributionChannel: RelayDistributionChannel {
-        let raw = (Bundle.main.object(forInfoDictionaryKey: "RELAY_DISTRIBUTION_CHANNEL") as? String)
-            ?? RelayDistributionChannel.release.rawValue
-        return RelayDistributionChannel(rawValue: raw.lowercased()) ?? .release
-    }
-}
 
 #if canImport(AppKit)
 private struct WindowTitleSetter: ViewModifier {

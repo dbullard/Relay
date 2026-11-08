@@ -75,12 +75,8 @@
 	<string>Relay may capture system audio for transcription when enabled.</string>
 	<key>RELAY_API_BASE_URL</key>
 	<string>$(RELAY_API_BASE_URL)</string>
-	<key>RELAY_DISTRIBUTION_CHANNEL</key>
-	<string>$(RELAY_DISTRIBUTION_CHANNEL)</string>
 	<key>PCO_OAUTH_CLIENT_ID</key>
 	<string>$(PCO_OAUTH_CLIENT_ID)</string>
-	<key>SENTRY_DSN</key>
-	<string>$(SENTRY_DSN)</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 	<key>SUFeedURL</key>

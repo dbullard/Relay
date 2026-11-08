@@ -11,16 +11,17 @@ Preview features are early or evolving parts of Relay that are available for tes
 2. Turn on **Enable preview features**.
 3. Quit and reopen Relay. The setting takes effect after a restart.
 
-Debug builds (the `Relay (DEBUG)` scheme in Xcode) always have Preview on. Release builds have it off until you turn it on.
+Preview is off until you turn it on. Debug and release builds behave the same.
 
 ## What Preview includes
 
-These need **Preview** (or a Debug build):
+These need **Preview**:
 
 - **[Smart Lights](../integrations/lighting.md)**: the Smart Light Control action node
 - **ProPresenter State trigger**: the [automation trigger](../dashboards/nodes/triggers.md#propresenter-state-beta) that fires when the slide, presentation, message, or timer changes
 - **Extra DAW transport protocols**: Logic Pro HUI, Reaper HUI and MCU, Cubase/Nuendo HUI, Digital Performer HUI, and Generic MTC/MMC. Pro Tools HUI and Generic HUI are always available. See [DAW Transport](../dashboards/modules/audio-visual.md).
-- **Newer device models**: Shure `ANX4`, `ADTD`, and `ADTQ` ([wireless devices](../integrations/wireless-devices.md)), and the Allen & Heath dLive, Avantis, and SQ, Behringer WING, and Avid VENUE S6L consoles ([audio consoles](../integrations/audio-consoles.md))
+- **Newer device models**: Shure `ANX4`, `ADTD`, and `ADTQ` ([wireless devices](../integrations/wireless-devices.md)), the Allen & Heath dLive, Avantis, and SQ, Behringer WING, Avid VENUE S6L, and Yamaha DM7, RIVAGE PM, and CL/QL consoles ([audio consoles](../integrations/audio-consoles.md))
+- **[Shure Overview](../dashboards/modules/wireless.md#shure-overview)** module and the **[YouTube Live Stream Monitor](../integrations/youtube-live.md)**, which also needs your own Google OAuth client. See [Integrations that need your own credentials](../../INTEGRATIONS.md#youtube-stream-monitor)
 - **Wireless diagnostics logging** controls (see below)
 
 ## Other labels you'll see
@@ -28,13 +29,12 @@ These need **Preview** (or a Debug build):
 Not everything marked beta needs Preview:
 
 - **Beta badge, available everywhere:** [Sennheiser](../dashboards/modules/wireless.md#sennheiser), [NDI Feed](../integrations/ndi.md), [Vista](../integrations/vista.md), the **If / Else** node, and the Allen & Heath Qu console. They carry a badge in the app but appear in every build.
-- **Debug builds only:** the [Shure Overview](../dashboards/modules/wireless.md#shure-overview-debug-only) module, the Yamaha console families (DM7, RIVAGE PM, CL/QL), and the [YouTube Live Stream Monitor](../integrations/youtube-live.md), which also needs your own Google OAuth client. See [Integrations that need your own credentials](../../INTEGRATIONS.md#youtube-stream-monitor).
 
 The standalone **Shure** module and **Live Transcription** are stable.
 
 ## Preview tools in Settings
 
-With Preview on, the **Preview** settings page also shows **Wireless Diagnostics Logging**: verbose logging toggles for Shure and Sennheiser device families, each with a reset-to-defaults button. Verbose tracing is only active when Preview is on (or in Debug builds), after you restart Relay.
+With Preview on, the **Preview** settings page also shows **Wireless Diagnostics Logging**: verbose logging toggles for Shure and Sennheiser device families, each with a reset-to-defaults button. Verbose tracing is only active when Preview is on, after you restart Relay.
 
 ## When to use Preview features
 
@@ -52,7 +52,7 @@ Check that Preview is on and that you restarted Relay after turning it on. Then 
 
 - Confirm **Enable preview features** is on under `Relay > Settings` → **Preview**, and restart Relay.
 - Some device models only appear when the required hardware or integration is present.
-- The YouTube Live Stream Monitor needs a Debug build and your own OAuth client.
+- The YouTube Live Stream Monitor needs Preview and your own OAuth client.
 
 ### I found a problem
 

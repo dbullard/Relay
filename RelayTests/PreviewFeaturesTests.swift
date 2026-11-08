@@ -3,24 +3,21 @@ import XCTest
 
 @MainActor
 final class PreviewFeaturesTests: XCTestCase {
-    func test_releaseWithSwitchOff_hasNoPreviewFeatures() {
-        XCTAssertFalse(RelayBuildConfig.previewFeaturesEnabled(channel: .release, userEnabled: false))
-    }
-
-    func test_releaseWithSwitchOn_hasPreviewFeatures() {
-        XCTAssertTrue(RelayBuildConfig.previewFeaturesEnabled(channel: .release, userEnabled: true))
-    }
-
-    func test_debugAlwaysHasPreviewFeatures() {
-        XCTAssertTrue(RelayBuildConfig.previewFeaturesEnabled(channel: .debug, userEnabled: false))
+    func test_previewFollowsOnlyTheUserSwitch() {
+        let defaults = UserDefaults.standard
+        let original = defaults.object(forKey: RelayBuildConfig.previewFeaturesKey)
+        defer {
+            if let original { defaults.set(original, forKey: RelayBuildConfig.previewFeaturesKey) }
+            else { defaults.removeObject(forKey: RelayBuildConfig.previewFeaturesKey) }
+        }
+        defaults.set(false, forKey: RelayBuildConfig.previewFeaturesKey)
+        XCTAssertFalse(RelayBuildConfig.isPreviewEnabled)
+        defaults.set(true, forKey: RelayBuildConfig.previewFeaturesKey)
+        XCTAssertTrue(RelayBuildConfig.isPreviewEnabled)
     }
 
     func test_previewKeyIsStable() {
         XCTAssertEqual(RelayBuildConfig.previewFeaturesKey, "relay_preview_features_enabled")
-    }
-
-    func test_unknownOrOldBetaChannelValueFallsBackToRelease() {
-        XCTAssertNil(RelayDistributionChannel(rawValue: "beta"))
     }
 
     func test_wirelessLoggingKeyMatchesPreviewKey() {

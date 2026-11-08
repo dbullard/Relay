@@ -34,7 +34,7 @@ These pages live in the repository so they can be improved with pull requests. F
 - [NDI](integrations/ndi.md)
 - [Smart lights](integrations/lighting.md)
 - [Vista](integrations/vista.md)
-- [YouTube Live](integrations/youtube-live.md) (Debug builds only, needs your own Google OAuth client)
+- [YouTube Live](integrations/youtube-live.md) (Preview feature, needs your own Google OAuth client)
 
 ## Protocols
 

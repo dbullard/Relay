@@ -20,11 +20,9 @@ import CryptoKit
 #endif
 
 enum LiveStreamFeatureFlags {
+    /// YouTube Live is a Preview feature (Settings > Preview).
     static var isEnabled: Bool {
-        let raw = (Bundle.main.object(forInfoDictionaryKey: "RELAY_DISTRIBUTION_CHANNEL") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return raw == "beta" || raw == "debug"
+        RelayBuildConfig.isPreviewEnabled
     }
 }
 

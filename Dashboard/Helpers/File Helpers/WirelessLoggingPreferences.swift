@@ -3,8 +3,8 @@
 //  Relay
 //
 //  Gates verbose Shure / Sennheiser diagnostic logging by device family.
-//  Beta and debug builds default to ON for the families we're actively
-//  developing against; release builds suppress all verbose logging
+//  Builds with Preview features enabled default to ON for the families we're actively
+//  developing against; builds without Preview features suppress all verbose logging
 //  unconditionally to keep the main thread free from RelayDiagnosticsStore
 //  pressure on busy dashboards.
 //
@@ -141,14 +141,11 @@ final class WirelessLoggingPreferences: ObservableObject {
         return UserDefaults.standard.object(forKey: masterSennheiserKey) as? Bool ?? true
     }
 
-    // Computed once at launch: verbose wireless logging requires a debug build or the Preview switch (restart required).
+    // Computed once at launch: verbose wireless logging requires the Preview switch (restart required).
     // The key below deliberately duplicates RelayBuildConfig.previewFeaturesKey because this
     // nonisolated helper cannot reference the MainActor-isolated config type. A test pins them equal.
     nonisolated static let isBetaOrDebugBuild: Bool = {
-        let raw = (Bundle.main.object(forInfoDictionaryKey: "RELAY_DISTRIBUTION_CHANNEL") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return raw == "debug" || UserDefaults.standard.bool(forKey: "relay_preview_features_enabled")
+        UserDefaults.standard.bool(forKey: "relay_preview_features_enabled")
     }()
 
     // MARK: - UI helpers (MainActor)

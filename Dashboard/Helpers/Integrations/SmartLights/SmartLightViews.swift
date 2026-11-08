@@ -955,7 +955,7 @@ private struct SmartLightProfileEditor: View {
 
             Picker("Provider", selection: $profile.providerType) {
                 ForEach(SmartLightProviderType.allCases.filter {
-                    $0 != .genericFuture || RelayBuildConfig.isDebugBuild
+                    $0 != .genericFuture
                 }) { provider in
                     Text(provider.displayName).tag(provider)
                 }

@@ -509,11 +509,8 @@ extension AudioConsoleModel {
     }
 
     static var selectionCases: [AudioConsoleModel] {
-        if RelayBuildConfig.isDebugBuild {
-            return allCases
-        }
         if RelayBuildConfig.isPreviewEnabled {
-            return allCases.filter { !debugOnlyModels.contains($0) }
+            return allCases
         }
         return allCases.filter { !betaOrDebugOnlyModels.contains($0) && !debugOnlyModels.contains($0) }
     }

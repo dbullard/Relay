@@ -8,8 +8,6 @@ This guide walks you through Relay from first launch to running your first live 
 
 Launch Relay on your Mac. If the system asks for permissions, allow the prompts that match the workflows you plan to use.
 
-The first launch also shows an opt-in consent screen for diagnostics and crash reporting — choose whether Relay can send that data back to help improve the app.
-
 > [!TIP]
 > Relay may need Local Network, Microphone, or Speech Recognition access depending on which modules or integrations you use. You can review permission status at any time under `Relay > Settings` → **Access**.
 

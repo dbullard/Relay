@@ -114,11 +114,11 @@ enum DashboardModuleCatalog {
             .init(id: "transcription", title: "Live Transcription", subtitle: "Single-input speech-to-text with triggers", systemImage: "text.bubble.fill", category: .audio, kind: .liveTranscription(LiveTranscriptionModuleModel()), isBeta: false)
 
         ]
-#if DEBUG || BETA
+        if RelayBuildConfig.isPreviewEnabled {
         items.append(
             .init(id: "shureOverview", title: "Shure Overview", subtitle: "Multi-device wireless status overview for mics and IEMs", systemImage: "list.bullet.rectangle", category: .wireless, kind: .shureOverview, isBeta: true)
         )
-#endif
+        }
         if LiveStreamFeatureFlags.isEnabled {
             items.append(
                 .init(

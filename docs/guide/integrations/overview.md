@@ -10,7 +10,7 @@ Software connections are configured under `Relay > Settings` → **External Conn
 
 - [Planning Center](planning-center.md) — Display service plans, team assignments, and Services Live on your dashboard.
 - [ProPresenter](propresenter.md) — Show live slide status and trigger ProPresenter actions from Automation View.
-- [YouTube Live `Debug only`](youtube-live.md) — Monitor viewer count, chat activity, and stream health for a live broadcast.
+- [YouTube Live `Preview`](youtube-live.md) — Monitor viewer count, chat activity, and stream health for a live broadcast.
 - [NDI Video `Beta`](ndi.md) — Monitor NDI® video sources over the network with quality tiers and NIC-aware routing.
 
 ## Hardware and lighting

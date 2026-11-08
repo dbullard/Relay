@@ -36,8 +36,6 @@ May be required for system-audio transcription workflows depending on how audio 
 
 Quit and reopen Relay, then test again.
 
-## Usage diagnostics
+## Crash and usage reporting
 
-Separate from macOS permissions, `Relay > Settings` → **Access** also has a **Share Crash and Usage Diagnostics** toggle. The first time it comes up, Relay shows a one-time prompt so you can choose before anything is shared, and you can change your answer at any time from that same toggle.
-
-Community builds have no hosted backend and no Sentry project configured, so nothing is uploaded unless you set up your own. If you do, enabling the toggle shares app version, platform, a random installation ID, active time, and technical crash or hang details. It does **not** include dashboard content, connected-device data, location, audio, or Relay network addresses. See [Sentry](../../INTEGRATIONS.md#sentry-optional) and the privacy notes in the [README](../../../README.md#privacy-and-optional-services).
+Relay does not collect crash reports or usage data, and it has no analytics. To report a problem, use **Settings → Help → Report a Bug**. That opens a prefilled issue on GitHub, and nothing is sent until you submit it there. GitHub issues are public, so review any diagnostic summary before you include it.

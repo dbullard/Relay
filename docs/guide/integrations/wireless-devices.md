@@ -22,7 +22,7 @@ Shure devices can be added manually or discovered on the network. Once configure
 - Battery
 - RF and audio information
 
-A dedicated `Shure Overview` module (Debug builds only) gives a higher-level summary across multiple devices and channels. It is useful when you want one tile to surface warning states, battery concerns, stale telemetry, or offline channels without building a wall of individual Shure tiles. Relay uses a centralized polling system for Shure wireless devices featuring dynamic tiers for greater efficiency. This optimizes performance by skipping redundant polling and prioritizing the devices you are actively monitoring.
+A dedicated `Shure Overview` module (Preview feature) gives a higher-level summary across multiple devices and channels. It is useful when you want one tile to surface warning states, battery concerns, stale telemetry, or offline channels without building a wall of individual Shure tiles. Relay uses a centralized polling system for Shure wireless devices featuring dynamic tiers for greater efficiency. This optimizes performance by skipping redundant polling and prioritizing the devices you are actively monitoring.
 
 ### Shure monitoring details
 
@@ -56,8 +56,8 @@ Relay monitors Sennheiser Spectera systems:
 
 ## Availability notes
 
-- Shure `ANX4`, `ADTD`, and `ADTQ` models appear only when Preview features are on (`Relay > Settings` → **Preview**) or in Debug builds.
-- The `Shure Overview` module is in Debug builds only.
+- Shure `ANX4`, `ADTD`, and `ADTQ` models appear only when Preview features are on (`Relay > Settings` → **Preview**) .
+- The `Shure Overview` module needs Preview.
 - Verbose wireless diagnostics logging controls appear on the **Preview** settings page when Preview is on, and take effect after you restart Relay.
 
 ## Automation tie-ins

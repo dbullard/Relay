@@ -2,7 +2,7 @@
 
 Relay does not ship any API keys, OAuth clients, or hosted-service settings. Everything below uses **your own** accounts, so nothing in a build is tied to the original maintainer. Unconfigured integrations simply show a "not configured" message; the rest of the app is unaffected.
 
-**Easiest way:** open **Settings → Integrations** in Relay and paste your Planning Center client ID (and, in debug builds, your YouTube client ID). It takes effect immediately, with no rebuild.
+**Easiest way:** open **Settings → Integrations** in Relay and paste your Planning Center client ID (and, with Preview on, your YouTube client ID). It takes effect immediately, with no rebuild.
 
 If you build Relay yourself, you can also set build-time values in `Config/Local.xcconfig` (gitignored). They are used whenever the matching field in Settings is empty. Copy the example first:
 
@@ -15,9 +15,8 @@ In xcconfig files, write URL slashes as `https:/$()/example.com`, because `//` s
 | Integration | Needs | Where it is set |
 |---|---|---|
 | [Planning Center](#planning-center-pco) | Your own PCO OAuth app | Settings → Integrations (or `PCO_OAUTH_CLIENT_ID` in `Local.xcconfig`) |
-| [YouTube Stream Monitor](#youtube-stream-monitor) | Your own Google OAuth client | Settings → Integrations in debug builds (or `YOUTUBE_OAUTH_*` in `Local.xcconfig`) |
-| [Sentry crash reports](#sentry-optional) | Your own Sentry project (optional) | `SENTRY_DSN` in `Local.xcconfig` |
-| [Sparkle updates](#sparkle-updates-optional) | Your own appcast and signing key (optional) | `SUFeedURL` in `Local.xcconfig` |
+| [YouTube Stream Monitor](#youtube-stream-monitor) | Your own Google OAuth client | Settings → Integrations with Preview on (or `YOUTUBE_OAUTH_*` in `Local.xcconfig`) |
+| [Sparkle updates](#sparkle-updates) | Only if you ship your own fork | `SUFeedURL` and `SUPublicEDKey` |
 | [Hue and Govee smart lights](#smart-lights) | A Hue bridge, or a Govee API key | Entered in the app |
 | [NDI](#ndi) | The NDI runtime | See [DEVELOPMENT.md](DEVELOPMENT.md#ndi-runtime) |
 
@@ -41,7 +40,7 @@ If you skip this, **Connect…** shows: "Planning Center sign-in is not configur
 
 ## YouTube Stream Monitor
 
-This module is only available in Debug builds (`Relay (DEBUG)`) and builds whose distribution channel is `beta`. Release builds hide it.
+This module is a Preview feature. Turn on **Settings → Preview** and restart Relay.
 
 1. In the [Google Cloud console](https://console.cloud.google.com/), create a project and enable the **YouTube Data API v3**.
 2. Configure the OAuth consent screen. While the app is in "Testing" status, add your own Google account as a test user.
@@ -59,19 +58,15 @@ This module is only available in Debug builds (`Relay (DEBUG)`) and builds whose
 
 iOS uses the matching `YOUTUBE_OAUTH_CLIENT_ID_IOS`, `YOUTUBE_OAUTH_REDIRECT_URI_IOS`, and `YOUTUBE_OAUTH_CALLBACK_SCHEME` keys. Relay Mobile is experimental and does not currently build.
 
-## Sentry (optional)
+## Sparkle updates
 
-Crash reporting is off unless you set your own DSN, and it is also disabled in Debug builds. Set `SENTRY_DSN` to a DSN from **your own** Sentry project. Reports then go to your project only. See [DEVELOPMENT.md](DEVELOPMENT.md) for what is and is not collected.
+Relay checks `SUFeedURL` for updates. The default, in `Config/Community.xcconfig`, is the `appcast.xml` attached to the latest GitHub release:
 
-## Sparkle updates (optional)
+```
+https://github.com/dbullard/Relay/releases/latest/download/appcast.xml
+```
 
-Automatic updates are off unless `SUFeedURL` points at an appcast you host. To ship your own updates:
-
-1. Generate your own EdDSA key pair with Sparkle's `generate_keys` tool.
-2. Replace `SUPublicEDKey` in `Relay-Info.plist` with **your** public key. The value in the repository belongs to the original project, so updates signed with your key will not verify against it.
-3. Set `SUFeedURL` in `Local.xcconfig` and publish a signed appcast.
-
-Keep your private key out of the repository.
+An update installs only if it is signed with the private key matching `SUPublicEDKey` in `Relay-Info.plist`, so a fork cannot push updates to official installs. If you ship your own fork, generate your own key pair with Sparkle's `generate_keys`, replace `SUPublicEDKey`, and set your own `SUFeedURL` in `Local.xcconfig`. Keep your private key out of the repository. Maintainers publish updates as described in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md#publishing-an-update).
 
 ## Smart lights
 

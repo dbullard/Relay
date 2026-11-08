@@ -509,18 +509,18 @@ struct DashboardHelpSettingsView: View {
 
 private struct RelayBugReportSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var message = ""
     @State private var includeDiagnostics = false
     @State private var diagnosticSummary = RelayDiagnosticsStore.shared.diagnosticSummary()
-    @State private var isQueued = false
-    @State private var showingError = false
-    @State private var errorMessage = ""
+    @State private var openedOnGitHub = false
+    @State private var copiedDiagnostics = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Report a Bug").font(.title2.bold())
-                Text("Describe what happened, what you expected, and how to reproduce it. This report is sent to Relay's private Sentry inbox only when you submit it.")
+                Text("Describe what happened, what you expected, and how to reproduce it. Relay opens a prefilled GitHub issue in your browser. Nothing is sent until you submit it there, and you need a free GitHub account.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
@@ -528,45 +528,30 @@ private struct RelayBugReportSheet: View {
                 TextEditor(text: $message)
                     .frame(minHeight: 120)
                     .accessibilityLabel("Bug report description")
-                    .disabled(isQueued)
 
                 Toggle("Include diagnostic summary", isOn: $includeDiagnostics)
-                    .disabled(isQueued)
                 if includeDiagnostics {
-                    Text("Review or edit the summary before submitting. It may contain device names, connection addresses, file paths, and recent errors.")
+                    Text("Review or edit the summary first. It may contain device names, connection addresses, file paths, and recent errors. GitHub issues are public.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextEditor(text: $diagnosticSummary)
                         .font(.system(.caption, design: .monospaced))
                         .frame(minHeight: 140)
-                        .accessibilityLabel("Diagnostic summary to submit")
-                        .disabled(isQueued)
+                        .accessibilityLabel("Diagnostic summary to include")
                 }
 
-                Text("Submitting a report does not enable automatic crash reporting or usage diagnostics.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if isQueued {
-                    Text("Report queued for Sentry. It will be sent when a connection is available.")
-                        .accessibilityLabel("Report queued for Sentry")
+                if openedOnGitHub {
+                    Text(copiedDiagnostics
+                         ? "Opened GitHub. The full diagnostic summary is on your clipboard; paste it into the issue."
+                         : "Opened GitHub. Review the issue there and submit it.")
+                        .font(.callout)
                 }
                 HStack {
-                    Button(isQueued ? "Done" : "Cancel") { dismiss() }
+                    Button(openedOnGitHub ? "Done" : "Cancel") { dismiss() }
                     Spacer()
-                    Button("Submit Report") {
-                        do {
-                            try RelaySentry.uploadFeedback(
-                                message: message,
-                                diagnostics: includeDiagnostics ? diagnosticSummary : nil
-                            )
-                            isQueued = true
-                        } catch {
-                            errorMessage = error.localizedDescription
-                            showingError = true
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isQueued || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Open on GitHub") { openIssue() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .padding()
@@ -574,11 +559,24 @@ private struct RelayBugReportSheet: View {
         #if os(macOS)
         .frame(width: 520, height: 560)
         #endif
-        .alert("Report could not be queued", isPresented: $showingError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage)
+    }
+
+    private func openIssue() {
+        guard let report = GitHubIssueReport.make(
+            message: message,
+            diagnostics: includeDiagnostics ? diagnosticSummary : nil
+        ) else { return }
+        copiedDiagnostics = report.diagnosticsNeedPasting
+        if report.diagnosticsNeedPasting {
+            #if os(iOS)
+            UIPasteboard.general.string = diagnosticSummary
+            #else
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(diagnosticSummary, forType: .string)
+            #endif
         }
+        openURL(report.url)
+        openedOnGitHub = true
     }
 }
 

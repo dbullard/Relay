@@ -16,7 +16,7 @@ The shipping scheme is `Relay`; local development uses `Relay (DEBUG)`. Both are
 
 Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig`. The latter is gitignored and optionally included by `Config/Community.xcconfig`. Supply only your own service settings. In xcconfig, write URL slashes as `https:/$()/example.com` to avoid interpreting `//` as a comment.
 
-By default Sentry, Sparkle's remote update feed, OAuth clients, and the hosted backend are unconfigured. Sentry also remains disabled in Debug builds even if you supply a DSN. Testing actual crash/feedback delivery requires a locally configured Release build and an intentional submission to your own Sentry project. Builds never automatically upload debug symbols to the original maintainer's Sentry project.
+By default the hosted backend and OAuth clients are unconfigured. Relay has no crash-reporting service: bug reports go to GitHub issues. In-app updates read the appcast attached to the latest GitHub release (`SUFeedURL`), and an update installs only if it is signed with the project's Sparkle key.
 
 Planning Center and YouTube sign-in require your own OAuth apps. See [integrations that need your own credentials](INTEGRATIONS.md) for step-by-step setup.
 
@@ -24,7 +24,7 @@ The core app works without these services. This repository does not include the 
 
 ## Bundle identifiers
 
-The app uses `app.relay.Relay`, the transcription helper `app.relay.Relay.TranscriptionHelper`, and tests `app.relay.RelayTests`. Sparkle's installer services and the helper's XPC service name derive from these, so change them together (project build settings, `Relay.entitlements`, `Relay-Debug.entitlements`, and the XPC name in `Dashboard/Modules/XPCSpeechTranscriberAdapter.swift`). Forks that ship their own builds should use their own identifiers so macOS permissions, Keychain items, and settings don't collide with the upstream app.
+The app uses `app.relay.Relay`, the transcription helper `app.relay.Relay.TranscriptionHelper`, and tests `app.relay.RelayTests`. Sparkle's installer services and the helper's XPC service name derive from these, so change them together (project build settings, `Relay/RelayRelease.entitlements`, and the XPC name in `Dashboard/Modules/XPCSpeechTranscriberAdapter.swift`). Forks that ship their own builds should use their own identifiers so macOS permissions, Keychain items, and settings don't collide with the upstream app.
 
 Earlier builds used a different identifier. Because settings, permissions, and Keychain items are tied to the bundle identifier, anyone moving from an earlier build starts with fresh settings and reconnects their integrations.
 

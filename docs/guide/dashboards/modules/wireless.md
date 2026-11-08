@@ -5,7 +5,7 @@ Modules for monitoring Shure and Sennheiser wireless microphone and IEM systems.
 Monitor the health of your wireless audio systems, including RF strength, battery life, and audio levels.
 
 > [!NOTE]
-> The standalone **Shure** module is stable. **Shure Overview** (the multi-device summary) is in Debug builds only, and **Sennheiser** carries a beta badge in the module picker — see each section below.
+> The standalone **Shure** module is stable. **Shure Overview** (the multi-device summary) needs Preview, and **Sennheiser** carries a beta badge in the module picker — see each section below.
 
 ## Shure
 
@@ -24,9 +24,9 @@ A detailed module for monitoring a single Shure wireless channel.
 
 ---
 
-## Shure Overview `Debug only`
+## Shure Overview `Preview`
 
-A centralized module for monitoring multiple Shure wireless devices at once. It is compiled into Debug builds only, so it isn't in Release builds.
+A centralized module for monitoring multiple Shure wireless devices at once. It needs Preview (**Settings → Preview**, then restart Relay).
 
 ### Setup
 1. Ensure your Shure receivers are connected to the same network and discovered in **External Devices**.

@@ -16,7 +16,7 @@ This repository starts the community edition from the free-version source snapsh
 - Audio analysis, transcription, roster tools, and local-network dashboard sharing.
 - Optional Preview features for newer integrations and automation capabilities.
 
-Availability depends on connected hardware, platform support, and any separately licensed vendor software. Debug builds enable Preview features automatically; shipping builds default Preview off. Change it in **Settings → Preview**, then restart Relay.
+Availability depends on connected hardware, platform support, and any separately licensed vendor software. Preview is off by default. Change it in **Settings → Preview**, then restart Relay.
 
 ## Build on macOS
 
@@ -28,7 +28,7 @@ cd Relay
 open Relay.xcodeproj
 ```
 
-Choose **Relay (DEBUG)**, select **My Mac**, and choose your own signing team if running through Xcode. No maintainer credentials or hosted backend are needed for the basic app. Xcode resolves Sparkle and Sentry through Swift Package Manager; the shared package lockfile is committed.
+Choose the **Relay** scheme, select **My Mac**, and choose your own signing team if running through Xcode. No maintainer credentials or hosted backend are needed for the basic app. Xcode resolves Sparkle through Swift Package Manager; the shared package lockfile is committed.
 
 For an unsigned local build:
 
@@ -66,9 +66,9 @@ You can contribute code, documentation, hardware testing, or issue triage. We do
 
 ## Privacy and optional services
 
-Community builds contain no production Sentry DSN, YouTube OAuth credentials, update feed, or maintainer backend configuration. Local diagnostic logs and export remain available.
+Relay collects no analytics or crash reports. Community builds contain no YouTube OAuth credentials or maintainer backend configuration. Local diagnostic logs and export remain available.
 
-The Sentry integration is limited to opt-in crash reports and explicitly submitted user feedback. It does not forward custom breadcrumbs, ordinary handled errors, hang reports, or runtime usage context. Manual Sentry submissions require a configured DSN; without one, use GitHub Issues or exported diagnostics. The existing optional usage-reporting code is retained, but no hosted backend is supplied in this repository.
+Bug reports are filed as GitHub issues: **Settings → Help → Report a Bug** opens a prefilled issue in your browser, and nothing is sent until you submit it there. In-app updates check this repository's GitHub releases.
 
 ## License and third-party components
 

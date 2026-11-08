@@ -11,7 +11,7 @@ If you downloaded a prebuilt app from a release, download the newest release and
 
 ## Check for updates
 
-`Relay > Check for Updates...` only works in builds that were given an update feed. Source builds have none by default, so the command has nothing to check. A maintainer or fork that wants automatic updates sets that up themselves; see [Sparkle updates](../../INTEGRATIONS.md#sparkle-updates-optional).
+`Relay > Check for Updates...` checks the [project's GitHub releases](https://github.com/dbullard/Relay/releases) and offers to install a newer signed version. Source builds you compile yourself use the same feed unless you change `SUFeedURL` in `Config/Local.xcconfig`; updates only install if they are signed with the project's update key. See [Sparkle updates](../../INTEGRATIONS.md#sparkle-updates).
 
 ## What changed
 

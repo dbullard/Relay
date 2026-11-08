@@ -1561,15 +1561,7 @@ extension DashboardModuleKind {
     var isAvailableInCurrentBuild: Bool {
         switch self {
         case .shureOverview:
-            #if DEBUG
-            return true
-            #else
-            // Temporarily exposed in beta (optimized) builds to evaluate the
-            // module's real-world cost after the persist/KVO + view-layer perf
-            // fixes. Debug builds inflated its apparent cost ~3x. Revert this to
-            // `false` if beta profiling shows it's still too heavy to ship.
-            return WirelessLoggingPreferences.isBetaOrDebugBuild
-            #endif
+            return RelayBuildConfig.isPreviewEnabled
         default:
             return true
         }
@@ -1578,7 +1570,7 @@ extension DashboardModuleKind {
     var unavailableInCurrentBuildMessage: String {
         switch self {
         case .shureOverview:
-            return "Shure Overview is available in debug and beta builds while its performance is being finalized."
+            return "Shure Overview is a Preview feature. Turn on Settings > Preview and restart Relay to use it."
         default:
             return "This module isn't available in this build."
         }

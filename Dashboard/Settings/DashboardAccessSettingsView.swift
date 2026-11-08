@@ -60,7 +60,6 @@ struct DashboardAccessSettingsView: View {
         }
     }
 
-    @ObservedObject private var usageDiagnosticsPreferences = UsageDiagnosticsPreferences.shared
     @State private var rows: [PermissionRow] = []
 
     var body: some View {
@@ -122,30 +121,6 @@ struct DashboardAccessSettingsView: View {
                                 .stroke(Color.white.opacity(0.06), lineWidth: 1)
                         )
                     }
-                }
-                .padding(.vertical, 6)
-            }
-
-            GroupBox("Crash and Usage Diagnostics") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle(
-                        "Share Crash and Usage Diagnostics",
-                        isOn: Binding(
-                            get: { usageDiagnosticsPreferences.isEnabled },
-                            set: { usageDiagnosticsPreferences.setEnabled($0) }
-                        )
-                    )
-
-                    Text("Relay shares app version, platform, a random installation ID, active time, and technical crash details. It does not include dashboard content, connected-device data, location, audio, or Relay network addresses.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-
-                    HStack(spacing: 12) {
-                        Link("Privacy Policy", destination: RelayBuildConfig.privacyPolicyURL)
-                        Link("Terms & Conditions", destination: RelayBuildConfig.termsURL)
-                    }
-                    .font(.caption.weight(.semibold))
                 }
                 .padding(.vertical, 6)
             }

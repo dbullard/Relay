@@ -1,8 +1,9 @@
 // Community builds do not use the original maintainer's hosted services.
+// Planning Center and YouTube IDs can be entered in Settings > Integrations.
 PCO_OAUTH_CLIENT_ID =
-SENTRY_DSN =
 RELAY_API_BASE_URL =
-SUFeedURL =
+// In-app updates come from the project's GitHub releases (appcast.xml attached to the latest release).
+SUFeedURL = https:/$()/github.com/dbullard/Relay/releases/latest/download/appcast.xml
 YOUTUBE_OAUTH_CLIENT_ID_MACOS =
 YOUTUBE_OAUTH_CLIENT_SECRET_MACOS =
 YOUTUBE_OAUTH_REDIRECT_URI_MACOS =

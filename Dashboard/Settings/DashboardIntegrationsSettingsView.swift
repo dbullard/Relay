@@ -57,8 +57,8 @@ struct DashboardIntegrationsSettingsView: View {
                     .padding(.vertical, 6)
                 }
 
-                if RelayBuildConfig.isDebugBuild {
-                    GroupBox("YouTube Live (debug builds)") {
+                if RelayBuildConfig.isPreviewEnabled {
+                    GroupBox("YouTube Live (preview)") {
                         VStack(alignment: .leading, spacing: 10) {
                             statusRow(isSet: !youTubeClientID.trimmingCharacters(in: .whitespaces).isEmpty)
 
@@ -121,7 +121,7 @@ struct DashboardIntegrationsSettingsView: View {
 
     private func save() {
         ServiceCredentials.set(pcoClientID, forKey: ServiceCredentials.Key.pcoClientID)
-        if RelayBuildConfig.isDebugBuild {
+        if RelayBuildConfig.isPreviewEnabled {
             ServiceCredentials.set(youTubeClientID, forKey: ServiceCredentials.Key.youTubeClientID)
             ServiceCredentials.set(youTubeRedirectURI, forKey: ServiceCredentials.Key.youTubeRedirectURI)
             ServiceCredentials.setYouTubeClientSecret(youTubeClientSecret)

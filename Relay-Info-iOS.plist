@@ -71,8 +71,6 @@
 	<string>$(RELAY_API_BASE_URL)</string>
 	<key>PCO_OAUTH_CLIENT_ID</key>
 	<string>$(PCO_OAUTH_CLIENT_ID)</string>
-	<key>SENTRY_DSN</key>
-	<string>$(SENTRY_DSN)</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
