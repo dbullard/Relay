@@ -38,9 +38,9 @@ After connecting, the current tab still needs a service context:
 - Team member status
 - Embedded Services Live content
 
-## Team Assignments in 1.1.0
+## Team Assignments
 
-Relay `1.1.0` adds a dedicated `PCO Team Assignments` module alongside the broader `PCO Rundown` module.
+Relay has a dedicated `PCO Team Assignments` module alongside the broader `PCO Rundown` module.
 
 Use it when you want a tile focused on staffing instead of the full rundown. It works best when:
 

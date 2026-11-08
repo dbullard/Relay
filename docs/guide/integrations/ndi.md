@@ -3,7 +3,7 @@
 Capture NDI sources on your network for low-latency video monitoring on your dashboard.
 
 > [!WARNING]
-> The NDI Feed module is currently a Preview feature. Test it on your production network before you rely on it in a live show.
+> The NDI Feed module carries a beta badge. It is available in all builds, but needs the separately installed NDI runtime (see [NDI runtime](../../DEVELOPMENT.md#ndi-runtime)). Test it on your production network before you rely on it in a live show.
 
 The NDI Feed module brings low-latency video monitoring to your dashboard by capturing NDI® sources on your network.
 
@@ -25,7 +25,7 @@ The module's inspector is organized into four groups:
 
 - Relay allows **up to 2 active NDI modules per tab**. A third module on the same tab shows as disabled in the module catalog with an inline "Limit reached" note — add it to a different tab instead, or remove an existing NDI module first.
 - If a source stops responding, Relay retries automatically with a short "Reconnecting…" badge in the tile corner. If reconnection keeps failing after a few attempts, the tile shows a clear error with a **Retry Now** button rather than a raw connection error.
-- **Preview warning:** Always validate performance on your actual production network — high NDI traffic can affect Wi-Fi stability, especially with multiple Live-quality streams active at once.
+- **Beta warning:** Always validate performance on your actual production network — high NDI traffic can affect Wi-Fi stability, especially with multiple Live-quality streams active at once.
 
 > [!NOTE]
 > NDI® is a registered trademark of Vizrt NDI AB. Learn more at [ndi.video](https://ndi.video).

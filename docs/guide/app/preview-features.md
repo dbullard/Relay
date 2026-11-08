@@ -15,19 +15,22 @@ Debug builds (the `Relay (DEBUG)` scheme in Xcode) always have Preview on. Relea
 
 ## What Preview includes
 
-The Settings page describes Preview as including newer automation triggers, smart lights, extra DAW protocols, and newer device models. In the docs, these areas are marked `Preview`:
+These need **Preview** (or a Debug build):
 
-- **[Smart Lights](../integrations/lighting.md)** and **[Vista](../integrations/vista.md)** automation destinations
-- **[Sennheiser](../integrations/wireless-devices.md)** wireless devices and module
-- **[Shure Overview](../dashboards/modules/wireless.md#shure-overview-preview)**, the multi-device wireless summary module
-- Newer device models, such as some Shure models and certain audio console models, which show a badge in External Devices
-- Extra DAW transport protocols
-- Newer automation triggers
+- **[Smart Lights](../integrations/lighting.md)**: the Smart Light Control action node
+- **ProPresenter State trigger**: the [automation trigger](../dashboards/nodes/triggers.md#propresenter-state-beta) that fires when the slide, presentation, message, or timer changes
+- **Extra DAW transport protocols**: Logic Pro HUI, Reaper HUI and MCU, Cubase/Nuendo HUI, Digital Performer HUI, and Generic MTC/MMC. Pro Tools HUI and Generic HUI are always available. See [DAW Transport](../dashboards/modules/audio-visual.md).
+- **Newer device models**: Shure `ANX4`, `ADTD`, and `ADTQ` ([wireless devices](../integrations/wireless-devices.md)), and the Allen & Heath dLive, Avantis, and SQ, Behringer WING, and Avid VENUE S6L consoles ([audio consoles](../integrations/audio-consoles.md))
+- **Wireless diagnostics logging** controls (see below)
 
-The standalone **Shure** module and **Live Transcription** are stable and are not Preview.
+## Other labels you'll see
 
-> [!NOTE]
-> The **YouTube Live Stream Monitor** is limited to Debug builds and needs your own Google OAuth client. See [Integrations that need your own credentials](../../INTEGRATIONS.md#youtube-stream-monitor).
+Not everything marked beta needs Preview:
+
+- **Beta badge, available everywhere:** [Sennheiser](../dashboards/modules/wireless.md#sennheiser), [NDI Feed](../integrations/ndi.md), [Vista](../integrations/vista.md), the **If / Else** node, and the Allen & Heath Qu console. They carry a badge in the app but appear in every build.
+- **Debug builds only:** the [Shure Overview](../dashboards/modules/wireless.md#shure-overview-debug-only) module, the Yamaha console families (DM7, RIVAGE PM, CL/QL), and the [YouTube Live Stream Monitor](../integrations/youtube-live.md), which also needs your own Google OAuth client. See [Integrations that need your own credentials](../../INTEGRATIONS.md#youtube-stream-monitor).
+
+The standalone **Shure** module and **Live Transcription** are stable.
 
 ## Preview tools in Settings
 

@@ -1,4 +1,4 @@
-# Wireless devices: monitor Shure and supported Preview workflows
+# Wireless devices: monitor Shure and Sennheiser systems
 
 Use Relay with wireless systems for status, battery, RF, audio, and automation workflows.
 
@@ -22,9 +22,9 @@ Shure devices can be added manually or discovered on the network. Once configure
 - Battery
 - RF and audio information
 
-Relay `1.1.0` also adds a dedicated `Shure Overview` module for a higher-level summary across multiple devices and channels. It is useful when you want one tile to surface warning states, battery concerns, stale telemetry, or offline channels without building a wall of individual Shure tiles. Relay uses a centralized polling system for Shure wireless devices featuring dynamic tiers for greater efficiency. This optimizes performance by skipping redundant polling and prioritizing the devices you are actively monitoring.
+A dedicated `Shure Overview` module (Debug builds only) gives a higher-level summary across multiple devices and channels. It is useful when you want one tile to surface warning states, battery concerns, stale telemetry, or offline channels without building a wall of individual Shure tiles. Relay uses a centralized polling system for Shure wireless devices featuring dynamic tiers for greater efficiency. This optimizes performance by skipping redundant polling and prioritizing the devices you are actively monitoring.
 
-### Shure improvements in 1.2.2
+### Shure monitoring details
 
 - **Finer mic meter:** The mic meter now has 10 segments with a -60 dBFS floor, so quiet signals read more clearly.
 - **More accurate readings:** RF and battery readings are improved for AD4Q, Axient, and QLX-D.
@@ -43,33 +43,27 @@ Sennheiser support covers three device families, each communicating over a diffe
 Relay auto-selects the default port for the chosen model; override it only if your network requires a different one.
 
 > [!NOTE]
-> Sennheiser is a Preview-only integration — see below.
+> Sennheiser is available in all builds but carries a beta badge in the module picker and device list. Test it on your own network before relying on it live.
 
 ### Spectera monitoring
 
-Relay 1.2.2 adds monitoring for Sennheiser Spectera systems:
+Relay monitors Sennheiser Spectera systems:
 
 - Live state updates
 - Pinned certificate trust
 - Authenticated connection tests
 - Diagnostics logging
 
-Newer mobile device schemas now decode correctly.
+## Availability notes
 
-## Preview and Debug-only wireless areas
-
-Some wireless features depend on Preview mode:
-
-- Sennheiser module availability in Preview mode or Debug builds
-- Preview-only Shure models such as `ANX4`, `ADTD`, and `ADTQ`
-- verbose wireless diagnostics controls in the Preview settings page
+- Shure `ANX4`, `ADTD`, and `ADTQ` models appear only when Preview features are on (`Relay > Settings` → **Preview**) or in Debug builds.
+- The `Shure Overview` module is in Debug builds only.
+- Verbose wireless diagnostics logging controls appear on the **Preview** settings page when Preview is on, and take effect after you restart Relay.
 
 ## Automation tie-ins
 
 Wireless systems can feed trigger conditions and destination commands in Automation View depending on the device and build. In Live Mode, Relay suggests wireless telemetry variables you can use in text inputs and automations — see [Shared values and variables](../dashboards/variables.md).
 
 ## Troubleshooting
-
-Device discovery scans were made more stable in 1.2.2, including fixes for data races and for scan completions dropped during cancellation.
 
 If wireless data is missing, confirm the device is added, reachable, selected in the module, and available in the current build type.

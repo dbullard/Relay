@@ -24,9 +24,9 @@ You can add more than one module to the same tile when the content belongs toget
 
 ### Wireless
 
-- Shure Overview
+- Shure Overview (Debug builds only)
 - Shure
-- Sennheiser in Preview mode or Debug builds
+- Sennheiser
 
 ### Audio
 
@@ -53,15 +53,15 @@ You can add more than one module to the same tile when the content belongs toget
 - Separator
 - Button
 
-## Preview modules
+## Availability and badges
 
-Some modules are Preview-only and should be evaluated separately from the main feature set. Turn Preview on under `Relay > Settings` → **Preview**; see [Preview features](../app/preview-features.md).
+Not every module is available in every build. Three things can apply:
 
-- YouTube Live Stream Monitor (Debug builds only) and NDI Feed are Preview
-- Sennheiser appears only in Preview mode or Debug builds
-- Shure Overview, the multi-device wireless summary module, appears only in Preview mode or Debug builds
+- **Debug builds only:** **Shure Overview** is compiled into Debug builds only, and the **YouTube Live Stream Monitor** is limited to Debug builds and needs your own Google OAuth client.
+- **Preview features:** Some related settings and device models appear only when Preview is on under `Relay > Settings` → **Preview**. See [Preview features](../app/preview-features.md).
+- **Beta badge:** **Sennheiser** and **NDI Feed** are available in every build but carry a beta badge in the module picker. Test them on your own network before relying on them live.
 
-The standalone Shure module and Live Transcription are stable and not Preview-gated.
+The standalone **Shure** module and **Live Transcription** are stable, with no badge.
 
 ## Choosing one tile vs. multiple tiles
 

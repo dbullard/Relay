@@ -19,8 +19,6 @@ Relay can receive and send OSC messages over the network.
 - Use OSC Send actions to transmit a message to a target IP and port (defaults to port `9000`) at an address you define.
 - Use OSC from Button modules when configured.
 
-OSC sending and automation are improved in 1.2.2, and device discovery during onboarding is more reliable, so the Setup Wizard can find OSC-capable devices more consistently.
-
 Beyond the main OSC listener, Relay can run additional custom listening ports at the same time — useful if you want to keep OSC traffic for different purposes (say, a console integration vs. a lighting console) isolated on separate ports rather than sharing one.
 
 The `External Control` page also shows the current IP address, message counts, and the most recent OSC packet so you can validate traffic before wiring it into a graph.

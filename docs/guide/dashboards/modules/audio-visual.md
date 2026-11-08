@@ -65,7 +65,7 @@ A scrolling waterfall view that visualizes audio frequency distributions over ti
 Keep your dashboard in sync with your playback rigs by monitoring and controlling supported DAW (Digital Audio Workstation) transport workflows.
 
 ### Setup
-1. Connect your DAW via MIDI or network protocol in the External Devices settings, and choose the matching transport type: Pro Tools HUI, Logic Pro HUI, Reaper HUI, Reaper MCU, Cubase/Nuendo HUI, Digital Performer HUI, Generic HUI, or Generic MTC/MMC.
+1. Connect your DAW via MIDI or network protocol in the External Devices settings, and choose the matching transport type. **Pro Tools HUI** and **Generic HUI** are always available. **Logic Pro HUI**, **Reaper HUI**, **Reaper MCU**, **Cubase/Nuendo HUI**, **Digital Performer HUI**, and **Generic MTC/MMC** are Preview protocols and appear after you turn on `Relay > Settings` → **Preview** and restart Relay. A saved Preview protocol is kept if Preview is turned off; Relay falls back to a supported protocol until you turn it back on.
 2. Add the DAW Transport module to a tile.
 
 ### Features

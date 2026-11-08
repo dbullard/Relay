@@ -45,9 +45,9 @@ Utility nodes sit between triggers and actions. They help you build complex logi
 
 ## Conditionals and Variables
 
-### If / Else `Preview`
+### If / Else `Beta`
 
-Still shown with a Preview badge in the node catalog, though it's fully available to use.
+Still shown with a beta badge in the node catalog, though it's fully available to use.
 
 - **Setup:** Choose what to evaluate — the incoming payload's text, number, or boolean value, or a Variable node — and an operator: Equals, Does Not Equal, Contains, Greater Than, Less Than, Is True, Is False, Is Empty, or Is Not Empty.
 - **Features:** Routes the signal out the "True" path or the "False" path based on the evaluation. Use it once your trigger and happy-path action are already working reliably — branching adds a second path you need to test.

@@ -20,10 +20,10 @@ The ProPresenter module connects directly to your ProPresenter instance over the
 
 ---
 
-## NDI Feed `Preview`
+## NDI Feed `Beta`
 
 Monitor low-latency NDI® video sources on your network. See [NDI video](../../integrations/ndi.md) for setup, quality settings, and limits.
 
-## YouTube Live Stream Monitor `Preview`
+## YouTube Live Stream Monitor `Debug only`
 
 Track viewer count, chat activity, and stream health for a live broadcast. See [YouTube Live](../../integrations/youtube-live.md) for setup and features.

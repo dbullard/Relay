@@ -73,3 +73,9 @@ Fires on application-level events.
 
 - **Setup:** Choose the event: **App Launch**, **Enter Live Mode**, **Exit Live Mode**, or **Tab Switch**.
 - **Features:** Useful for resetting variables when entering Live Mode, sending initialization commands to consoles when Relay starts, or running a different setup automation per tab.
+
+## ProPresenter State `Beta`
+
+Fires when the current slide, presentation, message, or timer changes in ProPresenter.
+
+- **Setup:** Turn on Preview features (`Relay > Settings` → **Preview**, then restart Relay) and connect ProPresenter under [ProPresenter](../../integrations/propresenter.md).

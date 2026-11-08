@@ -37,7 +37,7 @@ Control your presentation software remotely.
 
 Communicate with standard show control protocols.
 
-- **OSC Send:** Transmits an OSC message to a target IP and port (defaults to `9000`) at a given address. Define the address path and arguments. OSC sending was improved in Relay 1.2.2.
+- **OSC Send:** Transmits an OSC message to a target IP and port (defaults to `9000`) at a given address. Define the address path and arguments.
 - **MIDI Send:** Sends a MIDI message to a connected MIDI destination — Note On/Off, Program Change, Control Change, or raw SysEx, depending on the message kind you choose.
 
 ## Console
@@ -59,14 +59,14 @@ Send control commands to a connected wireless receiver.
 - **Setup:** Select a configured Shure or Sennheiser device — each brand is its own action node.
 - **Features:** Mute or unmute a channel and adjust other supported per-channel settings without leaving the automation graph.
 
-## Smart Light Control `Preview`
+## Smart Light Control `Beta`
 
 Control your environment's lighting.
 
-- **Setup:** Connect to a supported smart light bridge on your network.
+- **Setup:** Turn on Preview features (`Relay > Settings` → **Preview**, then restart Relay), and connect to a supported smart light bridge on your network.
 - **Features:** Set colors, adjust brightness, or recall scenes on Philips Hue or Govee devices as part of any automation flow. See [Smart lights](../../integrations/lighting.md) for the full guide.
 
-## Vista `Preview`
+## Vista `Beta`
 
 Trigger your Vista lighting/show system.
 

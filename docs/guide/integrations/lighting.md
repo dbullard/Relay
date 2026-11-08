@@ -3,13 +3,14 @@
 Use smart light control as an automation destination to change colors, brightness, and scenes.
 
 > [!WARNING]
-> Smart Light Control is currently a Preview feature. Test it before you rely on it in a live show.
+> Smart Light Control carries a beta badge and is a Preview feature: it appears only after you turn on `Relay > Settings` → **Preview** and restart Relay. Test it before you rely on it in a live show.
 
 Control your environment's lighting from an automation graph.
 
 ## Requirements
 
-- A supported smart light bridge on your network.
+- Preview features turned on (`Relay > Settings` → **Preview**, then restart Relay).
+- A supported smart light bridge on your network, or a Govee API key. See [Integrations that need your own credentials](../../INTEGRATIONS.md#smart-lights).
 
 ## Setup
 
@@ -23,5 +24,5 @@ Set colors, adjust brightness, or recall scenes on Philips Hue or Govee devices,
 
 ## Related
 
-- [Action nodes](../dashboards/nodes/actions.md#smart-light-control-preview) for the node reference
+- [Action nodes](../dashboards/nodes/actions.md#smart-light-control-beta) for the node reference
 - [Wireless devices](wireless-devices.md) to feed battery and RF triggers

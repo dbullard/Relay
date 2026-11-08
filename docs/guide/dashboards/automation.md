@@ -36,7 +36,7 @@ Consoles are a special destination node: link it to a configured audio console a
 - Test one path at a time
 - Validate cooldowns and repeatability before using a flow live
 - Name nodes clearly once a graph grows beyond a few connections
-- Use `If / Else` only after the trigger and happy path already work — it's still labeled Preview in the node catalog
+- Use `If / Else` only after the trigger and happy path already work — it's still labeled beta in the node catalog
 - Use `Variable` nodes when you want text or inbound values reused across more than one action
 - Watch for warning pills on Condition and Console nodes — they surface dispatch failures (an operator that doesn't apply to the value type, a linked device that was removed) directly on the node instead of failing silently
 

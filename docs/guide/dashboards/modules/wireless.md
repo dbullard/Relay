@@ -5,7 +5,7 @@ Modules for monitoring Shure and Sennheiser wireless microphone and IEM systems.
 Monitor the health of your wireless audio systems, including RF strength, battery life, and audio levels.
 
 > [!NOTE]
-> The standalone **Shure** module is stable. **Shure Overview** (the multi-device summary) and **Sennheiser** remain Preview — see each section below.
+> The standalone **Shure** module is stable. **Shure Overview** (the multi-device summary) is in Debug builds only, and **Sennheiser** carries a beta badge in the module picker — see each section below.
 
 ## Shure
 
@@ -24,9 +24,9 @@ A detailed module for monitoring a single Shure wireless channel.
 
 ---
 
-## Shure Overview `Preview`
+## Shure Overview `Debug only`
 
-A centralized module for monitoring multiple Shure wireless devices at once.
+A centralized module for monitoring multiple Shure wireless devices at once. It is compiled into Debug builds only, so it isn't in Release builds.
 
 ### Setup
 1. Ensure your Shure receivers are connected to the same network and discovered in **External Devices**.
@@ -45,7 +45,7 @@ A centralized module for monitoring multiple Shure wireless devices at once.
 
 ---
 
-## Sennheiser `Preview`
+## Sennheiser
 
 Provides monitoring for Sennheiser wireless systems — see [Wireless Devices](../../integrations/wireless-devices.md#sennheiser-workflows) for the full supported model catalog and connection details.
 
@@ -56,4 +56,4 @@ Provides monitoring for Sennheiser wireless systems — see [Wireless Devices](.
 ### Features
 - **Status Monitoring:** Tracks battery life, RF, and AF levels for supported Sennheiser receivers.
 - **Spectera:** Live state updates for Spectera systems, with pinned certificate trust and authenticated connection tests.
-- **Preview only:** This module is only available when Preview features are on, or in Debug builds.
+- **Beta badge:** The module is available in all builds, but is still marked as a beta in the module picker.

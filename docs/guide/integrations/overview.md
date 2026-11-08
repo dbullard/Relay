@@ -10,15 +10,15 @@ Software connections are configured under `Relay > Settings` → **External Conn
 
 - [Planning Center](planning-center.md) — Display service plans, team assignments, and Services Live on your dashboard.
 - [ProPresenter](propresenter.md) — Show live slide status and trigger ProPresenter actions from Automation View.
-- [YouTube Live `Preview`](youtube-live.md) — Monitor viewer count, chat activity, and stream health for a live broadcast.
-- [NDI Video `Preview`](ndi.md) — Monitor NDI® video sources over the network with quality tiers and NIC-aware routing.
+- [YouTube Live `Debug only`](youtube-live.md) — Monitor viewer count, chat activity, and stream health for a live broadcast.
+- [NDI Video `Beta`](ndi.md) — Monitor NDI® video sources over the network with quality tiers and NIC-aware routing.
 
 ## Hardware and lighting
 
 - [Audio Consoles](audio-consoles.md) — Sync channel names, recall scenes, and send assignments to supported consoles.
 - [Wireless Devices](wireless-devices.md) — Monitor Shure and Sennheiser wireless status in real time.
-- [Smart Lights `Preview`](lighting.md) — Control Philips Hue and Govee lighting as part of an automation flow.
-- [Vista `Preview`](vista.md) — Export cue lists and trigger basic Vista OSC commands from Automation View.
+- [Smart Lights `Beta` `Preview`](lighting.md) — Control Philips Hue and Govee lighting as part of an automation flow.
+- [Vista `Beta`](vista.md) — Export cue lists and trigger basic Vista OSC commands from Automation View.
 
 ## Control protocols
 
