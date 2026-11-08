@@ -1797,7 +1797,6 @@ var body: some View {
         guard let tabIndex = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         guard tabs[tabIndex].planID != update.planID else { return }
 
-        print("[PCO] Auto-advance applying plan \(update.planID) (was \(tabs[tabIndex].planID ?? "nil"))")
         tabs[tabIndex].planID = update.planID
         tabs[tabIndex].planTitle = update.planTitle
         tabs[tabIndex].planDateLabel = update.planDateLabel

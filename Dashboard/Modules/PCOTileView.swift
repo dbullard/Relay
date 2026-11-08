@@ -3031,9 +3031,7 @@ struct PCOTileView: View {
             guard !isOpen,
                   let serviceTypeID = tab.serviceTypeID,
                   let planID = tab.planID else { return }
-            if adoptCurrentTabSnapshotIfAvailable(serviceTypeID: serviceTypeID, planID: planID) {
-                print("[PCO] Tile adopted tab snapshot after config closed (plan \(planID))")
-            }
+            _ = adoptCurrentTabSnapshotIfAvailable(serviceTypeID: serviceTypeID, planID: planID)
         }
         .onChange(of: liveURLKey, initial: false) { _, _ in
             liveFallbackActive = false
@@ -5818,7 +5816,6 @@ struct PCOTabServiceConfigView: View {
                 tab.pcoTeamPositionsByTeamName = positionsByTeamName.isEmpty ? nil : positionsByTeamName
             }
         } catch {
-            print("[PCO] Tab snapshot refresh failed for plan \(planID): \(error.localizedDescription)")
             // On error, clear assignments so person tiles don't spin forever, but keep the last
             // good rundown/team snapshot for this selection so the tile doesn't fall back to
             // stale local rows.
