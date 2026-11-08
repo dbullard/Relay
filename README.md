@@ -77,3 +77,7 @@ Relay-owned source is licensed under the [MIT License](LICENSE). Third-party fil
 The proprietary NDI runtime is **not included** and is not relicensed by this project. The NDI headers retain their MIT notices. NDI functionality requires a separately installed runtime and compliance with NDI's terms. This repository does not include customer logs, private sample dashboards, the original Git history, or signing credentials.
 
 Forks should clearly identify themselves and avoid suggesting that their releases are official Relay releases.
+
+## Name and branding
+
+The MIT License covers the source code only. It does not grant rights to the Relay name, logo, or app icon. You are welcome to fork and redistribute the code, but please give your fork a distinct name and icon, and don't present it as the official Relay app. Saying that your project is "based on Relay" is fine.
