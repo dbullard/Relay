@@ -22,6 +22,12 @@ Planning Center and YouTube sign-in require your own OAuth apps. See [integratio
 
 The core app works without these services. This repository does not include the private backend, server credentials, release signing configuration, or notarization credentials.
 
+## Bundle identifiers
+
+The app uses `app.relay.Relay`, the transcription helper `app.relay.Relay.TranscriptionHelper`, and tests `app.relay.RelayTests`. Sparkle's installer services and the helper's XPC service name derive from these, so change them together (project build settings, `Relay.entitlements`, `Relay-Debug.entitlements`, and the XPC name in `Dashboard/Modules/XPCSpeechTranscriberAdapter.swift`). Forks that ship their own builds should use their own identifiers so macOS permissions, Keychain items, and settings don't collide with the upstream app.
+
+Earlier builds used a different identifier. Because settings, permissions, and Keychain items are tied to the bundle identifier, anyone moving from an earlier build starts with fresh settings and reconnects their integrations.
+
 ## NDI runtime
 
 The macOS receiver dynamically loads NDI. The proprietary runtime is intentionally omitted from Git and the mandatory Xcode copy phase was removed, so the basic app can build without it. Without a runtime, NDI reports unavailable; other modules remain usable.

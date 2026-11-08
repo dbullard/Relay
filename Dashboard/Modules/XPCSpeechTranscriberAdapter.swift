@@ -3,7 +3,7 @@ import Foundation
 
 final class XPCSpeechTranscriberAdapter: NSObject, SpeechTranscribing {
     private enum Constants {
-        static let serviceName = "davidbullard.relay.TranscriptionHelper"
+        static let serviceName = "app.relay.Relay.TranscriptionHelper"
         static let appendLogInterval = 50
     }
 

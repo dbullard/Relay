@@ -16,7 +16,7 @@ public protocol TokenStore: AnyObject {
 
 // A simple Keychain-backed token store for iOS and macOS.
 public final class KeychainTokenStore: TokenStore {
-    private let service = "com.pcodigicoapp.oauth"
+    private let service = "app.relay.pco.oauth"
     private let account = "pcoplanningcenter"
 
     public init() {}

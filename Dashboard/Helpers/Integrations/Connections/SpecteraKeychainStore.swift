@@ -4,8 +4,8 @@ import Security
 final class SpecteraKeychainStore {
     static let shared = SpecteraKeychainStore()
 
-    private let service = "com.ondeckapps.relay.spectera"
-    private let certificateService = "com.ondeckapps.relay.spectera.certificate"
+    private let service = "app.relay.spectera"
+    private let certificateService = "app.relay.spectera.certificate"
 
     func password(for deviceID: UUID) -> String? {
         let query: [String: Any] = [

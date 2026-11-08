@@ -12,8 +12,8 @@
 	<true/>
 	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
 	<array>
-		<string>davidbullard.relay-spki</string>
-		<string>davidbullard.relay-spks</string>
+		<string>app.relay.Relay-spki</string>
+		<string>app.relay.Relay-spks</string>
 	</array>
 </dict>
 </plist>
