@@ -182,7 +182,7 @@ struct DashboardPCOSettingsView: View {
     /// files are added to the Relay Dashboard target.
     private func connectToPCO() {
         // Replace this with your actual client id from the PCO Developer portal.
-        let clientID = "740fe16ab8a3025b6920a7290b5f244f4416d5bfb0ea88826521dc10101e8d9d"
+        let clientID = PCOOAuthConfiguration.clientID
 
         isBusy = true
         errorMessage = nil
@@ -245,7 +245,7 @@ struct DashboardPCOSettingsView: View {
 
     private func loadAccountName() async -> String? {
         let tokenStore = KeychainTokenStore()
-        let clientID = "740fe16ab8a3025b6920a7290b5f244f4416d5bfb0ea88826521dc10101e8d9d"
+        let clientID = PCOOAuthConfiguration.clientID
         let oauth = OAuthService(clientID: clientID, tokenStore: tokenStore)
         let client = PCOClient(oauthService: oauth, tokenStore: tokenStore)
 

@@ -1,4 +1,5 @@
 // Community builds do not use the original maintainer's hosted services.
+PCO_OAUTH_CLIENT_ID =
 SENTRY_DSN =
 RELAY_API_BASE_URL =
 RELAY_ACCOUNT_API_BASE_URL =

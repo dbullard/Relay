@@ -1,5 +1,6 @@
 // Copy to Local.xcconfig (gitignored) for your own services.
 // Escape URL slashes in xcconfig: https:/$()/example.com
+// PCO_OAUTH_CLIENT_ID = YOUR_PLANNING_CENTER_CLIENT_ID
 // SENTRY_DSN = https:/$()/YOUR_DSN
 // SUFeedURL = https:/$()/example.com/appcast.xml
 // YOUTUBE_OAUTH_CLIENT_ID_MACOS = YOUR_CLIENT_ID

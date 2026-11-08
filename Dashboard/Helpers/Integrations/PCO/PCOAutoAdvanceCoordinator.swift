@@ -346,7 +346,7 @@ final class PCOAutoAdvanceCoordinator: ObservableObject {
     private func makeClient() -> PCOClient {
         let tokenStore = KeychainTokenStore()
         let oauth = OAuthService(
-            clientID: "740fe16ab8a3025b6920a7290b5f244f4416d5bfb0ea88826521dc10101e8d9d",
+            clientID: PCOOAuthConfiguration.clientID,
             tokenStore: tokenStore
         )
         return PCOClient(oauthService: oauth, tokenStore: tokenStore)

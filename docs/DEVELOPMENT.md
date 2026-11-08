@@ -17,7 +17,7 @@ Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig`. The latter is g
 
 By default Sentry, Sparkle's remote update feed, OAuth clients, and the hosted backend are unconfigured. Sentry also remains disabled in Debug builds even if you supply a DSN. Testing actual crash/feedback delivery requires a locally configured Release build and an intentional submission to your own Sentry project. Builds never automatically upload debug symbols to the original maintainer's Sentry project.
 
-YouTube authentication requires your own compatible OAuth configuration. A backend URL alone does not enable Relay Account sign-in: the `RELAY_ACCOUNT_AUTH_ENABLED` plist flag is false. Account/licensing service code remains for compatibility but is not required to unlock features. The fallback account URL points only to localhost.
+Planning Center and YouTube sign-in require your own OAuth apps. See [integrations that need your own credentials](INTEGRATIONS.md) for step-by-step setup. A backend URL alone does not enable Relay Account sign-in: the `RELAY_ACCOUNT_AUTH_ENABLED` plist flag is false. Account/licensing service code remains for compatibility but is not required to unlock features. The fallback account URL points only to localhost.
 
 The core app works without these services. This repository does not include the private backend, server credentials, release signing configuration, or notarization credentials.
 

@@ -3896,7 +3896,7 @@ struct PCOTileView: View {
     private func makeClient() -> PCOClient {
         let tokenStore = KeychainTokenStore()
         let oauth = OAuthService(
-            clientID: "740fe16ab8a3025b6920a7290b5f244f4416d5bfb0ea88826521dc10101e8d9d",
+            clientID: PCOOAuthConfiguration.clientID,
             tokenStore: tokenStore
         )
         return PCOClient(oauthService: oauth, tokenStore: tokenStore)
@@ -4931,7 +4931,7 @@ struct PCOTabServiceConfigView: View {
     @State private var autoAdvanceEnabled: Bool = false
     @State private var autoAdvanceCheckWeekday: Int = 2
     @State private var autoAdvanceCheckTimeMinutes: Int = 15 * 60
-    private let clientID = "740fe16ab8a3025b6920a7290b5f244f4416d5bfb0ea88826521dc10101e8d9d"
+    private let clientID = PCOOAuthConfiguration.clientID
     private let labelWidth: CGFloat = 110
     private let unfiledServiceTypeName: String = "Other"
     private var selectionDisabled: Bool {

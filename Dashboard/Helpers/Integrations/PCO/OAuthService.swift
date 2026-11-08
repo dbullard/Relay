@@ -10,13 +10,31 @@ import CryptoKit
 import Foundation
 import AuthenticationServices
 
+/// Planning Center OAuth settings supplied at build time (see docs/INTEGRATIONS.md).
+/// Community builds ship with no client ID; register your own Planning Center app and
+/// set `PCO_OAUTH_CLIENT_ID` in `Config/Local.xcconfig`.
+public enum PCOOAuthConfiguration {
+    /// Redirect URI to register on your Planning Center app. Its scheme is declared in Info.plist.
+    public static let redirectURI = "app.relay.pco://oauth/callback"
+
+    public static var clientID: String {
+        (Bundle.main.object(forInfoDictionaryKey: "PCO_OAUTH_CLIENT_ID") as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static var isConfigured: Bool { !clientID.isEmpty }
+}
+
 public final class OAuthService: NSObject {
     public enum OAuthError: LocalizedError, Equatable {
         case missingCode
         case cancelled
+        case notConfigured
 
         public var errorDescription: String? {
             switch self {
+            case .notConfigured:
+                return "Planning Center sign-in is not configured. Register your own Planning Center app and set PCO_OAUTH_CLIENT_ID (see docs/INTEGRATIONS.md)."
             case .missingCode:
                 return "Planning Center did not return an authorization code."
             case .cancelled:
@@ -28,8 +46,7 @@ public final class OAuthService: NSObject {
     private let clientID: String
     private let authURL = URL(string: "https://api.planningcenteronline.com/oauth/authorize")!
     private let tokenURL = URL(string: "https://api.planningcenteronline.com/oauth/token")!
-    private let redirectURIiOS = "com.pcodigicoapp.mobile://oauth/callback"
-    private let redirectURIMac = "com.pcodigicoapp.mac://oauth/callback"
+    private let redirectURI = PCOOAuthConfiguration.redirectURI
     private let scope = "services people" // Add additional scopes space-separated if needed, e.g., "services people"
 
     private let tokenStore: TokenStore
@@ -47,11 +64,7 @@ public final class OAuthService: NSObject {
     }
 
     private func platformRedirectURI() -> String {
-        #if os(iOS)
-        return redirectURIiOS
-        #else
-        return redirectURIMac
-        #endif
+        redirectURI
     }
 
     // MARK: - Runtime Self-Checks
@@ -110,6 +123,8 @@ if let presentingAnchor = presentingAnchor {
     self.iosAnchor = window
 }
 #endif
+
+        guard !clientID.isEmpty else { throw OAuthError.notConfigured }
 
         let verifier = generateVerifier()
         let challenge = try challenge(for: verifier)

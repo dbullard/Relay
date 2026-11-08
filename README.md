@@ -47,7 +47,7 @@ xcodebuild test -project Relay.xcodeproj -scheme Relay \
 
 The test suite includes integration fixtures that use shared preferences; serial execution avoids known interference between parallel test processes. Ad-hoc/unsigned development builds may not support every capability that needs Apple signing or permissions. They are not distributable releases.
 
-See [development setup](docs/DEVELOPMENT.md) for optional configuration and NDI runtime setup.
+See [development setup](docs/DEVELOPMENT.md) for optional configuration and NDI runtime setup. Planning Center, YouTube, and other integrations that need API keys or tokens use your own accounts; see [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
 ## Reporting bugs and contributing
 

@@ -34,10 +34,10 @@
 		</dict>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.pcodigicoapp.mobile.oauth</string>
+			<string>app.relay.pco.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.pcodigicoapp.mobile</string>
+				<string>app.relay.pco</string>
 			</array>
 		</dict>
 		<dict>
@@ -81,6 +81,8 @@
 	<string>$(RELAY_API_BASE_URL)</string>
 	<key>RELAY_PURCHASE_MODE</key>
 	<string>appstore</string>
+	<key>PCO_OAUTH_CLIENT_ID</key>
+	<string>$(PCO_OAUTH_CLIENT_ID)</string>
 	<key>SENTRY_DSN</key>
 	<string>$(SENTRY_DSN)</string>
 	<key>UTExportedTypeDeclarations</key>

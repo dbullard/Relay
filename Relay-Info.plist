@@ -45,10 +45,10 @@
 		</dict>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.pcodigicoapp.mac.oauth</string>
+			<string>app.relay.pco.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.pcodigicoapp.mac</string>
+				<string>app.relay.pco</string>
 			</array>
 		</dict>
 		<dict>
@@ -89,6 +89,8 @@
 	<string>$(RELAY_DISTRIBUTION_CHANNEL)</string>
 	<key>RELAY_PURCHASE_MODE</key>
 	<string>direct</string>
+	<key>PCO_OAUTH_CLIENT_ID</key>
+	<string>$(PCO_OAUTH_CLIENT_ID)</string>
 	<key>SENTRY_DSN</key>
 	<string>$(SENTRY_DSN)</string>
 	<key>SUEnableInstallerLauncherService</key>
