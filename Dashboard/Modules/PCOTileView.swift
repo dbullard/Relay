@@ -3025,6 +3025,16 @@ struct PCOTileView: View {
                 }
             }
         }
+        // Refreshes are skipped while the config sheet is open, so local rows can be stale
+        // when it closes. Re-adopt the tab snapshot (updated by "Refresh Data"/Save).
+        .onChange(of: isPCOConfigOpen, initial: false) { _, isOpen in
+            guard !isOpen,
+                  let serviceTypeID = tab.serviceTypeID,
+                  let planID = tab.planID else { return }
+            if adoptCurrentTabSnapshotIfAvailable(serviceTypeID: serviceTypeID, planID: planID) {
+                print("[PCO] Tile adopted tab snapshot after config closed (plan \(planID))")
+            }
+        }
         .onChange(of: liveURLKey, initial: false) { _, _ in
             liveFallbackActive = false
             if let url = liveURL {
@@ -5144,8 +5154,17 @@ struct PCOTabServiceConfigView: View {
                 clearDraft(for: tab.id)
                 // After saving, refresh the tab-level PCO assignments so that
                 // person tiles can update even if there is no PCO rundown tile.
-                Task {
-                    await refreshTabPCOAssignments()
+                // Skip when "Refresh Data" already produced a snapshot for this selection;
+                // back-to-back full refreshes can fail (rate limits) and lose the data.
+                let selectionKey = PCOTileView.makeTabSnapshotKey(
+                    serviceTypeID: tab.serviceTypeID,
+                    planID: tab.planID,
+                    serviceTimeName: tab.serviceTimeName
+                )
+                if tab.pcoSnapshotKey != selectionKey {
+                    Task {
+                        await refreshTabPCOAssignments()
+                    }
                 }
 
                 dismiss()
@@ -5799,16 +5818,26 @@ struct PCOTabServiceConfigView: View {
                 tab.pcoTeamPositionsByTeamName = positionsByTeamName.isEmpty ? nil : positionsByTeamName
             }
         } catch {
-            // On error, clear assignments so person tiles don't spin forever
+            print("[PCO] Tab snapshot refresh failed for plan \(planID): \(error.localizedDescription)")
+            // On error, clear assignments so person tiles don't spin forever, but keep the last
+            // good rundown/team snapshot for this selection so the tile doesn't fall back to
+            // stale local rows.
             await MainActor.run {
                 tab.pcoAllPositionAssignments = [:]
                 tab.pcoPositionAssignmentCandidates = nil
                 tab.pcoPositionToTeamName = nil
-                tab.pcoRundownSnapshotTitles = []
-                tab.pcoSnapshotKey = nil
-                tab.pcoCachedRundownRows = []
-                tab.pcoCachedTeamAssignments = []
                 tab.pcoTeamPositionsByTeamName = nil
+                let selectionKey = PCOTileView.makeTabSnapshotKey(
+                    serviceTypeID: tab.serviceTypeID,
+                    planID: tab.planID,
+                    serviceTimeName: tab.serviceTimeName
+                )
+                if tab.pcoSnapshotKey != selectionKey {
+                    tab.pcoRundownSnapshotTitles = []
+                    tab.pcoSnapshotKey = nil
+                    tab.pcoCachedRundownRows = []
+                    tab.pcoCachedTeamAssignments = []
+                }
             }
         }
     }
