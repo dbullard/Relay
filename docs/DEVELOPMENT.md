@@ -44,4 +44,4 @@ Some Release behavior is channel-dependent and cannot be verified solely with De
 
 ## Before a release
 
-Run the tests and the manual checks in `docs/RELEASE_CHECKLIST.md`. Official binaries require an authorized Apple signing identity, notarization, and an explicit release decision. A source push is not an app release.
+Run the tests and the manual checks in `docs/RELEASE_CHECKLIST.md`. The Debug entitlements deliberately omit the restricted `com.apple.developer.networking.multicast` entitlement: with it, a locally signed build fails to launch (launchd error 163) unless your team has Apple's approval. Release builds are Developer ID signed with no restricted entitlements. Official binaries require an authorized Apple signing identity, notarization, and an explicit release decision. A source push is not an app release.
