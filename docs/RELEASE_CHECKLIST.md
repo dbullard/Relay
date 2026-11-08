@@ -8,6 +8,10 @@ A source push is not a signed app release. There is no automatic deployment or d
 - [ ] Verify Support points to this repository and contains no personal-payment prompt.
 - [ ] Verify automatic crash consent and intentional manual feedback delivery using approved service configuration.
 - [ ] Confirm app version/build, release notes, minimum OS, and known limitations.
+- [ ] Set the release's integration credentials (for example `PCO_OAUTH_CLIENT_ID`) in your gitignored `Config/Local.xcconfig`, build, and confirm they are in the built Info.plist. See [Maintainers: official releases](INTEGRATIONS.md#maintainers-official-releases-and-existing-users).
+- [ ] Decide whether upgrading users keep their Planning Center login (same client ID) or reconnect once (new client ID). Do not revoke an older client ID while releases using it are still installed.
+- [ ] Verify Planning Center sign-in on a clean Mac with no setup.
+- [ ] Keep the same bundle identifier and signing identity as the previous release so users keep their dashboards and settings.
 - [ ] Review dependency licenses, NDI runtime packaging, and required notices.
 - [ ] Sign and notarize using an authorized release identity.
 - [ ] Verify the signed download on a separate Mac.

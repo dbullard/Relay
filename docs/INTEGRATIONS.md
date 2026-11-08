@@ -85,6 +85,25 @@ Keep your private key out of the repository.
 
 NDI needs the separately licensed runtime. See [NDI runtime](DEVELOPMENT.md#ndi-runtime).
 
+## Maintainers: official releases and existing users
+
+Source builds ship with no Planning Center client ID, so contributors and forks register their own. A distributed release is different: people who download it should not have to register anything. Those builds get the maintainer's client ID at build time, from the maintainer's gitignored `Config/Local.xcconfig`. Never commit the file or the ID-bearing build settings.
+
+When preparing a release:
+
+1. Put the release's `PCO_OAUTH_CLIENT_ID` (and any other credentials the release should include) in `Config/Local.xcconfig`, then build the Release configuration.
+2. Confirm the built app contains it: `/usr/libexec/PlistBuddy -c "Print :PCO_OAUTH_CLIENT_ID" Relay.app/Contents/Info.plist`.
+3. Confirm a clean machine can sign in to Planning Center with no setup.
+
+**Keeping existing users signed in.** Saved Planning Center tokens belong to the client ID that issued them. People upgrading from an earlier release keep their connection only if the new release uses the same client ID. Choose one:
+
+- **Same client ID (no reconnect):** use the original app's client ID in the release build, and add the current callback URL, `app.relay.pco://oauth/callback`, to that Planning Center app's callback list. Old tokens keep refreshing.
+- **New client ID (one reconnect):** use a new Planning Center app. Upgrading users click **Connect…** once. Dashboards and other settings are unaffected.
+
+**Do not revoke, regenerate, or delete an older Planning Center client ID while any release that uses it is still installed.** Planning Center would stop accepting those apps' sign-ins and token refreshes. Retire an old client only after the releases using it are out of use.
+
+Dashboards and settings carry over only if the release keeps the same bundle identifier and signing identity as the previous one. A build signed by a different developer starts with empty data.
+
 ## Troubleshooting
 
 - **A field in the app says "not configured":** the matching value is blank, or you did not rebuild after editing `Local.xcconfig`. Check `Config/Local.xcconfig` is in the `Config/` folder and has no stray spaces or quotes.
