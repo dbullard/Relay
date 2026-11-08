@@ -98,7 +98,7 @@ struct DashboardLiveStreamSettingsView: View {
                         }
                     }
 
-                    if let errorMessage {
+                    if let errorMessage, errorMessage != configurationError {
                         Text(errorMessage)
                             .font(.footnote)
                             .foregroundStyle(.red)

@@ -8,6 +8,8 @@ This repository starts the community edition from the free-version source snapsh
 
 ## What Relay does
 
+![Relay's module picker, listing audio, planning, utility, video, and wireless modules](docs/images/module-picker.jpg)
+
 - Custom dashboard layouts with live controls and status tiles.
 - Visual automation graphs, shared values, and universal automation.
 - Integrations for ProPresenter, Resolume, audio consoles, wireless systems, MIDI/DAW transport, and NDI video.

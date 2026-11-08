@@ -40,6 +40,8 @@ The scopes requested are `services` and `people`. Your Planning Center account n
 
 If you skip this, **Connect…** shows: "Planning Center sign-in is not configured".
 
+![Planning Center settings showing the not-configured message](images/pco-not-configured.jpg)
+
 ## YouTube Stream Monitor
 
 This module is only available in Debug builds (`Relay (DEBUG)`) and builds whose distribution channel is `beta`. Release builds hide it.
