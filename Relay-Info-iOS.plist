@@ -26,14 +26,6 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>app.relay.account.auth</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>relay</string>
-			</array>
-		</dict>
-		<dict>
-			<key>CFBundleURLName</key>
 			<string>app.relay.pco.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
@@ -75,12 +67,8 @@
 		<string>_netaudio-cm._udp</string>
 		<string>_http._tcp</string>
 	</array>
-	<key>RELAY_ACCOUNT_AUTH_ENABLED</key>
-	<false/>
 	<key>RELAY_API_BASE_URL</key>
 	<string>$(RELAY_API_BASE_URL)</string>
-	<key>RELAY_PURCHASE_MODE</key>
-	<string>appstore</string>
 	<key>PCO_OAUTH_CLIENT_ID</key>
 	<string>$(PCO_OAUTH_CLIENT_ID)</string>
 	<key>SENTRY_DSN</key>

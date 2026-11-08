@@ -33,7 +33,7 @@ struct WhatsNewFeedView: View {
     private func releaseSection(_ release: WhatsNewRelease) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text("Version \(release.version) (\(RelayLicensingConfig.channelDisplayLabel))")
+                Text("Version \(release.version) (\(RelayBuildConfig.channelDisplayLabel))")
                     .font(.headline)
                 Text("·")
                     .foregroundStyle(.tertiary)

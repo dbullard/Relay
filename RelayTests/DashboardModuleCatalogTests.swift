@@ -15,6 +15,5 @@ final class DashboardModuleCatalogTests: XCTestCase {
         XCTAssertNotNil(ndiItem)
         XCTAssertEqual(ndiItem?.title, "NDI® Feed")
         XCTAssertTrue(ndiItem?.isBeta == true)
-        XCTAssertTrue(ndiItem?.requiresPro == true)
     }
 }

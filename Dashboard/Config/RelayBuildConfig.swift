@@ -5,13 +5,7 @@ enum RelayDistributionChannel: String {
     case debug = "debug"
 }
 
-enum RelayPurchaseMode: String {
-    case appStore = "appstore"
-    case direct = "direct"
-    case both = "both"
-}
-
-struct RelayLicensingConfig {
+struct RelayBuildConfig {
     static let privacyPolicyURL = URL(string: "https://github.com/dbullard/Relay#privacy-and-optional-services")!
     static let termsURL = URL(string: "https://github.com/dbullard/Relay/blob/main/LICENSE")!
     static let supportURL = URL(string: "https://github.com/dbullard/Relay")!
@@ -29,25 +23,6 @@ struct RelayLicensingConfig {
         let raw = (Bundle.main.object(forInfoDictionaryKey: "RELAY_DISTRIBUTION_CHANNEL") as? String)
             ?? RelayDistributionChannel.release.rawValue
         return RelayDistributionChannel(rawValue: raw.lowercased()) ?? .release
-    }
-
-    static var purchaseMode: RelayPurchaseMode {
-        let raw = (Bundle.main.object(forInfoDictionaryKey: "RELAY_PURCHASE_MODE") as? String)
-            ?? RelayPurchaseMode.direct.rawValue
-        return RelayPurchaseMode(rawValue: raw.lowercased()) ?? .direct
-    }
-
-    static var isDirectMacDistribution: Bool {
-#if os(macOS)
-        switch purchaseMode {
-        case .direct, .both:
-            return true
-        case .appStore:
-            return false
-        }
-#else
-        return false
-#endif
     }
 
     /// UserDefaults key for the user's "Preview features" switch (Settings > Preview).
@@ -101,14 +76,5 @@ struct RelayLicensingConfig {
 
     static var isVistaIntegrationEnabled: Bool {
         true
-    }
-
-    static var usesAppStorePurchases: Bool {
-        switch purchaseMode {
-        case .appStore, .both:
-            return true
-        case .direct:
-            return false
-        }
     }
 }

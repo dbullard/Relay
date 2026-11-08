@@ -66,7 +66,7 @@ You can contribute code, documentation, hardware testing, or issue triage. We do
 
 ## Privacy and optional services
 
-Community builds contain no production Sentry DSN, YouTube OAuth credentials, update feed, or maintainer backend configuration. Relay Account sign-in is disabled by default. Local diagnostic logs and export remain available.
+Community builds contain no production Sentry DSN, YouTube OAuth credentials, update feed, or maintainer backend configuration. Local diagnostic logs and export remain available.
 
 The Sentry integration is limited to opt-in crash reports and explicitly submitted user feedback. It does not forward custom breadcrumbs, ordinary handled errors, hang reports, or runtime usage context. Manual Sentry submissions require a configured DSN; without one, use GitHub Issues or exported diagnostics. The existing optional usage-reporting code is retained, but no hosted backend is supplied in this repository.
 

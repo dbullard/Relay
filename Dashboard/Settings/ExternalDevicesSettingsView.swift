@@ -20,9 +20,7 @@ struct ExternalDevicesSettingsView: View {
     @StateObject private var store = ExternalDevicesStore.shared
     @StateObject private var discoveryService = ExternalDeviceDiscoveryService()
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @EnvironmentObject private var lanService: LANSharedTabsService
-    @Environment(\.proUpgradeAction) private var proUpgradeAction
 
     enum EntryMode {
         /// Shows the full External Devices settings experience (device list + editor).
@@ -33,39 +31,6 @@ struct ExternalDevicesSettingsView: View {
         case editDeviceOnly
     }
 
-private struct ProUpgradeOverlayFallbackView: View {
-    let action: () -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.7)
-                    .ignoresSafeArea()
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .ignoresSafeArea()
-                VStack(spacing: 12) {
-                    Text("Unlock more with Pro")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                    Text("External Devices are available with Pro.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Button("Subscribe") {
-                        action()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding(20)
-                .background(Color.black.opacity(0.45))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
-            }
-        }
-        .allowsHitTesting(true)
-    }
-}
 
     /// If provided, the view will auto-select this device and open the editor when it appears.
     let initialDeviceID: ExternalDeviceConfig.ID?
@@ -100,7 +65,7 @@ private struct ProUpgradeOverlayFallbackView: View {
     @FocusState private var isListFocused: Bool
     private let hiddenKinds: Set<ExternalDeviceKind> = {
         var set: Set<ExternalDeviceKind> = [.lightingConsole, .genericOsc]
-        if !RelayLicensingConfig.isVistaIntegrationEnabled {
+        if !RelayBuildConfig.isVistaIntegrationEnabled {
             set.insert(.vistaConsole)
         }
         if !sennheiserEnabled {
@@ -327,7 +292,6 @@ private struct ProUpgradeOverlayFallbackView: View {
     }
 
     private func fullSettingsContent(proxy: ScrollViewProxy) -> some View {
-        let isPro = subscriptionManager.hasPro
         let content = VStack(alignment: .leading, spacing: 10) {
             headerRow(proxy: proxy)
 #if os(macOS)
@@ -338,9 +302,6 @@ private struct ProUpgradeOverlayFallbackView: View {
             devicesList
             footerHint
         }
-        .disabled(!isPro)
-        .opacity(isPro ? 1.0 : 0.35)
-        .allowsHitTesting(isPro)
         #if os(iOS)
         .padding(.horizontal, 16)
         .padding(.bottom, 16)
@@ -349,36 +310,6 @@ private struct ProUpgradeOverlayFallbackView: View {
         .padding(16)
         #endif
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .overlay {
-            if !isPro {
-                ZStack {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.7)
-                        .ignoresSafeArea()
-                    Rectangle()
-                        .fill(Color.white.opacity(0.08))
-                        .ignoresSafeArea()
-#if os(iOS)
-                    ProUpgradePromptViewIOS(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {},
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) { }
-#else
-                    ProUpgradePromptView(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {},
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) { }
-#endif
-                }
-            }
-        }
         #if os(iOS)
         let base = AnyView(
             Group {
@@ -1760,7 +1691,6 @@ private struct ProUpgradeOverlayFallbackView: View {
     // MARK: - Edit-Only Body
 
     private var editDeviceOnlyBody: some View {
-        let isPro = subscriptionManager.hasPro
         return VStack(spacing: 0) {
             HStack {
                 Text("Edit Device")
@@ -1798,41 +1728,8 @@ private struct ProUpgradeOverlayFallbackView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 }
             }
-            .disabled(!isPro)
-            .opacity(isPro ? 1.0 : 0.35)
-            .allowsHitTesting(isPro)
         }
         .frame(minWidth: 520, minHeight: 420)
-        .overlay {
-            if !isPro {
-                ZStack {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.7)
-                        .ignoresSafeArea()
-                    Rectangle()
-                        .fill(Color.white.opacity(0.08))
-                        .ignoresSafeArea()
-#if os(iOS)
-                    ProUpgradePromptViewIOS(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {},
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) { }
-#else
-                    ProUpgradePromptView(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {},
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) { }
-#endif
-                }
-            }
-        }
         .task(id: initialDeviceID) {
             // Always prefer the deep-linked id.
             if let id = initialDeviceID {
@@ -2101,7 +1998,7 @@ private struct ExternalDeviceDetailEditor: View {
             if kind == .sennheiserWireless && !sennheiserEnabled {
                 return false
             }
-            if kind == .vistaConsole && !RelayLicensingConfig.isVistaIntegrationEnabled {
+            if kind == .vistaConsole && !RelayBuildConfig.isVistaIntegrationEnabled {
                 return false
             }
             return kind != .lightingConsole && kind != .genericOsc
@@ -4026,7 +3923,7 @@ private struct ExternalDeviceDetailEditor: View {
 
     @ViewBuilder
     private var vistaSection: some View {
-        if device.kind == .vistaConsole, RelayLicensingConfig.isVistaIntegrationEnabled {
+        if device.kind == .vistaConsole, RelayBuildConfig.isVistaIntegrationEnabled {
             GroupBox("Vista") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {

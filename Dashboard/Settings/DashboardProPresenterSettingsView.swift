@@ -15,8 +15,6 @@ import AppKit
 
 /// ProPresenter connection settings page (moved out of DashboardSettingsView.swift).
 struct DashboardProPresenterSettingsView: View {
-    @EnvironmentObject private var subscriptionManager: SubscriptionManager
-    @Environment(\.proUpgradeAction) private var proUpgradeAction
     @AppStorage("propresenter_host") private var host: String = ""
     @AppStorage("propresenter_port") private var port: Int = 1025
 
@@ -330,7 +328,6 @@ struct DashboardProPresenterSettingsView: View {
     }()
 
     var body: some View {
-        let isPro = subscriptionManager.hasPro
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text("ProPresenter")
@@ -374,41 +371,8 @@ struct DashboardProPresenterSettingsView: View {
 
                 Spacer()
             }
-            .disabled(!isPro)
-            .opacity(isPro ? 1.0 : 0.35)
-            .allowsHitTesting(isPro)
         }
         .padding(24)
-        .overlay {
-            if !isPro {
-                ZStack {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.7)
-                        .ignoresSafeArea()
-                    Rectangle()
-                        .fill(Color.white.opacity(0.08))
-                        .ignoresSafeArea()
-#if os(iOS)
-                    ProUpgradePromptViewIOS(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {},
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) { }
-#else
-                    ProUpgradePromptView(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {},
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) { }
-#endif
-                }
-            }
-        }
         .onAppear {
             if isDiscoveryEnabled {
                 discoveryService.startScan(password: password)
@@ -1374,36 +1338,3 @@ private final class ProPresenterBonjourResolver: NSObject, NetServiceDelegate {
     }
 }
 
-private struct ProUpgradeOverlayFallbackView: View {
-    let action: () -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.7)
-                    .ignoresSafeArea()
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .ignoresSafeArea()
-                VStack(spacing: 12) {
-                    Text("Unlock more with Pro")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                    Text("ProPresenter is available with Pro.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Button("Subscribe") {
-                        action()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding(20)
-                .background(Color.black.opacity(0.45))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
-            }
-        }
-        .allowsHitTesting(true)
-    }
-}

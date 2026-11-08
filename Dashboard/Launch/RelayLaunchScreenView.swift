@@ -19,17 +19,12 @@ struct RelayLaunchScreenView: View {
     var onClose: (() -> Void)? = nil
 
     @ObservedObject private var recentDocs = DashboardRecentDocumentsStore.shared
-    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
     @ObservedObject private var whatsNewStore = WhatsNewStore.shared
     @ObservedObject private var saveState = DashboardSaveState.shared
-    #if os(macOS)
-    @ObservedObject private var licenseCoordinator = LicenseCoordinator.shared
-    #endif
     @AppStorage("relay_startup_file_bookmark") private var startupFileBookmarkData: Data = Data()
     @AppStorage("relay_startup_file_name") private var startupFileName: String = ""
 
     @State private var showingNewDashboardSheet = false
-    @State private var showingProUpgrade = false
     @State private var mainAreaContent: LaunchHomeMainContent = .recent
     @State private var filterText = ""
     @State private var sortNewest = true
@@ -43,7 +38,6 @@ struct RelayLaunchScreenView: View {
         }
         .frame(width: 860, height: 540)
         .sheet(isPresented: $showingNewDashboardSheet) { newDashboardSheetContent }
-        .sheet(isPresented: $showingProUpgrade) { proUpgradeSheetContent }
         .overlay(alignment: .topTrailing) {
             if saveState.hasRealDocument, let onClose {
                 closeButton(action: onClose)
@@ -58,7 +52,6 @@ struct RelayLaunchScreenView: View {
             mainArea
         }
         .sheet(isPresented: $showingNewDashboardSheet) { newDashboardSheetContent }
-        .sheet(isPresented: $showingProUpgrade) { ProUpgradeView().environmentObject(subscriptionManager) }
         #endif
     }
 
@@ -92,17 +85,6 @@ struct RelayLaunchScreenView: View {
     }
     #endif
 
-    #if os(macOS)
-    @ViewBuilder
-    private var proUpgradeSheetContent: some View {
-        if RelayLicensingConfig.isDirectMacDistribution {
-            LicensingGateView(showsStatusView: false)
-                .environmentObject(licenseCoordinator)
-        } else {
-            ProUpgradeView().environmentObject(subscriptionManager)
-        }
-    }
-    #endif
 
     // MARK: - Sidebar
 
@@ -144,27 +126,7 @@ struct RelayLaunchScreenView: View {
                 onOpenSettings?()
             }
 
-            if !subscriptionManager.hasPro {
-                Button {
-                    showingProUpgrade = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "star.fill")
-                            .font(.caption)
-                        Text("Upgrade to Pro")
-                            .font(.subheadline.weight(.medium))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 7)
-                    .padding(.horizontal, 10)
-                    .background(Color.accentColor.opacity(0.15))
-                    .foregroundStyle(Color.accentColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.top, 6)
-            }
+
 
             Spacer()
 

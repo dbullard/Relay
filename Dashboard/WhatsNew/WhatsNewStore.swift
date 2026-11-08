@@ -86,9 +86,9 @@ final class WhatsNewStore: ObservableObject {
     }
 
     func refresh() async {
-        guard let client = WhatsNewClient(baseURL: RelayLicensingConfig.apiBaseURL) else { return }
+        guard let client = WhatsNewClient(baseURL: RelayBuildConfig.apiBaseURL) else { return }
         do {
-            let feed = try await client.fetchFeed(channel: RelayLicensingConfig.whatsNewFeedChannel)
+            let feed = try await client.fetchFeed(channel: RelayBuildConfig.whatsNewFeedChannel)
             releases = feed.releases
             persistCache(feed)
         } catch {

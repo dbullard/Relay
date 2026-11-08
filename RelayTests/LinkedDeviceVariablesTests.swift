@@ -3,17 +3,6 @@ import XCTest
 
 @MainActor
 final class LinkedDeviceVariablesTests: XCTestCase {
-    func testFreeSnapshotsNeverExportProValues() {
-        let values = [
-            SharedValue(name: "free_note", binding: .manual, payload: .text("Hi")),
-            SharedValue(name: "console_name", binding: .system(key: "console:device:output"), payload: .text("Main")),
-            SharedValue(name: "copied_name", binding: .computed(expression: "#{console_name}", payloadType: .text), payload: .text("Main"))
-        ]
-        XCTAssertEqual(LinkedDeviceVariableSnapshot.outbound(from: values, localTabIDs: [], hasPro: false).map(\.name), ["free_note"])
-        let tab = Data("{\"text\":\"#{free_note} #{console_name} #{copied_name}\"}".utf8)
-        XCTAssertEqual(SyncedTabVariableSnapshot.referenced(in: tab, values: values, hasPro: false).map(\.name), ["free_note"])
-    }
-
     func testOutboundExcludesSubscribedTabDataAndConnectionState() {
         let local = UUID()
         let remote = UUID()

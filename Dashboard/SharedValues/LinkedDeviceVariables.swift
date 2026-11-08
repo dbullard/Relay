@@ -107,8 +107,8 @@ struct LinkedDeviceVariable: Codable, Equatable, Identifiable, Sendable {
 }
 
 enum LinkedDeviceVariableSnapshot {
-    static func outbound(from values: [SharedValue], localTabIDs: Set<UUID>, people: [LinkedDeviceVariable] = [], hasPro: Bool = true) -> [LinkedDeviceVariable] {
-        (SharedValueAccessPolicy.visible(values, hasPro: hasPro).compactMap { value in
+    static func outbound(from values: [SharedValue], localTabIDs: Set<UUID>, people: [LinkedDeviceVariable] = []) -> [LinkedDeviceVariable] {
+        (values.compactMap { value in
             if case let .system(key) = value.binding {
                 if key.hasPrefix("computer:") { return nil }
                 if key.hasPrefix("roster:") || key.hasPrefix("planningcenter:") {
@@ -117,7 +117,7 @@ enum LinkedDeviceVariableSnapshot {
                 }
             }
             return LinkedDeviceVariable(value)
-        } + (hasPro ? people : []))
+        } + people)
         .filter { $0.name.utf8.count <= 128 && ($0.payload?.displayValue.utf8.count ?? 0) <= 16_384 }
         .prefix(2_000)
         .map { $0 }
@@ -148,10 +148,10 @@ enum LinkedDeviceVariableSnapshot {
 }
 
 enum SyncedTabVariableSnapshot {
-    static func referenced(in exportedTabJSON: Data, values: [SharedValue], hasPro: Bool = true) -> [LinkedDeviceVariable] {
+    static func referenced(in exportedTabJSON: Data, values: [SharedValue]) -> [LinkedDeviceVariable] {
         guard let text = String(data: exportedTabJSON, encoding: .utf8),
               let regex = try? NSRegularExpression(pattern: #"#\{(?:shared:)?([a-zA-Z0-9_]+)(?:\.[^}]*)?\}"#) else { return [] }
-        let byName = Dictionary(SharedValueAccessPolicy.visible(values, hasPro: hasPro).map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        let byName = Dictionary(values.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         var names = Set(regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match -> String? in
             guard let range = Range(match.range(at: 1), in: text) else { return nil }
             return normalizeSharedValueName(String(text[range]))
@@ -206,7 +206,6 @@ final class LinkedDeviceVariableStore {
     func clearAll() { entries.removeAll() }
 
     func payload(named name: String) -> SharedValuePayload? {
-        guard SubscriptionManager.shared.hasPro else { return nil }
         return entries.first { $0.tokenName == normalizeSharedValueName(name) }?.value.payload
     }
 }
@@ -243,12 +242,10 @@ final class SyncedTabVariableStore {
     func clear(groupID: String) { entries.removeAll { $0.groupID == groupID } }
 
     func payload(named name: String) -> SharedValuePayload? {
-        guard SubscriptionManager.shared.hasPro else { return nil }
         return entries.first { $0.tokenName == normalizeSharedValueName(name) }?.value.payload
     }
 
     func values(for groupID: String) -> [String: String] {
-        guard SubscriptionManager.shared.hasPro else { return [:] }
         return entries.filter { $0.groupID == groupID }.reduce(into: [:]) { result, entry in
             guard let payload = entry.value.payload else { return }
             result[entry.value.name] = payload.displayValue

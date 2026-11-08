@@ -63,14 +63,14 @@ enum DAWTransportType: String, CaseIterable, Codable, Identifiable {
     var id: String { rawValue }
 
     static var selectableCases: [DAWTransportType] {
-        if RelayLicensingConfig.isPreviewEnabled {
+        if RelayBuildConfig.isPreviewEnabled {
             return allCases
         }
         return [.proToolsHUI, .genericHUI]
     }
 
     var normalizedForCurrentBuild: DAWTransportType {
-        Self.runtimeType(stored: self, previewEnabled: RelayLicensingConfig.isPreviewEnabled)
+        Self.runtimeType(stored: self, previewEnabled: RelayBuildConfig.isPreviewEnabled)
     }
 
     /// Runtime fallback never changes the user's saved protocol.

@@ -59,20 +59,18 @@ struct SharedValueResolver {
         let raw = token.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "^#?\\{?(?:shared:)?", with: "", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "}"))
-        if raw.hasPrefix("person:"), SubscriptionManager.shared.hasPro,
+        if raw.hasPrefix("person:"),
            let person = LinkedComputerPersonVariableStore.shared.value(named: String(raw.dropFirst("person:".count))) {
             return .text(person)
         }
         let segments = raw.split(separator: ".").map(String.init)
         let name = normalizeSharedValueName(segments.first ?? "")
         guard !name.isEmpty else { return nil }
-        let hasPro = SubscriptionManager.shared.hasPro
-        let values = SharedValueAccessPolicy.visible(store.snapshot.values, hasPro: hasPro,
-                                                     syncedTabIDs: SharedValueSourceCoordinator.shared.syncedTabIDs)
+        let values = store.snapshot.values
         guard let payload = values.first(where: { $0.name == name })?.payload
-            ?? (hasPro ? LinkedDeviceVariableStore.shared.payload(named: name) : nil)
-            ?? (hasPro ? SyncedTabVariableStore.shared.payload(named: name) : nil)
-            ?? (hasPro ? LinkedComputerPersonVariableStore.shared.value(named: name).map(SharedValuePayload.text) : nil) else { return nil }
+            ?? LinkedDeviceVariableStore.shared.payload(named: name)
+            ?? SyncedTabVariableStore.shared.payload(named: name)
+            ?? LinkedComputerPersonVariableStore.shared.value(named: name).map(SharedValuePayload.text) else { return nil }
         guard segments.count > 1 else { return payload }
         guard case let .payload(json) = payload,
               let data = json.data(using: .utf8),
@@ -94,8 +92,7 @@ struct SharedValueResolver {
 
     func completionCandidates(query: String) -> [SharedValueCompletionCandidate] {
         let normalizedQuery = normalizeSharedValueName(query)
-        return SharedValueAccessPolicy.visible(store.snapshot.values, hasPro: SubscriptionManager.shared.hasPro,
-                                               syncedTabIDs: SharedValueSourceCoordinator.shared.syncedTabIDs)
+        return store.snapshot.values
             .filter { normalizedQuery.isEmpty || $0.name.hasPrefix(normalizedQuery) }
             .map(SharedValueCompletionCandidate.init)
             .sorted { $0.name < $1.name }

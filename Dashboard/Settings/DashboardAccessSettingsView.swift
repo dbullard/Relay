@@ -60,7 +60,6 @@ struct DashboardAccessSettingsView: View {
         }
     }
 
-    @EnvironmentObject private var relayAccountCoordinator: RelayAccountCoordinator
     @ObservedObject private var usageDiagnosticsPreferences = UsageDiagnosticsPreferences.shared
     @State private var rows: [PermissionRow] = []
 
@@ -137,41 +136,14 @@ struct DashboardAccessSettingsView: View {
                         )
                     )
 
-                    Text("Relay shares app version, platform, a random installation ID, active time, and technical crash details. It does not include dashboard content, connected-device data, location, audio, account email, or Relay network addresses.")
+                    Text("Relay shares app version, platform, a random installation ID, active time, and technical crash details. It does not include dashboard content, connected-device data, location, audio, or Relay network addresses.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label(heartbeatStatusTitle, systemImage: heartbeatStatusIcon)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(heartbeatStatusColor)
-
-                        Text(relayAccountCoordinator.heartbeatStatus.message)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        if let lastSuccessAt = relayAccountCoordinator.heartbeatStatus.lastSuccessAt {
-                            Text("Last sent: \(lastSuccessAt.formatted(date: .omitted, time: .standard))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        } else if let lastAttemptAt = relayAccountCoordinator.heartbeatStatus.lastAttemptAt {
-                            Text("Last attempted: \(lastAttemptAt.formatted(date: .omitted, time: .standard))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if let failure = relayAccountCoordinator.heartbeatStatus.lastFailureMessage {
-                            Text(failure)
-                                .font(.caption2)
-                                .foregroundStyle(.red)
-                        }
-                    }
 
                     HStack(spacing: 12) {
-                        Link("Privacy Policy", destination: RelayLicensingConfig.privacyPolicyURL)
-                        Link("Terms & Conditions", destination: RelayLicensingConfig.termsURL)
+                        Link("Privacy Policy", destination: RelayBuildConfig.privacyPolicyURL)
+                        Link("Terms & Conditions", destination: RelayBuildConfig.termsURL)
                     }
                     .font(.caption.weight(.semibold))
                 }
@@ -229,45 +201,6 @@ struct DashboardAccessSettingsView: View {
         }
     }
 
-    private var heartbeatStatusTitle: String {
-        let status = relayAccountCoordinator.heartbeatStatus
-        if status.lastSuccessAt != nil {
-            return "Dashboard heartbeat active"
-        }
-        if status.lastFailureMessage != nil {
-            return "Dashboard heartbeat retrying"
-        }
-        if status.isEligible || status.isRunning {
-            return "Dashboard heartbeat starting"
-        }
-        return "Dashboard heartbeat paused"
-    }
 
-    private var heartbeatStatusIcon: String {
-        let status = relayAccountCoordinator.heartbeatStatus
-        if status.lastSuccessAt != nil {
-            return "checkmark.circle.fill"
-        }
-        if status.lastFailureMessage != nil {
-            return "arrow.clockwise.circle.fill"
-        }
-        if status.isEligible || status.isRunning {
-            return "paperplane.circle.fill"
-        }
-        return "pause.circle.fill"
-    }
 
-    private var heartbeatStatusColor: Color {
-        let status = relayAccountCoordinator.heartbeatStatus
-        if status.lastSuccessAt != nil {
-            return .green
-        }
-        if status.lastFailureMessage != nil {
-            return .orange
-        }
-        if status.isEligible || status.isRunning {
-            return .blue
-        }
-        return .secondary
-    }
 }

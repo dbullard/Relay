@@ -111,18 +111,8 @@
 		6F42DFAC2EFAED50004458E2 /* Exceptions for "Dashboard" folder in "Relay Mobile" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Account/AppStoreSubscriptionLinkSheet.swift,
-				Account/DeleteAccountButton.swift,
-				Account/PKCE.swift,
-				Account/RelayAccountAppStoreSubscription.swift,
-				Account/RelayAccountConfig.swift,
-				Account/RelayAccountCoordinator.swift,
-				Account/RelayAccountHeartbeatReporter.swift,
-				Account/RelayAccountKeychainStore.swift,
-				Account/RelayAccountModels.swift,
-				Account/RelayAccountService.swift,
-				Account/UsageDiagnosticsConsentSheet.swift,
-				Account/UsageDiagnosticsPreferences.swift,
+				Diagnostics/UsageDiagnosticsConsentSheet.swift,
+				Diagnostics/UsageDiagnosticsPreferences.swift,
 				"Audio Analysis/AudioAnalysisEngine.swift",
 				"Audio Analysis/AudioAnalysisTypes.swift",
 				"Audio Analysis/AudioInputConfig.swift",
@@ -183,7 +173,6 @@
 				"Helpers/File Helpers/RelayLogArchiveDocument.swift",
 				"Helpers/File Helpers/RelayLogManager.swift",
 				"Helpers/File Helpers/RelaySupportContact.swift",
-				"Helpers/File Helpers/SubscriptionManager.swift",
 				"Helpers/File Helpers/WebpageFavoritesStore.swift",
 				"Helpers/File Helpers/WirelessLoggingPreferences.swift",
 				Helpers/Integrations/Connections/ProPresenterAutomationService.swift,
@@ -309,12 +298,6 @@
 				"Helpers/UI Helpers/NameShortener.swift",
 				"Helpers/UI Helpers/PairingApprovalSheet.swift",
 				"Helpers/UI Helpers/PairingWaitingOverlay.swift",
-				"Helpers/UI Helpers/ProBadgeView.swift",
-				"Helpers/UI Helpers/ProLockedModuleView.swift",
-				"Helpers/UI Helpers/ProUpgradeAction.swift",
-				"Helpers/UI Helpers/ProUpgradePromptView.swift",
-				"Helpers/UI Helpers/ProUpgradePromptViewIOS.swift",
-				"Helpers/UI Helpers/ProUpgradeView.swift",
 				"Helpers/UI Helpers/PurchaseErrorNotice.swift",
 				"Helpers/UI Helpers/SelectionActionToolbarView.swift",
 				"Helpers/UI Helpers/SFSymbolLibrary.swift",
@@ -328,15 +311,7 @@
 				"Helpers/UI Helpers/ViewportPanZoomModifier.swift",
 				Launch/LaunchNewDashboardSheet.swift,
 				Launch/RelayLaunchScreenView.swift,
-				Licensing/ActivateLicenseSheet.swift,
-				Licensing/LicenseCoordinator.swift,
-				Licensing/LicenseEntitlement.swift,
-				Licensing/LicenseKeychainStore.swift,
-				Licensing/LicenseStatus.swift,
-				Licensing/LicensingDTOs.swift,
-				Licensing/LicensingGateView.swift,
-				Licensing/RelayLicensingClient.swift,
-				Licensing/RelayLicensingConfig.swift,
+				Config/RelayBuildConfig.swift,
 				Modules/ButtonModule.swift,
 				Modules/DAWTransportModule.swift,
 				Modules/DAWTransportViewModelStore.swift,
@@ -385,7 +360,6 @@
 				Onboarding/OnboardingChecklistRow.swift,
 				Onboarding/OnboardingGhostPreviewLayer.swift,
 				Onboarding/OnboardingPreviewCanvas.swift,
-				Onboarding/OnboardingProLockOverlay.swift,
 				Onboarding/OnboardingReviewLayout.swift,
 				Onboarding/OnboardingStarterTileCatalog.swift,
 				Onboarding/OnboardingStepDotsView.swift,
@@ -438,7 +412,6 @@
 		6FB393A02F71DEF6008A286E /* Exceptions for "Dashboard" folder in "Relay" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				"Helpers/UI Helpers/ProUpgradePromptViewIOS.swift",
 			);
 			target = 6FA249EE2ECA9E9800542B2A /* Relay */;
 		};
@@ -1064,7 +1037,6 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				RELAY_DISTRIBUTION_CHANNEL = debug;
-				RELAY_PURCHASE_MODE = direct;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
@@ -1134,7 +1106,6 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
 				RELAY_DISTRIBUTION_CHANNEL = release;
-				RELAY_PURCHASE_MODE = direct;
 				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
 				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
 				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;

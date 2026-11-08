@@ -649,23 +649,21 @@ struct GraphRuntime {
     }
 
     static func universalVariableValuesByName(tab: DashboardTab) -> [String: String] {
-        let hasPro = SubscriptionManager.shared.hasPro
-        var values = SharedValueAccessPolicy.visible(SharedValueStore.shared.snapshot.values, hasPro: hasPro,
-                                                     syncedTabIDs: SharedValueSourceCoordinator.shared.syncedTabIDs).reduce(into: [String: String]()) { partialResult, value in
+        var values = SharedValueStore.shared.snapshot.values.reduce(into: [String: String]()) { partialResult, value in
             guard !value.displayValue.isEmpty else { return }
             partialResult[value.name] = value.displayValue
             partialResult["shared:\(value.name)"] = value.displayValue
         }
-        for entry in LinkedDeviceVariableStore.shared.entries where hasPro {
+        for entry in LinkedDeviceVariableStore.shared.entries {
             guard let payload = entry.value.payload else { continue }
             values[entry.tokenName] = payload.displayValue
         }
-        if hasPro, let groupID = tab.syncGroupID, !tab.syncIsOwner {
+        if let groupID = tab.syncGroupID, !tab.syncIsOwner {
             for (name, value) in SyncedTabVariableStore.shared.values(for: groupID) {
                 values[name] = value
             }
         }
-        for person in LinkedComputerPersonVariableStore.shared.variables.sorted(by: { $0.sourceID < $1.sourceID }) where hasPro {
+        for person in LinkedComputerPersonVariableStore.shared.variables.sorted(by: { $0.sourceID < $1.sourceID }) {
             let legacyName = normalizeSharedValueName("person_\(person.name)")
             if values[legacyName] == nil { values[legacyName] = person.name }
             values[person.variableName] = person.name

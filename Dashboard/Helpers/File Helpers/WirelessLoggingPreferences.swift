@@ -142,7 +142,7 @@ final class WirelessLoggingPreferences: ObservableObject {
     }
 
     // Computed once at launch: verbose wireless logging requires a debug build or the Preview switch (restart required).
-    // The key below deliberately duplicates RelayLicensingConfig.previewFeaturesKey because this
+    // The key below deliberately duplicates RelayBuildConfig.previewFeaturesKey because this
     // nonisolated helper cannot reference the MainActor-isolated config type. A test pins them equal.
     nonisolated static let isBetaOrDebugBuild: Bool = {
         let raw = (Bundle.main.object(forInfoDictionaryKey: "RELAY_DISTRIBUTION_CHANNEL") as? String)?

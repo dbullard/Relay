@@ -297,13 +297,6 @@ final class RelayDiagnosticsStore: ObservableObject {
         let lastNetworkScan = networkScannerTrace.last.map { "\(timestampString(for: $0.0)) — \($0.1)" } ?? "None"
         let perfSummary = performanceSummary(limit: 8)
         let counterSummary = eventCountersSummary(limit: 12)
-        let accountSnapshot = RelayAccountCoordinator.shared.diagnosticsSnapshot()
-        let accountEmail = accountSnapshot.currentEmail ?? "None"
-        let accountSourceSubscription = accountSnapshot.sourceSubscription ? "true" : "false"
-        let accountSourceLicense = accountSnapshot.sourceLicense ? "true" : "false"
-        let accountLastRefresh = accountSnapshot.lastRefreshAt.map { timestampString(for: $0) } ?? "N/A"
-        let accountLastErrorCode = accountSnapshot.lastErrorCode.map(String.init) ?? "None"
-        let accountLastErrorMessage = accountSnapshot.lastErrorMessage ?? "None"
 
         return [
             "runtime_tab_count": snapshot.tabCount,
@@ -316,15 +309,6 @@ final class RelayDiagnosticsStore: ObservableObject {
             "runtime_last_shure_trace": lastShure,
             "runtime_last_sennheiser_trace": lastSennheiser,
             "runtime_last_network_scan_trace": lastNetworkScan,
-            "runtime_account_auth_enabled": accountSnapshot.authEnabled,
-            "runtime_account_signed_in": accountSnapshot.signedIn,
-            "runtime_account_email": accountEmail,
-            "runtime_account_pro": accountSnapshot.relayAccountPro,
-            "runtime_account_source_subscription": accountSourceSubscription,
-            "runtime_account_source_license": accountSourceLicense,
-            "runtime_account_last_refresh_at": accountLastRefresh,
-            "runtime_account_last_error_code": accountLastErrorCode,
-            "runtime_account_last_error_message": accountLastErrorMessage,
             "runtime_perf_summary": perfSummary,
             "runtime_event_counters": counterSummary,
             "runtime_active_canvas_composition": activeCanvasCompositionSummary,
@@ -423,10 +407,6 @@ final class RelayDiagnosticsStore: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .nilIfEmpty ?? "release"
-        let purchaseMode = (info["RELAY_PURCHASE_MODE"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .nilIfEmpty ?? "direct"
 
         #if os(iOS)
         let device = UIDevice.current
@@ -471,13 +451,6 @@ final class RelayDiagnosticsStore: ObservableObject {
         let lastErrorAt = lastErrorAt.map { timestampString(for: $0) } ?? "N/A"
         let perfSummary = performanceSummary(limit: 10)
         let counterSummary = eventCountersSummary(limit: 16)
-        let accountSnapshot = RelayAccountCoordinator.shared.diagnosticsSnapshot()
-        let accountEmail = accountSnapshot.currentEmail ?? "None"
-        let accountSourceSubscription = accountSnapshot.sourceSubscription ? "Yes" : "No"
-        let accountSourceLicense = accountSnapshot.sourceLicense ? "Yes" : "No"
-        let accountLastRefresh = accountSnapshot.lastRefreshAt.map { timestampString(for: $0) } ?? "N/A"
-        let accountLastErrorCode = accountSnapshot.lastErrorCode.map(String.init) ?? "None"
-        let accountLastErrorMessage = accountSnapshot.lastErrorMessage ?? "None"
 
         let oscManager = OSCManager.shared
         let oscRX = oscManager.lastReceiveAt.map { timestampString(for: $0) } ?? "N/A"
@@ -490,7 +463,6 @@ final class RelayDiagnosticsStore: ObservableObject {
         App: \(appName)
         Version: \(version) (\(build))
         Distribution Channel: \(distributionChannel)
-        Purchase Mode: \(purchaseMode)
         Device: \(model)
         OS: \(osVersion)
         Timestamp: \(timestamp)
@@ -507,15 +479,6 @@ final class RelayDiagnosticsStore: ObservableObject {
         LAN Sharing: \(lanSharingEnabled ? "On" : "Off")
         \(lanPairingLine)
         LAN Allow Unpaired Read: \(lanAllowUnpairedRead ? "On" : "Off")
-        Relay Account Auth: \(accountSnapshot.authEnabled ? "Enabled" : "Disabled")
-        Relay Account Signed In: \(accountSnapshot.signedIn ? "Yes" : "No")
-        Relay Account Email: \(accountEmail)
-        Relay Account Pro: \(accountSnapshot.relayAccountPro ? "Yes" : "No")
-        Relay Account Source Subscription: \(accountSourceSubscription)
-        Relay Account Source License: \(accountSourceLicense)
-        Relay Account Last Refresh: \(accountLastRefresh)
-        Relay Account Last Error Code: \(accountLastErrorCode)
-        Relay Account Last Error: \(accountLastErrorMessage)
         Active Canvas Composition: \(activeCanvasCompositionSummary)
         Active Graph Composition: \(activeGraphCompositionSummary)
         Perf Summary: \(perfSummary.isEmpty ? "None" : perfSummary)

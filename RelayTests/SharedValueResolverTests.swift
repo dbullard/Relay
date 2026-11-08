@@ -92,34 +92,6 @@ final class SharedValueResolverTests: XCTestCase {
         XCTAssertFalse(fired)
     }
 
-    func testFreePolicyExcludesProSourcesAndDerivedValues() {
-        let values = [
-            SharedValue(name: "clock", binding: .system(key: "clock:time"), payload: .text("10:00")),
-            SharedValue(name: "plan", binding: .system(key: "planningcenter:tab:plan"), payload: .text("Sunday")),
-            SharedValue(name: "roster", binding: .system(key: "roster:tab:row"), payload: .text("Alex")),
-            SharedValue(name: "manual", binding: .manual, payload: .number(2)),
-            SharedValue(name: "console", binding: .system(key: "console:device:channel"), payload: .text("Main")),
-            SharedValue(name: "wireless", binding: .shure(deviceID: UUID(), channel: 1, field: .rf), payload: .number(4)),
-            SharedValue(name: "free_calc", binding: .computed(expression: "#{manual} * 2", payloadType: .number), payload: .number(4)),
-            SharedValue(name: "pro_calc", binding: .computed(expression: "#{console}", payloadType: .text), payload: .text("Main")),
-            SharedValue(name: "nested_calc", binding: .computed(expression: "#{pro_calc}", payloadType: .text), payload: .text("Main"))
-        ]
-        XCTAssertEqual(Set(SharedValueAccessPolicy.visible(values, hasPro: false).map(\.name)),
-                       ["clock", "plan", "roster", "manual", "free_calc"])
-        XCTAssertEqual(SharedValueAccessPolicy.visible(values, hasPro: true).count, values.count)
-    }
-
-    func testFreePolicyExcludesCachedValuesFromSubscribedTab() {
-        let remoteTab = UUID()
-        let values = [
-            SharedValue(name: "remote_plan", binding: .system(key: "planningcenter:\(remoteTab):plan"), payload: .text("Sunday")),
-            SharedValue(name: "remote_roster", binding: .system(key: "roster:\(remoteTab):row"), payload: .text("Alex")),
-            SharedValue(name: "derived", binding: .computed(expression: "#{remote_plan}", payloadType: .text), payload: .text("Sunday"))
-        ]
-        XCTAssertTrue(SharedValueAccessPolicy.visible(values, hasPro: false, syncedTabIDs: [remoteTab]).isEmpty)
-        XCTAssertEqual(SharedValueAccessPolicy.visible(values, hasPro: true, syncedTabIDs: [remoteTab]).count, 3)
-    }
-
     func testBothTokenFormsResolveSharedValue() async throws {
         let store = SharedValueStore(registry: SharedValueRegistry(storage: InMemorySharedValueStorage()))
         _ = try await store.create(name: "pastor_battery", binding: .manual)

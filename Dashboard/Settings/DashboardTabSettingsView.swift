@@ -129,8 +129,6 @@ private struct TabGeneralSettingsView: View {
     @Binding var tab: DashboardTab
     @EnvironmentObject private var lanService: LANSharedTabsService
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.proUpgradeAction) private var proUpgradeAction
-    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
     let onMakeSyncedTab: () -> Void
     let onStopSyncingTab: () -> Void
     let onResizeCanvas: (CGSize) -> Void
@@ -242,10 +240,6 @@ private struct TabGeneralSettingsView: View {
                             get: { isSynced },
                             set: { newValue in
                                 if newValue {
-                                    guard subscriptionManager.hasPro else {
-                                        proUpgradeAction()
-                                        return
-                                    }
                                     onMakeSyncedTab()
                                 } else if tab.syncIsOwner {
                                     onStopSyncingTab()
@@ -351,8 +345,6 @@ private struct TabGeneralSettingsView: View {
 private struct TabScheduleSettingsView: View {
     @Binding var tab: DashboardTab
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.proUpgradeAction) private var proUpgradeAction
-    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
 
     @State private var scheduleEnabledDraft: Bool = false
     @State private var scheduleRulesDraft: [DashboardTabScheduleRule] = []
@@ -437,9 +429,7 @@ private struct TabScheduleSettingsView: View {
                     HStack(spacing: 8) {
                         Text("Tab Schedule")
                             .font(.title3.bold())
-                        if !subscriptionManager.hasPro {
-                            ProBadgeView(fontSize: 10)
-                        }
+
                     }
                     Text("Schedule when this tab should become active. Rules are checked in order, and the first matching tab wins.")
                         .font(.footnote)
@@ -447,91 +437,65 @@ private struct TabScheduleSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if !subscriptionManager.hasPro {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "lock.fill")
-                                .foregroundStyle(.secondary)
-                            Text("Tab scheduling requires Pro.")
-                                .font(.headline)
-                        }
+                Toggle("Enable scheduled tab switching for this tab", isOn: $scheduleEnabledDraft)
 
-                        Text("Free mode includes a single tab, so scheduled tab switching is only available with Pro.")
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Rules")
+                            .font(.headline)
+                        Spacer()
+                        Button {
+                            addRule()
+                        } label: {
+                            Label("Add Rule", systemImage: "plus")
+                        }
+                    }
+
+                    if scheduleRulesDraft.isEmpty {
+                        Text("No schedule rules yet. Add a rule to choose weekdays and time ranges for this tab.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        Button("Upgrade to Pro") {
-                            proUpgradeAction()
+                    } else {
+                        ForEach($scheduleRulesDraft) { $rule in
+                            // Position (for move up/down bounds and the "at index" mutators)
+                            // is re-resolved by stable rule.id, not captured from the
+                            // ForEach's enumeration, so a delete/reorder mid-list can't
+                            // leave a later row acting on the wrong rule. `rule` always
+                            // comes from `scheduleRulesDraft` in this same synchronous
+                            // render pass, so the lookup provably can't fail; force-unwrap
+                            // so a future refactor that breaks that invariant crashes
+                            // loudly instead of silently retargeting row 0.
+                            let index = scheduleRulesDraft.firstIndex(where: { $0.id == rule.id })!
+                            TabScheduleRuleEditor(
+                                rule: $rule,
+                                index: index,
+                                totalCount: scheduleRulesDraft.count,
+                                weekdays: weekdays,
+                                summaryText: summaryText(for: rule),
+                                onMoveUp: { moveRule(at: index, by: -1) },
+                                onMoveDown: { moveRule(at: index, by: 1) },
+                                onDelete: { deleteRule(at: index) }
+                            )
                         }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.secondary.opacity(0.08))
-                    )
-                } else {
-                    Toggle("Enable scheduled tab switching for this tab", isOn: $scheduleEnabledDraft)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("Rules")
-                                .font(.headline)
-                            Spacer()
-                            Button {
-                                addRule()
-                            } label: {
-                                Label("Add Rule", systemImage: "plus")
-                            }
-                        }
-
-                        if scheduleRulesDraft.isEmpty {
-                            Text("No schedule rules yet. Add a rule to choose weekdays and time ranges for this tab.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach($scheduleRulesDraft) { $rule in
-                                // Position (for move up/down bounds and the "at index" mutators)
-                                // is re-resolved by stable rule.id, not captured from the
-                                // ForEach's enumeration, so a delete/reorder mid-list can't
-                                // leave a later row acting on the wrong rule. `rule` always
-                                // comes from `scheduleRulesDraft` in this same synchronous
-                                // render pass, so the lookup provably can't fail; force-unwrap
-                                // so a future refactor that breaks that invariant crashes
-                                // loudly instead of silently retargeting row 0.
-                                let index = scheduleRulesDraft.firstIndex(where: { $0.id == rule.id })!
-                                TabScheduleRuleEditor(
-                                    rule: $rule,
-                                    index: index,
-                                    totalCount: scheduleRulesDraft.count,
-                                    weekdays: weekdays,
-                                    summaryText: summaryText(for: rule),
-                                    onMoveUp: { moveRule(at: index, by: -1) },
-                                    onMoveDown: { moveRule(at: index, by: 1) },
-                                    onDelete: { deleteRule(at: index) }
-                                )
-                            }
-                        }
-                    }
-                    .disabled(!scheduleEnabledDraft)
-
-                    HStack {
-                        Spacer()
-                        Button("Cancel") {
-                            revertDraft()
-                            dismiss()
-                        }
-                        Button("Save") {
-                            applyDraftToTab()
-                            dismiss()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!hasScheduleChanges)
                     }
                 }
+                .disabled(!scheduleEnabledDraft)
+
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        revertDraft()
+                        dismiss()
+                    }
+                    Button("Save") {
+                        applyDraftToTab()
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!hasScheduleChanges)
+                }
+            
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

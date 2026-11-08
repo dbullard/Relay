@@ -2503,22 +2503,21 @@ func route(request: String) -> Data {
     }
 
     if method == "GET", path == "/linkedVariables/v1" {
-        guard SubscriptionManager.shared.hasPro, fullRelaySharingEnabled,
+        guard fullRelaySharingEnabled,
               isAuthorized(),
               let requesterID = headers["x-relay-device-id"] else { return http401() }
         guard pairedDevices[requesterID]?.sharesVariables == true else { return http403() }
         let values = LinkedDeviceVariableSnapshot.outbound(
             from: SharedValueStore.shared.snapshot.values,
             localTabIDs: linkedVariableLocalTabIDs,
-            people: linkedVariableLocalPeople,
-            hasPro: SubscriptionManager.shared.hasPro
+            people: linkedVariableLocalPeople
         )
         let data = (try? JSONEncoder().encode(values)) ?? Data("[]".utf8)
         return http200(json: data)
     }
 
     if method == "GET", path == "/syncedVariables/v1" {
-        guard SubscriptionManager.shared.hasPro, fullRelaySharingEnabled, isAuthorized(),
+        guard fullRelaySharingEnabled, isAuthorized(),
               let requesterID = headers["x-relay-device-id"] else { return http401() }
         guard let groupID = queryItems.first(where: { $0.name == "groupID" })?.value,
               localSyncedGroupIDs.contains(groupID),
@@ -2526,8 +2525,7 @@ func route(request: String) -> Data {
               let snapshot = localSyncedSnapshotsByGroupID[groupID] else { return http404() }
         let values = SyncedTabVariableSnapshot.referenced(
             in: snapshot.exportedTabJSON,
-            values: SharedValueStore.shared.snapshot.values,
-            hasPro: SubscriptionManager.shared.hasPro
+            values: SharedValueStore.shared.snapshot.values
         )
         let data = (try? JSONEncoder().encode(values)) ?? Data("[]".utf8)
         return http200(json: data)

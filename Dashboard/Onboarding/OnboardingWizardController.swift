@@ -18,24 +18,20 @@ enum OnboardingStep {
 /// Review & Create step reads those stores directly, so candidacy always
 /// reflects actual current state rather than a wizard-session diff.
 ///
-/// Step sequence is tier-dependent: free-tier users still get Connections before
-/// Starter Tiles so they can configure the free Planning Center login before choosing
-/// PCO starter tiles. Device and audio setup remain Pro-only. `activeSteps` is
-/// computed once at `start(hasPro:)` and navigation moves by index within it rather
-/// than by the step enum's raw ordering.
+/// Connections come before Starter Tiles so users can configure Planning Center before
+/// choosing PCO starter tiles. `activeSteps` is computed once at `start()` and navigation
+/// moves by index within it rather than by the step enum's raw ordering.
 final class OnboardingWizardController: ObservableObject {
     @Published var isPresented: Bool = false
     @Published private(set) var step: OnboardingStep = .welcome
     @Published private(set) var activeSteps: [OnboardingStep] = []
 
-    /// Tiles the user picked in the Starter Tiles step. Reset on every `start(hasPro:)`;
+    /// Tiles the user picked in the Starter Tiles step. Reset on every `start()`;
     /// written by OnboardingStarterTilesStepView, read by OnboardingReviewStepView.
     @Published var starterTileSelections: [OnboardingTileCandidate] = []
 
-    func start(hasPro: Bool) {
-        activeSteps = hasPro
-            ? [.welcome, .connections, .devices, .audioInputs, .starterTiles, .reviewAndCreate]
-            : [.welcome, .connections, .starterTiles, .reviewAndCreate]
+    func start() {
+        activeSteps = [.welcome, .connections, .devices, .audioInputs, .starterTiles, .reviewAndCreate]
         step = activeSteps[0]
         starterTileSelections = []
         isPresented = true

@@ -5,13 +5,8 @@ import SwiftUI
 /// by ExternalDevicesSettingsView, and lets the user add found devices with one tap.
 /// (DiGiCo consoles have no discovery probe and are add-manually-only elsewhere in the app.)
 struct OnboardingDevicesStepView: View {
-    @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @StateObject private var discoveryService = ExternalDeviceDiscoveryService()
     @State private var addedResultKeys: Set<String> = []
-
-    /// External device discovery is Pro-only everywhere else in the app
-    /// (ExternalDevicesSettingsView); this step must not let free users bypass that.
-    private var isLocked: Bool { !subscriptionManager.hasPro }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -54,9 +49,7 @@ struct OnboardingDevicesStepView: View {
             }
         }
         .padding(20)
-        .onboardingProLocked(isLocked)
         .onAppear {
-            guard !isLocked else { return }
             discoveryService.startScan()
         }
         .onDisappear { discoveryService.stopScan() }

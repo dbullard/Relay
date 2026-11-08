@@ -52,7 +52,6 @@ struct RelayCommands: Commands {
     @AppStorage("dashboard_has_hidden_nodes")
     private var dashboardHasHiddenNodes: Bool = false
 
-    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
 
 #if canImport(Sparkle)
     init(updater: SPUUpdater) {
@@ -217,9 +216,7 @@ struct RelayCommands: Commands {
 
             Button {
                 guard dashboardViewMode != "automation" else { return }
-                if subscriptionManager.hasPro {
-                    dashboardViewMode = "automation"
-                }
+                dashboardViewMode = "automation"
                 NotificationCenter.default.post(name: .dashboardAutomationViewRequested, object: nil)
             } label: {
                 HStack(spacing: 8) {

@@ -61,7 +61,6 @@ struct DashboardTopToolbarView: View {
     @Binding var showingSettings: Bool
 
     @EnvironmentObject var saveState: DashboardSaveState
-    @EnvironmentObject var subscriptionManager: SubscriptionManager
     @Environment(\.colorScheme) private var colorScheme
 
     @Binding var isLiveMode: Bool
@@ -100,8 +99,6 @@ struct DashboardTopToolbarView: View {
     let toggleGraphCanvas: () -> Void
     /// Fires a global “send all” action in Graph view (caller wires to GraphDashboardView logic).
     let sendAllToConsoles: () -> Void = {}
-    private var showAutomationProBadge: Bool { !subscriptionManager.hasPro }
-    private var canAddTabs: Bool { subscriptionManager.hasPro }
     // MARK: - Presentation (macOS pill HUD)
 
     /// When true on macOS, the toolbar is shown as a floating pill that reveals via a top-edge hot zone.
@@ -2206,8 +2203,6 @@ struct DashboardTopToolbarView: View {
                                 .frame(width: iconW, height: iconH)
                         }
                         .buttonStyle(.plain)
-                        .disabled(!canAddTabs)
-                        .opacity(canAddTabs ? 1.0 : 0.35)
                     }
                     .frame(maxWidth: 720)
                     .frame(height: tabsStripHeight)
@@ -2283,21 +2278,11 @@ struct DashboardTopToolbarView: View {
                                 .padding(.vertical, 6)
                                 .toolbarIconChrome(isActive: isGraphMode)
 
-                            if showAutomationProBadge && !isGraphMode {
-                                ProBadgeView(label: "PRO", fontSize: 7)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 2)
-                                    .offset(x: 6, y: -6)
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
-                            }
                         }
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(isGraphMode ? "Switch to Canvas View" : "Automation")
                         .accessibilityHint(
-                            showAutomationProBadge && !isGraphMode
-                            ? "Preview automation. Upgrade to Pro to unlock automation editing."
-                            : "Switches between dashboard canvas and automation view."
+                            "Switches between dashboard canvas and automation view."
                         )
                     }
                     .buttonStyle(.plain)
@@ -2957,8 +2942,6 @@ struct DashboardTopToolbarView: View {
                                 .frame(width: iconW, height: iconH)
                         }
                         .buttonStyle(.plain)
-                        .disabled(!canAddTabs)
-                        .opacity(canAddTabs ? 1.0 : 0.35)
                     }
                     .frame(maxWidth: 720)
                     .frame(height: tabsStripHeight)
@@ -3066,21 +3049,11 @@ struct DashboardTopToolbarView: View {
                             .frame(width: iconW, height: iconH)
                             .toolbarIconChrome(isActive: isGraphMode)
 
-                        if showAutomationProBadge && !isGraphMode {
-                            ProBadgeView(label: "PRO", fontSize: 7)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 2)
-                                .offset(x: 6, y: -6)
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
-                        }
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(isGraphMode ? "Switch to Canvas View" : "Automation")
                     .accessibilityHint(
-                        showAutomationProBadge && !isGraphMode
-                        ? "Preview automation. Upgrade to Pro to unlock automation editing."
-                        : "Switches between dashboard canvas and automation view."
+                        "Switches between dashboard canvas and automation view."
                     )
                 }
                 .buttonStyle(.plain)

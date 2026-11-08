@@ -4,24 +4,19 @@ import XCTest
 @MainActor
 final class PreviewFeaturesTests: XCTestCase {
     func test_releaseWithSwitchOff_hasNoPreviewFeatures() {
-        XCTAssertFalse(RelayLicensingConfig.previewFeaturesEnabled(channel: .release, userEnabled: false))
+        XCTAssertFalse(RelayBuildConfig.previewFeaturesEnabled(channel: .release, userEnabled: false))
     }
 
     func test_releaseWithSwitchOn_hasPreviewFeatures() {
-        XCTAssertTrue(RelayLicensingConfig.previewFeaturesEnabled(channel: .release, userEnabled: true))
+        XCTAssertTrue(RelayBuildConfig.previewFeaturesEnabled(channel: .release, userEnabled: true))
     }
 
     func test_debugAlwaysHasPreviewFeatures() {
-        XCTAssertTrue(RelayLicensingConfig.previewFeaturesEnabled(channel: .debug, userEnabled: false))
+        XCTAssertTrue(RelayBuildConfig.previewFeaturesEnabled(channel: .debug, userEnabled: false))
     }
 
     func test_previewKeyIsStable() {
-        XCTAssertEqual(RelayLicensingConfig.previewFeaturesKey, "relay_preview_features_enabled")
-    }
-
-    func test_debugTokenEntryIsDebugOnly() {
-        XCTAssertTrue(RelayAccountConfig.debugTokenEntryAllowed(channel: .debug))
-        XCTAssertFalse(RelayAccountConfig.debugTokenEntryAllowed(channel: .release))
+        XCTAssertEqual(RelayBuildConfig.previewFeaturesKey, "relay_preview_features_enabled")
     }
 
     func test_unknownOrOldBetaChannelValueFallsBackToRelease() {
@@ -29,8 +24,8 @@ final class PreviewFeaturesTests: XCTestCase {
     }
 
     func test_wirelessLoggingKeyMatchesPreviewKey() {
-        UserDefaults.standard.set(true, forKey: RelayLicensingConfig.previewFeaturesKey)
-        defer { UserDefaults.standard.removeObject(forKey: RelayLicensingConfig.previewFeaturesKey) }
+        UserDefaults.standard.set(true, forKey: RelayBuildConfig.previewFeaturesKey)
+        defer { UserDefaults.standard.removeObject(forKey: RelayBuildConfig.previewFeaturesKey) }
         // The Debug test build is already "debug", so this asserts the literal matches by reading it back.
         XCTAssertTrue(UserDefaults.standard.bool(forKey: "relay_preview_features_enabled"))
     }

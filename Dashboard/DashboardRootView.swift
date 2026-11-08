@@ -122,12 +122,7 @@ struct DashboardRootView: View {
     @State private var canvasActions = DashboardCanvasActionCoordinator()
     @AppStorage("dashboard_tutorial_seen") private var tutorialSeen: Bool = false
     @AppStorage("dashboard_automation_tutorial_seen") private var automationTutorialSeen: Bool = false
-    @AppStorage("dashboard_automation_preview_seen") private var automationPreviewSeen: Bool = false
     @EnvironmentObject var saveState: DashboardSaveState
-    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
-#if os(macOS)
-    @EnvironmentObject private var licenseCoordinator: LicenseCoordinator
-#endif
     @State private var tabs: [DashboardTab]
     @State private var universalGraph: DashboardGraph? = nil
     @State private var sharedRosters: [DashboardRoster]
@@ -330,9 +325,6 @@ struct DashboardRootView: View {
     @State private var showingPCOConfigForTab = false
     @State private var settingsInitialSelection: DashboardSettingsInitialSelection = .general
     @State private var renamingTabIndex: Int? = nil
-    @State private var showingProUpgrade: Bool = false
-    @State private var showingProUpgradePrompt: Bool = false
-    @State private var showingProUpgradePromptTask: Task<Void, Never>? = nil
 
     @State private var isAddMenuOpen: Bool = false
     
@@ -378,7 +370,6 @@ struct DashboardRootView: View {
     @State private var dashboardDocument = DashboardDocument(tabs: [], rosters: [], selectedTabIndex: 0)
     @State private var dashboardFileErrorMessage: String?
     @State private var logExportErrorMessage: String?
-    @State private var freeImportWarningMessage: String?
     @StateObject private var documentController = DashboardDocumentController.shared
     
     // Tracks the last URL this dashboard was saved to or loaded from
@@ -641,31 +632,6 @@ struct DashboardRootView: View {
 var body: some View {
     GeometryReader { proxy in
         let base = rootBaseView(proxy: proxy)
-        let upgradeAction = {
-            if showingSettings {
-                showingSettings = false
-            }
-            if showingRosters {
-                showingRosters = false
-            }
-            if showExternalDevicesSettingsSheet {
-                showExternalDevicesSettingsSheet = false
-            }
-            if showingPCOConfigForTab {
-                showingPCOConfigForTab = false
-            }
-            // Note: this delayed presentation isn't covered by
-            // dismissBlockingModalsForTermination()'s synchronous flag-clearing — if Cmd+Q
-            // lands in the ~0.2s window between this dispatch and it firing, the upgrade
-            // prompt can still appear after a save-prompt alert is already showing. Narrow,
-            // pre-existing timing quirk of this upgrade flow, not fixed here.
-            showingProUpgradePromptTask?.cancel()
-            showingProUpgradePromptTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(200))
-                guard !Task.isCancelled else { return }
-                showingProUpgradePrompt = true
-            }
-        }
         withRootHandlers(base, proxy: proxy)
             .environment(\.dashboardIsPCOConfigOpen, showingPCOConfigForTab)
             .environment(\.dashboardIsWebpageViewportBypassActive, isWebpageViewportBypassActive)
@@ -673,7 +639,6 @@ var body: some View {
                 isWebpageViewportBypassActive = isActive
                 webpageViewportBypassModuleID = isActive ? moduleID : nil
             })
-            .environment(\.proUpgradeAction, upgradeAction)
             .environment(\.joinSyncedTabAction, { manifest in joinSyncedTab(manifest) })
             .environment(\.leaveSyncedTabAction, { groupID in
                 guard let index = tabs.firstIndex(where: { $0.syncGroupID == groupID }) else { return }
@@ -686,61 +651,13 @@ var body: some View {
                     controller: tutorialController,
                     anchors: anchors,
                     lanSharingEnabled: lanHostingAllowed,
-                    onUpgradeRequested: upgradeAction,
-                    onOnboardingWizardRequested: { onboardingWizardController.start(hasPro: subscriptionManager.hasPro) }
+                    onOnboardingWizardRequested: { onboardingWizardController.start() }
                 )
             }
             .alert("Connection Lost", isPresented: $showLostLANAlert) {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("Lost connection to \(lostLANDeviceName)")
-            }
-            .sheet(isPresented: $showingProUpgrade) {
-#if os(macOS)
-                if RelayLicensingConfig.isDirectMacDistribution {
-                    LicensingGateView(showsStatusView: false)
-                } else {
-                    ProUpgradeView()
-                }
-#else
-                ProUpgradeView()
-#endif
-            }
-            .sheet(isPresented: $showingProUpgradePrompt) {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-#if os(iOS)
-                    ProUpgradePromptViewIOS(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {
-                            showingProUpgradePrompt = false
-                        },
-                        animateOnAppear: true,
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) {
-                        showingProUpgradePrompt = false
-                    }
-#else
-                    if RelayLicensingConfig.isDirectMacDistribution {
-                        LicensingGateView(showsStatusView: false)
-                    } else {
-                        ProUpgradePromptView(
-                            buttonTitle: "Upgrade to Pro",
-                            secondaryButtonTitle: "Continue with Free",
-                            secondaryAction: {
-                                showingProUpgradePrompt = false
-                            },
-                            animateOnAppear: true,
-                            showPlanSelector: true,
-                            showManageLinks: true
-                        ) {
-                            showingProUpgradePrompt = false
-                        }
-                    }
-#endif
-                }
             }
     }
     .onAppear {
@@ -749,25 +666,17 @@ var body: some View {
         centerInitialTileIfNeeded()
     }
     .onDisappear {
-        showingProUpgradePromptTask?.cancel()
         tileNudgeResetTask?.cancel()
     }
     .onReceive(documentController.$pendingRequest.compactMap { $0 }) { request in
         handleDocumentControllerRequest(request)
     }
     .onReceive(NotificationCenter.default.publisher(for: .prodlinkStartTutorial)) { _ in
-        let hasPro = subscriptionManager.hasPro
         if layoutMode == .graph {
-            if hasPro {
-                tutorialController.start(kind: .proAutomation, hasPro: true)
-                automationTutorialSeen = true
-            } else {
-                tutorialController.start(kind: .lockedAutomationPreview, hasPro: false)
-                automationPreviewSeen = true
-            }
+            tutorialController.start(kind: .automation)
+            automationTutorialSeen = true
         } else {
-            let kind: DashboardTutorialKind = hasPro ? .proCanvas : .freeCanvas
-            tutorialController.start(kind: kind, hasPro: hasPro)
+            tutorialController.start(kind: .canvas)
             tutorialSeen = true
         }
     }
@@ -1111,8 +1020,6 @@ var body: some View {
                 presentNotification(title: title, message: message, durationSeconds: duration)
             }
             .onReceive(NotificationCenter.default.publisher(for: ActionNodeNotifications.lanNotify)) { note in
-                guard subscriptionManager.hasPro else { return }
-
                 let ui = note.userInfo ?? [:]
                 let title = (ui[ActionNodeUserInfoKeys.title] as? String) ?? "Automation"
                 let message = (ui[ActionNodeUserInfoKeys.message] as? String) ?? ""
@@ -1411,15 +1318,6 @@ var body: some View {
 
     private func withModeAndCanvasHandlers<Content: View>(_ content: Content) -> some View {
         content
-            .onChange(of: subscriptionManager.hasPro, initial: false) { _, hasPro in
-                guard !hasPro else { return }
-                if layoutMode == .graph {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        layoutMode = .canvas
-                        dashboardViewMode = "canvas"
-                    }
-                }
-            }
             .onChange(of: isLiveMode, initial: false) { _, newValue in
                 NotificationCenter.default.post(
                     name: .relayLiveModeDidChange,
@@ -1699,7 +1597,7 @@ var body: some View {
                 )
             }
             .onReceive(NotificationCenter.default.publisher(for: .relayStartOnboardingWizard)) { _ in
-                onboardingWizardController.start(hasPro: subscriptionManager.hasPro)
+                onboardingWizardController.start()
             }
             .sheet(isPresented: $showingTileGroupSheet, onDismiss: {
                 tileGroupName = ""
@@ -2045,9 +1943,9 @@ var body: some View {
     @AppStorage("gridBackgroundOpacity") private var gridBackgroundOpacity: Double = 0.35
     @AppStorage("lan_sharing_enabled") private var lanSharingEnabled: Bool = true
     @AppStorage("lan_browser_view_only_enabled") private var lanBrowserViewOnlyEnabled: Bool = false
-    private var lanHostingAllowed: Bool { lanSharingEnabled && subscriptionManager.hasPro }
+    private var lanHostingAllowed: Bool { lanSharingEnabled }
     private var lanBrowserServingAllowed: Bool { lanBrowserViewOnlyEnabled || lanHostingAllowed }
-    private var lanDiscoveryAllowed: Bool { subscriptionManager.hasPro }
+    private var lanDiscoveryAllowed: Bool { true }
     // MARK: - Center Canvas Layers
 
     /// Full-screen background with context menu, selection gestures, and drag-to-select.
@@ -3090,7 +2988,6 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                                 scheduleLiveModeChromeHide(respectsHover: false)
                             },
                             isGraphMode: layoutMode == .graph,
-                            showAutomationProBadge: !subscriptionManager.hasPro,
                             onToggleGraphCanvas: {
                                 showLiveModeChrome()
                                 handleToggleGraphCanvas()
@@ -3175,7 +3072,6 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                             scheduleLiveModeChromeHide(respectsHover: false)
                         },
                         isGraphMode: layoutMode == .graph,
-                        showAutomationProBadge: !subscriptionManager.hasPro,
                         onToggleGraphCanvas: {
                             showLiveModeChrome()
                             handleToggleGraphCanvas()
@@ -3266,7 +3162,7 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                     tab: tabBinding,
                     isLiveMode: isLiveMode,
                     lanPeers: lanService.peers.filter { lanService.isPeerEnabled($0) },
-                    lanNotificationsEnabled: subscriptionManager.hasPro,
+                    lanNotificationsEnabled: true,
                     externalDevicesSnapshot: ExternalDevicesStore.shared.currentSnapshot().devices,
                     tilesSnapshot: graphTilesSnapshot,
                     pcoRundownSnapshotTitles: rundownTitlesSnapshot,
@@ -3920,29 +3816,23 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
             }
             .onReceive(NotificationCenter.default.publisher(for: .dashboardAutomationViewRequested)) { _ in
                 guard layoutMode != .graph else { return }
-                if subscriptionManager.hasPro {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        layoutMode = .graph
-                        dashboardViewMode = "automation"
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    layoutMode = .graph
+                    dashboardViewMode = "automation"
 
-                        // Stop LAN mirror polling while in Graph/Automation view.
-                        lanMirrorRefreshTask?.cancel()
-                        lanMirrorRefreshTask = nil
+                    // Stop LAN mirror polling while in Graph/Automation view.
+                    lanMirrorRefreshTask?.cancel()
+                    lanMirrorRefreshTask = nil
 
-                        // Match toolbar behavior when switching modes.
-                        clearSelectionForViewSwitch()
+                    // Match toolbar behavior when switching modes.
+                    clearSelectionForViewSwitch()
+                }
+
+                if !automationTutorialSeen {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        tutorialController.start(kind: .automation)
+                        automationTutorialSeen = true
                     }
-
-                    if !automationTutorialSeen {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            tutorialController.start(kind: .proAutomation, hasPro: true)
-                            automationTutorialSeen = true
-                        }
-                    }
-                } else {
-                    tutorialController.start(kind: .lockedAutomationPreview, hasPro: false)
-                    automationPreviewSeen = true
-                    return
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: ActionNodeNotifications.appControl)) { note in
@@ -4781,18 +4671,7 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
             } message: {
                 Text(logExportErrorMessage ?? "Unknown error")
             }
-        let i = h.alert("Pro Features Locked", isPresented: Binding(
-                get: { freeImportWarningMessage != nil },
-                set: { newValue in
-                    if !newValue { freeImportWarningMessage = nil }
-                }
-            )) {
-                Button("OK", role: .cancel) {
-                    freeImportWarningMessage = nil
-                }
-            } message: {
-                Text(freeImportWarningMessage ?? "")
-            }
+        let i = h
         let j = i.confirmationDialog(
                 "Import LAN Tab",
                 isPresented: $showingLANImportDialog,
@@ -5442,7 +5321,6 @@ private func recomputeLANMirrorScale() {
             )
         }
         .environment(\.dashboardIsLANSnapshotRendering, true)
-        .environmentObject(SubscriptionManager.shared)
         .environmentObject(DashboardSaveState.shared)
         .environmentObject(lanService)
         .frame(width: canvasSize.width, height: canvasSize.height, alignment: .topLeading)
@@ -6366,11 +6244,6 @@ private func syncedPresenceColor(for deviceID: String) -> Color {
 
 private func handleToggleGraphCanvas() {
     withAnimation(.easeInOut(duration: 0.25)) {
-        if layoutMode == .canvas && !subscriptionManager.hasPro {
-            tutorialController.start(kind: .lockedAutomationPreview, hasPro: false)
-            automationPreviewSeen = true
-            return
-        }
         layoutMode = (layoutMode == .canvas) ? .graph : .canvas
         if layoutMode == .graph {
             lanMirrorRefreshTask?.cancel()
@@ -6461,11 +6334,6 @@ private func fireGraphSendAllToConsoles(staggerMs: Double = 180) {
     @MainActor
     private func performLANImport(mode: LANImportMode, adjustCanvasToImport: Bool) async {
         guard let manifest = pendingLANImportManifest else { return }
-        if mode == .addNewTab && !subscriptionManager.hasPro {
-            showingProUpgrade = true
-            pendingLANImportManifest = nil
-            return
-        }
 
         // Make sure we know which peer owns this shareId
         guard let peer = lanService.peerForShareId(manifest.shareId) else {
@@ -7598,10 +7466,6 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         }
 
         private func addTab() {
-            guard subscriptionManager.hasPro else {
-                showingProUpgrade = true
-                return
-            }
             pushUndoSnapshot("Add Tab")
             let newIndex = tabs.count + 1
             let newTab = DashboardTab(
@@ -7656,10 +7520,6 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         /// and pushes it to LAN peers.
         private func makeSyncedTab(at index: Int) {
             guard tabs.indices.contains(index) else { return }
-            guard subscriptionManager.hasPro else {
-                showingProUpgrade = true
-                return
-            }
             guard tabs[index].syncGroupID == nil else { return }
             guard tabs[index].lanMirrorShareId == nil else { return }
 
@@ -7761,10 +7621,6 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         /// Joins a discovered synced tab: fetches its current snapshot from the owning peer,
         /// adds it as a new local tab carrying the same `syncGroupID`, and switches to it.
         private func joinSyncedTab(_ manifest: SyncedTabManifest) {
-            guard subscriptionManager.hasPro else {
-                showingProUpgrade = true
-                return
-            }
 
             // If we already hold this group (orphaned), reconnect instead of creating a duplicate.
             if lanService.joinedSyncGroupIDs.contains(manifest.groupID) {
@@ -7798,10 +7654,6 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
 
         private func duplicateTab(at index: Int) {
             guard tabs.indices.contains(index) else { return }
-            guard subscriptionManager.hasPro else {
-                showingProUpgrade = true
-                return
-            }
             
             // Capture state before duplicating a tab
             pushUndoSnapshot("Duplicate Tab")
@@ -8149,12 +8001,10 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
 
     private func showCanvasTutorialIfNeeded() {
         guard !tutorialSeen else { return }
-        let hasPro = subscriptionManager.hasPro
-        let kind: DashboardTutorialKind = hasPro ? .proCanvas : .freeCanvas
         tutorialSeen = true
         // Delay lets any dismissing sheet (home screen) finish before we present.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            tutorialController.start(kind: kind, hasPro: hasPro)
+            tutorialController.start(kind: .canvas)
         }
     }
 
@@ -8326,17 +8176,14 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
     /// active sheet). Must be dismissed before showing the Quit/Close-Window
     /// save-changes prompt.
     private var hasBlockingModalPresented: Bool {
-        showingProUpgrade || showingProUpgradePrompt || showingPCOConfigForTab ||
+        showingPCOConfigForTab ||
         showingRosters || showingSettings || showingKeyboardShortcuts ||
         showExternalDevicesSettingsSheet || isShowingNewDashboardSizePrompt ||
         showingTileGroupSheet || showingAutosaveAnnouncement ||
-        subscriptionManager.isShowingAppStoreAccountLinkSheet ||
         DashboardHomeScreenState.shared.isPresented
     }
 
     private func dismissBlockingModalsForTermination() {
-        showingProUpgrade = false
-        showingProUpgradePrompt = false
         showingPCOConfigForTab = false
         showingRosters = false
         showingSettings = false
@@ -8345,7 +8192,6 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         isShowingNewDashboardSizePrompt = false
         showingTileGroupSheet = false
         showingAutosaveAnnouncement = false
-        subscriptionManager.isShowingAppStoreAccountLinkSheet = false
         // The home/launch screen isn't local @State — it's owned by RelayDashboardApp —
         // so it's dismissed indirectly via notification rather than direct assignment.
         NotificationCenter.default.post(name: .dashboardDismissBlockingModalsRequested, object: nil)
@@ -8663,29 +8509,7 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         didApplyImportDeviceFitScale = true
         pendingImportScaleTabIDs = nil
 
-        var importedTabs = payload.tabs
-        let isPro = subscriptionManager.hasPro
-        let hadExtraTabs = importedTabs.count > 1
-        let proModuleCount = importedTabs.reduce(0) { partial, tab in
-            partial + tab.tiles.reduce(0) { tilePartial, tile in
-                tilePartial + (tile.modules?.filter { $0.kind.requiresPro }.count ?? 0)
-            }
-        }
-
-        if !isPro, importedTabs.count > 1 {
-            importedTabs = [importedTabs[0]]
-        }
-
-        if !isPro, hadExtraTabs || proModuleCount > 0 {
-            if hadExtraTabs && proModuleCount > 0 {
-                freeImportWarningMessage = "This dashboard uses Pro features. Free opens only the first tab, and Pro modules are locked until you upgrade."
-            } else if hadExtraTabs {
-                freeImportWarningMessage = "This dashboard has multiple tabs. Free opens only the first tab. Upgrade to Pro to unlock the rest."
-            } else {
-                freeImportWarningMessage = "This dashboard includes Pro modules. They are locked until you upgrade."
-            }
-        }
-
+        let importedTabs = payload.tabs
         let migratedRosters = Self.migrateLegacyRosters(
             tabs: importedTabs,
             rosters: payload.rosters
@@ -9753,7 +9577,7 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
     }
 
     private func evaluateTabSchedule(now: Date = .now) {
-        guard isLiveMode, subscriptionManager.hasPro else {
+        guard isLiveMode else {
             lastObservedScheduleActivationKey = nil
             return
         }
@@ -10018,7 +9842,6 @@ private struct DashboardLiveModeChromeView: View {
     let onInteractionBegan: () -> Void
     let onInteractionEnded: () -> Void
     let isGraphMode: Bool
-    let showAutomationProBadge: Bool
     let onToggleGraphCanvas: () -> Void
 
     private var iconScale: Image.Scale {
@@ -10114,13 +9937,6 @@ private struct DashboardLiveModeChromeView: View {
                         .frame(width: 28, height: 28)
                         .liveModeToolbarIconChrome()
 
-                    if showAutomationProBadge && !isGraphMode {
-                        ProBadgeView(label: "PRO", fontSize: 7)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .offset(x: 6, y: -6)
-                            .allowsHitTesting(false)
-                    }
                 }
             }
             .buttonStyle(.plain)

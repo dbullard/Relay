@@ -89,7 +89,7 @@ enum ShureNetworkModel: String, CaseIterable, Identifiable, Codable {
     }
 
     var isAvailableInCurrentBuild: Bool {
-        !isBetaOnly || RelayLicensingConfig.isPreviewEnabled
+        !isBetaOnly || RelayBuildConfig.isPreviewEnabled
     }
 
     var displayName: String {
@@ -509,10 +509,10 @@ extension AudioConsoleModel {
     }
 
     static var selectionCases: [AudioConsoleModel] {
-        if RelayLicensingConfig.isDebugBuild {
+        if RelayBuildConfig.isDebugBuild {
             return allCases
         }
-        if RelayLicensingConfig.isPreviewEnabled {
+        if RelayBuildConfig.isPreviewEnabled {
             return allCases.filter { !debugOnlyModels.contains($0) }
         }
         return allCases.filter { !betaOrDebugOnlyModels.contains($0) && !debugOnlyModels.contains($0) }

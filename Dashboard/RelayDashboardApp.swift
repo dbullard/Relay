@@ -73,8 +73,6 @@ struct RelayDashboardApp: App {
 
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var saveState = DashboardSaveState.shared
-    @StateObject private var subscriptionManager = SubscriptionManager.shared
-    @StateObject private var relayAccountCoordinator = RelayAccountCoordinator.shared
     @ObservedObject private var whatsNewStore = WhatsNewStore.shared
     // Computed synchronously (mirroring launchScreenDismissed below) so the very first
     // render already knows whether the opt-in prompt is needed. Starting this `false`
@@ -89,9 +87,6 @@ struct RelayDashboardApp: App {
     @State private var showingWhatsNewSheet = false
     @State private var hasCheckedWhatsNewThisLaunch = false
     @State private var hasResolvedWhatsNewGate = false
-#if os(macOS)
-    @StateObject private var licenseCoordinator = LicenseCoordinator.shared
-#endif
     // Start with home screen already dismissed if a valid startup file is pinned —
     // avoids a flash of the home view before resolveStartupFileIfNeeded runs.
     @State private var launchScreenDismissed: Bool = {
@@ -121,26 +116,11 @@ struct RelayDashboardApp: App {
     private var appRootView: some View {
         let baseView = DashboardRootView()
             .environmentObject(saveState)
-            .environmentObject(subscriptionManager)
-            .environmentObject(relayAccountCoordinator)
 
-        let configuredRootView = Group {
-#if os(macOS)
-            baseView.environmentObject(licenseCoordinator)
-#else
-            baseView
-#endif
-        }
+        let configuredRootView = baseView
         .preferredColorScheme(colorSchemePreference.colorScheme)
-        .sheet(isPresented: $subscriptionManager.isShowingAppStoreAccountLinkSheet) {
-            AppStoreSubscriptionLinkSheet()
-                .environmentObject(subscriptionManager)
-                .environmentObject(relayAccountCoordinator)
-        }
         .sheet(isPresented: $showingUsageDiagnosticsPrompt) {
             UsageDiagnosticsConsentSheet()
-                .environmentObject(subscriptionManager)
-                .environmentObject(relayAccountCoordinator)
         }
         .sheet(isPresented: $showingWhatsNewSheet, onDismiss: { whatsNewStore.markLatestReleaseSeen() }) {
             WhatsNewSheet(releases: whatsNewStore.unseenReleases) {
@@ -205,28 +185,10 @@ struct RelayDashboardApp: App {
 
                 updateUsageDiagnosticsPromptPresentation()
                 advanceLaunchGateIfNeeded()
-                relayAccountCoordinator.setApplicationActive(scenePhase == .active)
             }
             .onChange(of: showingUsageDiagnosticsPrompt) { _, isShowing in
                 guard !isShowing else { return }
                 advanceLaunchGateIfNeeded()
-            }
-            .onChange(of: scenePhase) { _, phase in
-                relayAccountCoordinator.setApplicationActive(phase == .active)
-                guard phase == .active else { return }
-                Task {
-                    await subscriptionManager.refreshEntitlements()
-                    if RelayAccountConfig.isAuthEnabled, relayAccountCoordinator.isSignedIn {
-                        await relayAccountCoordinator.refreshEntitlements()
-                    }
-                }
-            }
-            .onChange(of: subscriptionManager.isShowingAppStoreAccountLinkSheet) { _, isShowing in
-                if isShowing {
-                    showingUsageDiagnosticsPrompt = false
-                } else {
-                    updateUsageDiagnosticsPromptPresentation()
-                }
             }
 
         configuredRootView
@@ -282,8 +244,6 @@ struct RelayDashboardApp: App {
                 if url.isFileURL {
                     launchScreenDismissed = true
                     DashboardDocumentController.shared.openSpecificDocument(url)
-                } else {
-                    relayAccountCoordinator.handleIncomingURL(url)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .settingsDidDismiss)) { _ in
@@ -313,7 +273,6 @@ struct RelayDashboardApp: App {
 
     private func updateUsageDiagnosticsPromptPresentation() {
         DispatchQueue.main.async {
-            guard !subscriptionManager.isShowingAppStoreAccountLinkSheet else { return }
             showingUsageDiagnosticsPrompt = UsageDiagnosticsPreferences.shared.shouldPresentPrompt
             advanceLaunchGateIfNeeded()
         }
@@ -325,7 +284,6 @@ struct RelayDashboardApp: App {
     /// order matters.
     private func advanceLaunchGateIfNeeded() {
         guard !showingUsageDiagnosticsPrompt else { return }
-        guard !subscriptionManager.isShowingAppStoreAccountLinkSheet else { return }
         guard !hasCheckedWhatsNewThisLaunch else { return }
         hasCheckedWhatsNewThisLaunch = true
 
@@ -707,7 +665,6 @@ private final class RelayAppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !urls.isEmpty else {
-            print("[RelayAccount] App delegate received open-URL event with no URLs")
             return
         }
 
@@ -716,12 +673,6 @@ private final class RelayAppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     DashboardDocumentController.shared.openSpecificDocument(url)
                 }
-                continue
-            }
-
-            print("[RelayAccount] App delegate received URL: \(sanitizedRelayAccountURL(url))")
-            Task { @MainActor in
-                RelayAccountCoordinator.shared.handleIncomingURL(url)
             }
         }
     }
@@ -753,22 +704,6 @@ private final class RelayAppDelegate: NSObject, NSApplicationDelegate {
         SparkleRelaunchCoordinator.shared.clear()
     }
 
-    private func sanitizedRelayAccountURL(_ url: URL) -> String {
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return "\(url.scheme ?? "unknown")://<unparseable>"
-        }
-
-        if let queryItems = components.queryItems, !queryItems.isEmpty {
-            components.queryItems = queryItems.map { item in
-                if item.name.lowercased() == "token" {
-                    return URLQueryItem(name: item.name, value: "<redacted>")
-                }
-                return item
-            }
-        }
-
-        return components.string ?? "\(url.scheme ?? "unknown")://<invalid>"
-    }
 }
 #endif
 

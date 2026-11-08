@@ -24,7 +24,6 @@ import CoreAudio
 
 struct DashboardTileEditView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.proUpgradeAction) private var proUpgradeAction
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -2057,8 +2056,7 @@ extension DashboardTileEditView {
                 tileID: tileID,
                 style: .sheet,
                 transcriptionAlreadyPresent: tileHasLiveTranscription(),
-                ndiModuleCount: NDIStreamRegistry.shared.ndiModuleCount(forTab: tab.id),
-                onLockedModule: presentProUpgradeAfterModuleCatalogDismissal
+                ndiModuleCount: NDIStreamRegistry.shared.ndiModuleCount(forTab: tab.id)
             ) { item in
                 addModuleFromPalette(identifier: item.id)
             }
@@ -2071,8 +2069,7 @@ extension DashboardTileEditView {
                 tileID: tileID,
                 style: .sheet,
                 transcriptionAlreadyPresent: tabHasLiveTranscription(),
-                ndiModuleCount: NDIStreamRegistry.shared.ndiModuleCount(forTab: tab.id),
-                onLockedModule: presentProUpgradeAfterModuleCatalogDismissal
+                ndiModuleCount: NDIStreamRegistry.shared.ndiModuleCount(forTab: tab.id)
             ) { item in
                 addModuleFromPalette(identifier: item.id)
             }
@@ -2089,14 +2086,6 @@ extension DashboardTileEditView {
         }
     }
 
-
-    private func presentProUpgradeAfterModuleCatalogDismissal() {
-        showsModuleCatalogModal = false
-        let upgradeAction = proUpgradeAction
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            upgradeAction()
-        }
-    }
 
     private func addModuleFromPalette(identifier: String) {
         switch identifier {

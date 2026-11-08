@@ -3,8 +3,6 @@ import SwiftUI
 /// Checklist of the 4 cloud/API integrations (auth-based, not discoverable).
 /// Tapping a row pushes into its real settings sub-page inline.
 struct OnboardingConnectionsStepView: View {
-    @EnvironmentObject private var subscriptionManager: SubscriptionManager
-
     private enum ConnectionKind: String, CaseIterable, Identifiable {
         case pco = "Planning Center"
         case proPresenter = "ProPresenter"
@@ -12,11 +10,6 @@ struct OnboardingConnectionsStepView: View {
         case smartLights = "Smart Lights"
 
         var id: String { rawValue }
-
-        /// Mirrors `ExternalConnectionsSettingsView`'s per-tab Pro gating
-        /// (isProPresenterLocked/isLiveStreamLocked/isSmartLightsLocked): PCO is
-        /// free, the other three are Pro-only.
-        var isProOnly: Bool { self != .pco }
 
         var systemImage: String {
             switch self {
@@ -59,20 +52,15 @@ struct OnboardingConnectionsStepView: View {
                     ForEach(ConnectionKind.visibleCases) { kind in
                         NavigationLink {
                             destination(for: kind)
-                                .onboardingProLocked(isLocked(kind))
                         } label: {
                             OnboardingChecklistRow(
                                 icon: kind.systemImage,
                                 title: kind.rawValue,
                                 subtitle: kind.subtitle
                             ) {
-                                if isLocked(kind) {
-                                    ProBadgeView(fontSize: 9)
-                                } else {
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                }
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
                             }
                         }
                         .buttonStyle(.plain)
@@ -82,10 +70,6 @@ struct OnboardingConnectionsStepView: View {
             }
         }
         .padding(.top, 8)
-    }
-
-    private func isLocked(_ kind: ConnectionKind) -> Bool {
-        kind.isProOnly && !subscriptionManager.hasPro
     }
 
     @ViewBuilder

@@ -14,9 +14,6 @@ struct OnboardingWizardView: View {
             stepContent
             footer
         }
-        // Tall enough that the Pro-lock overlay's ProUpgradePromptView/ProUpgradePromptViewIOS
-        // card (designed for a full settings sheet, not a step region squeezed between this
-        // shell's own header and footer) fits without scrolling in the common case.
         .frame(minWidth: 720, minHeight: 820)
     }
 

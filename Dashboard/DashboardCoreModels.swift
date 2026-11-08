@@ -5,7 +5,6 @@
 //  Created by David Bullard on 1/2/26.
 //
 
-
 //
 //  DashboardCoreModels.swift
 //  Relay
@@ -1556,19 +1555,6 @@ extension DashboardModuleKind {
             return .button(model)
         default:
             return self
-        }
-    }
-
-    var requiresPro: Bool {
-        switch self {
-        case .person, .text, .image, .document, .webpage, .time, .timecode, .separator, .pcoRundown, .pcoTeamAssignments, .rosterTeamAssignments, .rosterPicker:
-            return false
-        case .youtubeStreamMonitor:
-            return true
-        case .button:
-            return true
-        default:
-            return true
         }
     }
 

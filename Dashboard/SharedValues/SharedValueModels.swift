@@ -199,34 +199,3 @@ func normalizeSharedValueName(_ raw: String) -> String {
     let pieces = trimmed.split { !$0.isLetter && !$0.isNumber }.map(String.init)
     return pieces.joined(separator: "_")
 }
-
-/// Keeps persisted Pro values intact on downgrade while excluding them from every consumer.
-enum SharedValueAccessPolicy {
-    static func visible(_ values: [SharedValue], hasPro: Bool, syncedTabIDs: Set<UUID> = []) -> [SharedValue] {
-        guard !hasPro else { return values }
-        let byName = Dictionary(values.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
-        return values.filter { allows($0, byName: byName, visiting: [], syncedTabIDs: syncedTabIDs) }
-    }
-
-    private static func allows(_ value: SharedValue, byName: [String: SharedValue], visiting: Set<String>, syncedTabIDs: Set<UUID>) -> Bool {
-        switch value.binding {
-        case .manual: return true
-        case let .system(key):
-            let parts = key.split(separator: ":")
-            if parts.count > 1, let tabID = UUID(uuidString: String(parts[1])), syncedTabIDs.contains(tabID) { return false }
-            return ["clock:", "planningcenter:", "roster:"].contains { key.hasPrefix($0) }
-        case let .computed(expression, _):
-            guard !visiting.contains(value.name) else { return false }
-            let pattern = #"#\{([^}]+)\}"#
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
-            let nextVisiting = visiting.union([value.name])
-            return regex.matches(in: expression, range: NSRange(expression.startIndex..., in: expression)).allSatisfy { match in
-                guard let range = Range(match.range(at: 1), in: expression) else { return false }
-                let name = String(expression[range]).replacingOccurrences(of: "shared:", with: "")
-                guard let dependency = byName[normalizeSharedValueName(name)] else { return false }
-                return allows(dependency, byName: byName, visiting: nextVisiting, syncedTabIDs: syncedTabIDs)
-            }
-        case .shure, .sennheiser, .osc, .triggerPayload: return false
-        }
-    }
-}

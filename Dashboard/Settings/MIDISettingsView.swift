@@ -19,7 +19,6 @@ struct ControlInputsSettingsView: View {
         var id: String { rawValue }
     }
 
-    @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @AppStorage("midi.global.enabled") private var midiEnabled: Bool = false
     @AppStorage("midi.global.sourceId") private var midiSourceId: Int = -1
     @AppStorage("osc.global.enabled") private var oscEnabled: Bool = false
@@ -38,7 +37,6 @@ struct ControlInputsSettingsView: View {
 #endif
 
     var body: some View {
-        let isPro = subscriptionManager.hasPro
 
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -59,40 +57,7 @@ struct ControlInputsSettingsView: View {
                     oscMonitor
                 }
             }
-            .disabled(!isPro)
-            .opacity(isPro ? 1.0 : 0.35)
-            .allowsHitTesting(isPro)
             .padding(24)
-        }
-        .overlay {
-            if !isPro {
-                ZStack {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.7)
-                        .ignoresSafeArea()
-                    Rectangle()
-                        .fill(Color.white.opacity(0.08))
-                        .ignoresSafeArea()
-#if os(iOS)
-                    ProUpgradePromptViewIOS(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {},
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) { }
-#else
-                    ProUpgradePromptView(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {},
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) { }
-#endif
-                }
-            }
         }
         .onAppear {
             normalizePortIfNeeded()

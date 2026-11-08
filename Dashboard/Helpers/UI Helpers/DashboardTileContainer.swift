@@ -12,8 +12,6 @@ struct DashboardTileContainer: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
-    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
-    @Environment(\.proUpgradeAction) private var proUpgradeAction
 
     /// Returns true if PCO is configured (serviceTypeID is non-nil) for this tab.
     private var isPCOConfiguredForTab: Bool {
@@ -1254,20 +1252,6 @@ struct DashboardTileContainer: View {
             )
             .id(liveReloadID)
             .allowsHitTesting(false)
-        } else if module.kind.requiresPro && !subscriptionManager.hasPro {
-            ProLockedModuleView(
-                title: DashboardTileModuleMetadata.label(for: module),
-                onUpgrade: proUpgradeAction
-            )
-            .modifier(
-                ModuleCornerClip(
-                    radius: tileCornerRadius,
-                    style: style,
-                    enabled: shouldClipForStack
-                )
-            )
-            .id(liveReloadID)
-            .allowsHitTesting(liveModeInteractionAllowed)
         } else {
             Group {
                 switch module.kind {

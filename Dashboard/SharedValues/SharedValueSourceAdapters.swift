@@ -201,7 +201,7 @@ final class SharedValueSourceCoordinator {
                 )
                 await store.syncCatalog(observations)
                 await store.recomputeComputedValues()
-                let hasWirelessBinding = SubscriptionManager.shared.hasPro && SharedValueStore.shared.snapshot.values.contains { value in
+                let hasWirelessBinding = SharedValueStore.shared.snapshot.values.contains { value in
                     switch value.binding {
                     case .shure, .sennheiser: true
                     default: false
@@ -258,7 +258,7 @@ final class SharedValueSourceCoordinator {
     }
 
     private func reconcileWirelessServices() {
-        let isLive = SubscriptionManager.shared.hasPro && UserDefaults.standard.bool(forKey: "dashboard_live_mode_enabled")
+        let isLive = UserDefaults.standard.bool(forKey: "dashboard_live_mode_enabled")
         let values = SharedValueStore.shared.snapshot.values
         let shureDeviceIDs = Set(values.compactMap { value -> UUID? in
             guard case let .shure(deviceID, _, _) = value.binding else { return nil }

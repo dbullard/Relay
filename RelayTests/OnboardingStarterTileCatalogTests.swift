@@ -3,7 +3,7 @@ import XCTest
 
 final class OnboardingStarterTileCatalogTests: XCTestCase {
 
-    func test_availableEntries_excludesProOnlyKinds() {
+    func test_availableEntries_excludesHardwareDependentKinds() {
         let entries = OnboardingStarterTileCatalog.availableEntries()
 
         XCTAssertFalse(entries.contains { $0.id == "rta" })
@@ -27,7 +27,7 @@ final class OnboardingStarterTileCatalogTests: XCTestCase {
         XCTAssertTrue(entries.contains { $0.id == "rosterPicker" })
     }
 
-    func test_availableEntries_matchesExpectedFreeSet() {
+    func test_availableEntries_matchesExpectedStarterSet() {
         let entries = OnboardingStarterTileCatalog.availableEntries()
         let ids = Set(entries.map(\.id))
 

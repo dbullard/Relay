@@ -49,7 +49,6 @@ struct DashboardModuleCatalogItem: Identifiable {
     let isBeta: Bool
     var capacityMessage: String?   // non-nil → item is at capacity
 
-    var requiresPro: Bool { kind.requiresPro }
     var isAtCapacity: Bool { capacityMessage != nil }
 
         init(
@@ -169,7 +168,6 @@ enum DashboardModuleCatalog {
         style: PresentationStyle = .sheet,
         transcriptionAlreadyPresent: Bool = false,
         ndiModuleCount: Int = 0,
-        onLockedModule: (() -> Void)? = nil,
         onSelect: @escaping (DashboardModuleCatalogItem) -> Void
     ) -> some View {
         let items = DashboardModuleCatalog.all(
@@ -180,16 +178,16 @@ enum DashboardModuleCatalog {
         #if os(macOS)
         switch style {
         case .sheet:
-            DashboardModuleCatalogModalView(title: title, items: items, style: style, transcriptionAlreadyPresent: transcriptionAlreadyPresent, onLockedModule: onLockedModule, onSelect: onSelect)
+            DashboardModuleCatalogModalView(title: title, items: items, style: style, transcriptionAlreadyPresent: transcriptionAlreadyPresent, onSelect: onSelect)
                 .frame(minWidth: 720, idealWidth: 860, maxWidth: .infinity,
                        minHeight: 520, idealHeight: 600, maxHeight: .infinity)
         case .floating:
-            DashboardModuleCatalogModalView(title: title, items: items, style: style, transcriptionAlreadyPresent: transcriptionAlreadyPresent, onLockedModule: onLockedModule, onSelect: onSelect)
+            DashboardModuleCatalogModalView(title: title, items: items, style: style, transcriptionAlreadyPresent: transcriptionAlreadyPresent, onSelect: onSelect)
                 .frame(minWidth: 520, idealWidth: 600, maxWidth: 720,
                        minHeight: 420, idealHeight: 520, maxHeight: 640)
         }
         #else
-        DashboardModuleCatalogModalView(title: title, items: items, style: .sheet, transcriptionAlreadyPresent: transcriptionAlreadyPresent, onLockedModule: onLockedModule, onSelect: onSelect)
+        DashboardModuleCatalogModalView(title: title, items: items, style: .sheet, transcriptionAlreadyPresent: transcriptionAlreadyPresent, onSelect: onSelect)
         #endif
     }
 }
@@ -201,12 +199,9 @@ struct DashboardModuleCatalogModalView: View {
     let items: [DashboardModuleCatalogItem]
     let style: DashboardModuleCatalog.PresentationStyle
     let transcriptionAlreadyPresent: Bool
-    let onLockedModule: (() -> Void)?
     let onSelect: (DashboardModuleCatalogItem) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var subscriptionManager: SubscriptionManager
-    @Environment(\.proUpgradeAction) private var proUpgradeAction
 
     #if os(macOS)
     @State private var selectedCategory: DashboardModuleCategory? = nil
@@ -274,11 +269,9 @@ struct DashboardModuleCatalogModalView: View {
         let isAtCapacity = entry.isAtCapacity
         let isDisabledByTranscription = isTranscriptionDisabled(entry)
         let isDisabled = isAtCapacity || isDisabledByTranscription
-        let isLocked = entry.requiresPro && !subscriptionManager.hasPro
         let subtitle: String = {
             if isAtCapacity { return entry.subtitle }
             if isDisabledByTranscription { return "Tile already contains Live Transcription." }
-            if isLocked { return "Pro subscription required." }
             return entry.subtitle
         }()
 
@@ -287,13 +280,8 @@ struct DashboardModuleCatalogModalView: View {
             subtitle: subtitle,
             systemImage: entry.systemImage,
             isBeta: entry.isBeta,
-            isLocked: isLocked,
             isDisabled: isDisabled
         ) {
-            if isLocked {
-                (onLockedModule ?? proUpgradeAction)()
-                return
-            }
             if isDisabled { return }
             hasSelectedAnyModule = true
             onSelect(entry)
@@ -398,7 +386,6 @@ struct DashboardModuleCatalogModalView: View {
         let subtitle: String
         let systemImage: String
         let isBeta: Bool
-        let isLocked: Bool
         let isDisabled: Bool
         let action: () -> Void
 
@@ -417,13 +404,10 @@ struct DashboardModuleCatalogModalView: View {
                             .lineLimit(2)
                     }
                     Spacer(minLength: 0)
-                    if isLocked {
-                        ProBadgeView(fontSize: 9)
-                    }
                     if isBeta {
                         BetaBadgeView()
                     }
-                    Image(systemName: isLocked ? "lock.fill" : "plus")
+                    Image(systemName: "plus")
                         .font(.headline)
                         .foregroundStyle(.secondary)
                 }
@@ -441,7 +425,7 @@ struct DashboardModuleCatalogModalView: View {
             }
             .buttonStyle(.plain)
             .disabled(isDisabled)
-            .opacity(isDisabled ? 0.5 : (isLocked ? 0.7 : 1.0))
+            .opacity(isDisabled ? 0.5 : 1.0)
         }
     }
 

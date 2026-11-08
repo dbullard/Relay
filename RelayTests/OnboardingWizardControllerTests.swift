@@ -3,29 +3,19 @@ import XCTest
 
 final class OnboardingWizardControllerTests: XCTestCase {
 
-    func test_start_pro_presentsFullStepSequence() {
+    func test_start_presentsFullStepSequence() {
         let controller = OnboardingWizardController()
 
-        controller.start(hasPro: true)
+        controller.start()
 
         XCTAssertTrue(controller.isPresented)
         XCTAssertEqual(controller.step, .welcome)
         XCTAssertEqual(controller.activeSteps, [.welcome, .connections, .devices, .audioInputs, .starterTiles, .reviewAndCreate])
     }
 
-    func test_start_free_presentsPCOConnectionStepBeforeStarterTiles() {
-        let controller = OnboardingWizardController()
-
-        controller.start(hasPro: false)
-
-        XCTAssertTrue(controller.isPresented)
-        XCTAssertEqual(controller.step, .welcome)
-        XCTAssertEqual(controller.activeSteps, [.welcome, .connections, .starterTiles, .reviewAndCreate])
-    }
-
     func test_start_resetsStarterTileSelectionsFromPreviousRun() {
         let controller = OnboardingWizardController()
-        controller.start(hasPro: true)
+        controller.start()
         controller.starterTileSelections = [
             OnboardingTileCandidate(
                 id: UUID(),
@@ -34,14 +24,14 @@ final class OnboardingWizardControllerTests: XCTestCase {
             )
         ]
 
-        controller.start(hasPro: true)
+        controller.start()
 
         XCTAssertTrue(controller.starterTileSelections.isEmpty)
     }
 
-    func test_next_pro_advancesThroughEveryStepInOrder() {
+    func test_next_advancesThroughEveryStepInOrder() {
         let controller = OnboardingWizardController()
-        controller.start(hasPro: true)
+        controller.start()
 
         let expectedOrder: [OnboardingStep] = [.connections, .devices, .audioInputs, .starterTiles, .reviewAndCreate]
         for expected in expectedOrder {
@@ -50,20 +40,9 @@ final class OnboardingWizardControllerTests: XCTestCase {
         }
     }
 
-    func test_next_free_advancesThroughEveryStepInOrder() {
-        let controller = OnboardingWizardController()
-        controller.start(hasPro: false)
-
-        let expectedOrder: [OnboardingStep] = [.connections, .starterTiles, .reviewAndCreate]
-        for expected in expectedOrder {
-            controller.next()
-            XCTAssertEqual(controller.step, expected)
-        }
-    }
-
     func test_next_pastFinalStep_dismissesWizard() {
         let controller = OnboardingWizardController()
-        controller.start(hasPro: false)
+        controller.start()
         for _ in controller.activeSteps.dropFirst() {
             controller.next()
         }
@@ -77,7 +56,7 @@ final class OnboardingWizardControllerTests: XCTestCase {
 
     func test_back_returnsToPreviousStep_andStaysAtWelcome() {
         let controller = OnboardingWizardController()
-        controller.start(hasPro: true)
+        controller.start()
         controller.next() // .connections
 
         controller.back()
@@ -89,7 +68,7 @@ final class OnboardingWizardControllerTests: XCTestCase {
 
     func test_skip_behavesLikeNext() {
         let controller = OnboardingWizardController()
-        controller.start(hasPro: true)
+        controller.start()
 
         controller.skip()
 

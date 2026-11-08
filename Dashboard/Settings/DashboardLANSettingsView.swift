@@ -21,8 +21,6 @@ import AppKit
 struct DashboardLANSettingsView: View {
 
     @EnvironmentObject private var lanService: LANSharedTabsService
-    @EnvironmentObject private var subscriptionManager: SubscriptionManager
-    @Environment(\.proUpgradeAction) private var proUpgradeAction
     @Environment(\.joinSyncedTabAction) private var joinSyncedTabAction
     @Environment(\.leaveSyncedTabAction) private var leaveSyncedTabAction
     @Environment(\.openURL) private var openURL
@@ -60,7 +58,6 @@ struct DashboardLANSettingsView: View {
     }
 
     var body: some View {
-        let isPro = subscriptionManager.hasPro
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 8) {
@@ -186,84 +183,73 @@ struct DashboardLANSettingsView: View {
 
                 GroupBox("Devices") {
                     VStack(alignment: .leading, spacing: 10) {
-                        if isPro {
-                            Toggle(isOn: $sharingEnabled) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Enable LAN sharing")
-                                    Text("Makes this device visible to other Relay clients for Sync and Mirror.")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-
-                            Toggle(isOn: $allowUnpairedRead) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Allow view-only without pairing")
-                                    Text("Relay mirrors can open shared tabs without approval, but importing or joining a Synced Tab still requires pairing.")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                            .disabled(!sharingEnabled)
-
-                            Toggle(isOn: $allowLegacyUnsigned) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Allow computers that haven't been re-paired")
-                                    Text("Computers paired by older versions of Relay can't prove who they are. Turn this off once every computer has been re-paired.")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                            .disabled(!sharingEnabled)
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                SecureField("Legacy pairing code", text: $legacyPairingCode)
-                                    .textFieldStyle(.roundedBorder)
-                                Text("Set the same code on older Relay computers to keep them connected. Newer versions use device approval.")
+                        Toggle(isOn: $sharingEnabled) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Enable LAN sharing")
+                                Text("Makes this device visible to other Relay clients for Sync and Mirror.")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
+                        }
 
-                            Divider().padding(.vertical, 4)
-
-                            HStack {
-                                Text("Devices on this network")
-                                    .font(.callout.weight(.semibold))
-                                Spacer()
-                                if !lanService.peers.isEmpty {
-                                    Text("\(lanService.peers.count)")
-                                        .font(.caption.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-
-                            if lanService.peers.isEmpty {
-                                Text("No devices discovered yet.")
-                                    .font(.callout)
-                                Text("Make sure both Relay devices are on the same network and that Local Network access is allowed.")
+                        Toggle(isOn: $allowUnpairedRead) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Allow view-only without pairing")
+                                Text("Relay mirrors can open shared tabs without approval, but importing or joining a Synced Tab still requires pairing.")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
-                            } else {
-                                ForEach(lanService.peers.sorted(by: { $0.lastSeen > $1.lastSeen })) { peer in
-                                    DevicesTableRow(peer: peer, lanService: lanService)
-                                }
                             }
-                        } else {
-                            Text("Upgrade to Pro to use Relay-to-Relay LAN discovery, Mirror, and Synced Tabs.")
-                                .font(.caption)
+                        }
+                        .disabled(!sharingEnabled)
+
+                        Toggle(isOn: $allowLegacyUnsigned) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Allow computers that haven't been re-paired")
+                                Text("Computers paired by older versions of Relay can't prove who they are. Turn this off once every computer has been re-paired.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .disabled(!sharingEnabled)
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            SecureField("Legacy pairing code", text: $legacyPairingCode)
+                                .textFieldStyle(.roundedBorder)
+                            Text("Set the same code on older Relay computers to keep them connected. Newer versions use device approval.")
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
-
-                            Button("Upgrade to Pro") {
-                                proUpgradeAction()
-                            }
-                            .buttonStyle(.borderedProminent)
                         }
+
+                        Divider().padding(.vertical, 4)
+
+                        HStack {
+                            Text("Devices on this network")
+                                .font(.callout.weight(.semibold))
+                            Spacer()
+                            if !lanService.peers.isEmpty {
+                                Text("\(lanService.peers.count)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        if lanService.peers.isEmpty {
+                            Text("No devices discovered yet.")
+                                .font(.callout)
+                            Text("Make sure both Relay devices are on the same network and that Local Network access is allowed.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            ForEach(lanService.peers.sorted(by: { $0.lastSeen > $1.lastSeen })) { peer in
+                                DevicesTableRow(peer: peer, lanService: lanService)
+                            }
+                        }
+                    
                     }
                     .padding(.top, 2)
                 }

@@ -95,11 +95,11 @@ var isGraphConditionalsFeatureEnabled: Bool {
 }
 
 var isProPresenterTriggerFeatureEnabled: Bool {
-    RelayLicensingConfig.isPreviewEnabled
+    RelayBuildConfig.isPreviewEnabled
 }
 
 var isVistaIntegrationEnabled: Bool {
-    RelayLicensingConfig.isVistaIntegrationEnabled
+    RelayBuildConfig.isVistaIntegrationEnabled
 }
 
 enum GraphNodeCategory: String, CaseIterable {

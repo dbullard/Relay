@@ -19,7 +19,6 @@ struct SharedValuesWindow: View {
     @State private var expandedRemoteGroups: Set<String> = []
     @ObservedObject private var devices = ExternalDevicesStore.shared
     @ObservedObject private var linkedPeople = LinkedComputerPersonVariableStore.shared
-    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
     private let picker = SharedValuePickerCoordinator.shared
 
     @State private var selectedCategory: SharedValueCategory?
@@ -30,8 +29,7 @@ struct SharedValuesWindow: View {
 
     private var matchingValues: [SharedValue] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return SharedValueAccessPolicy.visible(store.snapshot.values, hasPro: subscriptionManager.hasPro,
-                                               syncedTabIDs: SharedValueSourceCoordinator.shared.syncedTabIDs).filter { value in
+        return store.snapshot.values.filter { value in
             q.isEmpty || value.name.localizedCaseInsensitiveContains(q) ||
                 sourceDescription(for: value.binding).localizedCaseInsensitiveContains(q)
         }
@@ -58,7 +56,6 @@ struct SharedValuesWindow: View {
 
     private var visibleCategories: [SharedValueCategory] {
         SharedValueCategory.allCases.filter { category in
-            if !subscriptionManager.hasPro && (category == .syncedData || category == .computers || category == .osc || category == .automation || category == .wireless || category == .consoles || category == .proPresenter || category == .transcription || category == .integrations) { return false }
             if category == .syncedData || category == .computers { return true }
             return matchingValues.contains(where: { self.category(for: $0) == category }) ||
                 (category == .computers && !linkedVariables.entries.isEmpty) ||
@@ -69,7 +66,7 @@ struct SharedValuesWindow: View {
 
     private var matchingPeople: [LinkedComputerPersonVariable] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (subscriptionManager.hasPro ? linkedPeople.variables : []).filter { person in
+        return linkedPeople.variables.filter { person in
             q.isEmpty || person.name.localizedCaseInsensitiveContains(q) ||
                 person.variableName.localizedCaseInsensitiveContains(q) ||
                 person.sourceComputerName.localizedCaseInsensitiveContains(q)
@@ -78,7 +75,7 @@ struct SharedValuesWindow: View {
 
     private var matchingLinkedVariables: [LinkedDeviceVariableEntry] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (subscriptionManager.hasPro ? linkedVariables.entries : []).filter { entry in
+        return linkedVariables.entries.filter { entry in
             q.isEmpty || entry.value.name.localizedCaseInsensitiveContains(q) ||
                 entry.deviceName.localizedCaseInsensitiveContains(q) || entry.tokenName.localizedCaseInsensitiveContains(q) ||
                 (entry.value.kind?.title.localizedCaseInsensitiveContains(q) ?? false)
@@ -87,7 +84,7 @@ struct SharedValuesWindow: View {
 
     private var matchingSyncedVariables: [SyncedTabVariableEntry] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (subscriptionManager.hasPro ? syncedVariables.entries : []).filter { entry in
+        return syncedVariables.entries.filter { entry in
             q.isEmpty || entry.value.name.localizedCaseInsensitiveContains(q) ||
                 entry.tabName.localizedCaseInsensitiveContains(q) || entry.deviceName.localizedCaseInsensitiveContains(q) ||
                 entry.tokenName.localizedCaseInsensitiveContains(q) || (entry.value.kind?.title.localizedCaseInsensitiveContains(q) ?? false)
@@ -96,12 +93,12 @@ struct SharedValuesWindow: View {
 
     private var matchingOSC: [OSCAddressObservation] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (subscriptionManager.hasPro ? store.snapshot.recentOSCAddresses : []).filter { q.isEmpty || $0.address.localizedCaseInsensitiveContains(q) }
+        return store.snapshot.recentOSCAddresses.filter { q.isEmpty || $0.address.localizedCaseInsensitiveContains(q) }
     }
 
     private var matchingTriggers: [TriggerValueObservation] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (subscriptionManager.hasPro ? store.snapshot.recentTriggerValues : []).filter {
+        return store.snapshot.recentTriggerValues.filter {
             q.isEmpty || "Trigger \($0.triggerID.uuidString.prefix(8)) \($0.field)".localizedCaseInsensitiveContains(q)
         }
     }
@@ -1140,7 +1137,6 @@ private enum SharedValueCreationSource: String, CaseIterable, Identifiable {
 private struct SharedValueCreationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var devices = ExternalDevicesStore.shared
-    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
     let store: SharedValueStore
 
     @State private var name = ""
@@ -1168,7 +1164,7 @@ private struct SharedValueCreationSheet: View {
                 TextField("Variable name", text: $name)
 
                 Picker("Source", selection: $source) {
-                    ForEach(SharedValueCreationSource.allCases.filter { subscriptionManager.hasPro || $0 == .manual || $0 == .computed }) { Text($0.rawValue).tag($0) }
+                    ForEach(SharedValueCreationSource.allCases) { Text($0.rawValue).tag($0) }
                 }
 
                 if source == .manual {
@@ -1236,15 +1232,13 @@ private struct SharedValueCreationSheet: View {
     }
 
     private var canAdd: Bool {
-        (subscriptionManager.hasPro || source == .manual || source == .computed) &&
-            !normalizeSharedValueName(name).isEmpty && (source != .osc || !oscAddress.isEmpty) &&
+        !normalizeSharedValueName(name).isEmpty && (source != .osc || !oscAddress.isEmpty) &&
             (source != .computed || !expression.isEmpty) &&
             (source != .manual || manualType != .payload || validJSON(manualText)) &&
             (source != .shure && source != .sennheiser || deviceID != nil)
     }
 
     private func add() {
-        guard subscriptionManager.hasPro || source == .manual || source == .computed else { return }
         let binding: SharedValueBinding
         switch source {
         case .manual: binding = .manual

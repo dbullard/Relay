@@ -46,7 +46,6 @@ var onGraphChanged: (() -> Void)? = nil
 @StateObject private var notificationHub = GraphDashboardNotificationHub()
 @StateObject private var runtimeCoordinator = GraphDashboardRuntimeCoordinator()
 @StateObject private var smartLightProfilesStore = SmartLightProfilesStore.shared
-@EnvironmentObject private var subscriptionManager: SubscriptionManager
 @State private var isBatchDeletingNodes: Bool = false
 @StateObject private var undoProxy = GraphDashboardUndoProxy()
 #if os(macOS)
@@ -1384,7 +1383,6 @@ private struct AddableGroup: Identifiable {
     let subtitle: String
     let isEnabled: Bool
     var isBeta: Bool = false
-    var requiresPro: Bool = false
 }
 
 private struct DestinationPickerOption: Identifiable {
@@ -1455,8 +1453,7 @@ private var addableGroups: [AddableGroup] {
             category: "Actions",
             subtitle: "Control Philips Hue, Govee, and future light providers",
             isEnabled: SmartLightFeatureFlags.isEnabled,
-            isBeta: true,
-            requiresPro: true
+            isBeta: true
         ),
         AddableGroup(
             id: "action.midiSend",
@@ -1984,13 +1981,6 @@ private func handleAddNodeSelection(_ group: AddableGroup, canvasSize: CGSize) {
         addNodeHelpMessage = unavailableAddNodeHelp(for: group)
         return
     }
-    if group.requiresPro && !subscriptionManager.hasPro {
-        addNodeHelpMessage = addNodeHelp(
-            title: "Pro Required",
-            message: "Smart Light Control is a Relay Pro feature. Upgrade to Pro to add this node."
-        )
-        return
-    }
 
     if group.id == "destination.console" {
         let options = availableAudioConsoleDevices
@@ -2082,9 +2072,7 @@ private func addNodeRowLabel(_ group: AddableGroup) -> some View {
 
         Spacer()
 
-        if group.requiresPro && !subscriptionManager.hasPro {
-            ProBadgeView(fontSize: 9)
-        } else if group.isEnabled {
+        if group.isEnabled {
             Image(systemName: "plus")
                 .font(.caption)
                 .foregroundStyle(.secondary)

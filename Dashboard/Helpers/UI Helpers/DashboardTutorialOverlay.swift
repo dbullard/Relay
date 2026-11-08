@@ -43,20 +43,16 @@ final class DashboardTutorialController: ObservableObject {
     @Published var isPresented: Bool = false
     @Published var stepIndex: Int = 0
     @Published private(set) var context: DashboardTutorialContext = DashboardTutorialContext(
-        kind: .freeCanvas,
-        hasPro: false,
+        kind: .canvas,
         platform: .current
     )
 
     /// Steps can be swapped per screen/feature set.
     var steps: [DashboardTutorialStep] = []
 
-    func start(kind: DashboardTutorialKind? = nil, hasPro: Bool? = nil) {
-        let resolvedHasPro = hasPro ?? context.hasPro
-        let resolvedKind = kind ?? (resolvedHasPro ? .proCanvas : .freeCanvas)
+    func start(kind: DashboardTutorialKind = .canvas) {
         let nextContext = DashboardTutorialContext(
-            kind: resolvedKind,
-            hasPro: resolvedHasPro,
+            kind: kind,
             platform: .current
         )
         start(context: nextContext)
@@ -91,10 +87,8 @@ final class DashboardTutorialController: ObservableObject {
 // MARK: - Steps
 
 enum DashboardTutorialKind: String, Equatable {
-    case freeCanvas
-    case proCanvas
-    case proAutomation
-    case lockedAutomationPreview
+    case canvas
+    case automation
 }
 
 enum TutorialPlatform: String, Equatable {
@@ -113,13 +107,7 @@ enum TutorialPlatform: String, Equatable {
 
 struct DashboardTutorialContext: Equatable {
     let kind: DashboardTutorialKind
-    let hasPro: Bool
     let platform: TutorialPlatform
-}
-
-enum TutorialPlanRequirement: String, Equatable {
-    case free
-    case pro
 }
 
 enum TutorialCompletionTrigger: String, Equatable {
@@ -130,7 +118,6 @@ enum TutorialCompletionTrigger: String, Equatable {
 
 enum TutorialStepPresentation: String, Equatable {
     case standard
-    case upgradePrompt
     case onboardingWizardPrompt
 }
 
@@ -145,21 +132,16 @@ struct DashboardTutorialStep: Identifiable, Equatable {
     let placement: CalloutPlacement
     let calloutOffset: CGSize
     let presentation: TutorialStepPresentation
-    let requiredPlan: TutorialPlanRequirement?
     let expectedAction: String?
     let completionTrigger: TutorialCompletionTrigger?
     let canAdvanceAutomatically: Bool
 
     static func steps(for context: DashboardTutorialContext) -> [DashboardTutorialStep] {
         switch context.kind {
-        case .freeCanvas:
-            return freeCanvasSteps(for: context)
-        case .proCanvas:
-            return proCanvasSteps(for: context)
-        case .proAutomation:
-            return proAutomationSteps(for: context)
-        case .lockedAutomationPreview:
-            return lockedAutomationPreviewSteps(for: context)
+        case .canvas:
+            return canvasSteps(for: context)
+        case .automation:
+            return automationSteps(for: context)
         }
     }
 
@@ -174,7 +156,6 @@ struct DashboardTutorialStep: Identifiable, Equatable {
         placement: CalloutPlacement = .auto,
         calloutOffset: CGSize = .zero,
         presentation: TutorialStepPresentation = .standard,
-        requiredPlan: TutorialPlanRequirement? = nil,
         expectedAction: String? = nil,
         completionTrigger: TutorialCompletionTrigger? = nil,
         canAdvanceAutomatically: Bool = false
@@ -190,169 +171,19 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             placement: placement,
             calloutOffset: calloutOffset,
             presentation: presentation,
-            requiredPlan: requiredPlan,
             expectedAction: expectedAction,
             completionTrigger: completionTrigger,
             canAdvanceAutomatically: canAdvanceAutomatically
         )
     }
 
-    private static func freeCanvasSteps(for context: DashboardTutorialContext) -> [DashboardTutorialStep] {
-        let (tap, doubleTap) = interactionCopy(for: context.platform)
-        let steps: [DashboardTutorialStep] = [
-            step(
-                id: "canvas",
-                kind: .freeCanvas,
-                anchorId: "root.canvas",
-                title: "Build your dashboard",
-                message: "This canvas is your control room. Drag tiles into position and shape the layout.",
-                sectionLabel: "Build Your Dashboard",
-                supplement: .canvasDragDemo,
-                placement: .center,
-                calloutOffset: CGSize(width: 0, height: -20),
-                expectedAction: "Drag a tile to reposition it.",
-                completionTrigger: .manual
-            ),
-            step(
-                id: "add",
-                kind: .freeCanvas,
-                anchorId: "root.addMenu",
-                title: "Add a tile",
-                message: "\(tap) Add to place a tile, then drag to arrange.",
-                sectionLabel: "Add and Arrange Tiles",
-                supplement: .addTileDemo,
-                placement: .center,
-                calloutOffset: CGSize(width: 0, height: -20),
-                expectedAction: "\(tap) Add and place a tile.",
-                completionTrigger: .manual
-            ),
-            step(
-                id: "overview",
-                kind: .freeCanvas,
-                anchorId: "root.overviewButton",
-                title: "Overview",
-                message: "Scan all tiles at once and jump directly to the one you need.",
-                sectionLabel: "Organize and Review",
-                supplement: .overviewDemo,
-                placement: .below,
-                calloutOffset: CGSize(width: 0, height: 28)
-            ),
-            step(
-                id: "tabs",
-                kind: .freeCanvas,
-                anchorId: "root.tabs",
-                title: "Tabs",
-                message: "\(tap) to switch dashboards, drag to reorder your run order.",
-                sectionLabel: "Organize and Review",
-                supplement: .tabsPreview,
-                placement: .below,
-                calloutOffset: CGSize(width: 0, height: 28)
-            ),
-            step(
-                id: "planningCenter",
-                kind: .freeCanvas,
-                anchorId: "root.tabSettings",
-                title: "Tab Settings",
-                message: "Set the Planning Center service, plan, and other tab-level options from here.",
-                sectionLabel: "Tab Settings",
-                supplement: .pcoSetupDemo,
-                placement: .below,
-                calloutOffset: CGSize(width: 0, height: 36)
-            ),
-            step(
-                id: "rosters",
-                kind: .freeCanvas,
-                anchorId: "root.rosters",
-                title: "Rosters",
-                message: "Open the shared Rosters library to manage General, Equipment, and future People rosters for this dashboard.",
-                sectionLabel: "Rosters",
-                placement: .below,
-                calloutOffset: CGSize(width: 0, height: 36)
-            ),
-            step(
-                id: "settings",
-                kind: .freeCanvas,
-                anchorId: "root.settings",
-                title: "Settings",
-                message: "Manage connections, devices, LAN sharing, OSC, and MIDI in one place.",
-                sectionLabel: "Settings",
-                supplement: .settingsDemo,
-                placement: .below,
-                calloutOffset: CGSize(width: 0, height: 44)
-            ),
-            step(
-                id: "inspector",
-                kind: .freeCanvas,
-                anchorId: "root.inspectorButton",
-                title: "Edit with Inspector",
-                message: "Select a tile, then use Inspector to adjust content and style.",
-                sectionLabel: "Edit with Inspector",
-                supplement: .inspectorDemo,
-                placement: .below,
-                calloutOffset: CGSize(width: 0, height: 45),
-                expectedAction: "\(tap) a tile, then open Inspector.",
-                completionTrigger: .manual
-            ),
-            step(
-                id: "liveMode",
-                kind: .freeCanvas,
-                anchorId: "root.canvas",
-                title: "Go Live",
-                message: context.platform == .mac ? "Live Mode turns your dashboard into a clean, real-time view with live data. Use View → Live Mode or ⌘+L to exit." : "Live Mode turns your dashboard into a clean, real-time view with live data. \(doubleTap) to exit.",
-                sectionLabel: "Go Live",
-                supplement: .liveModeDemo,
-                placement: .center,
-                calloutOffset: CGSize(width: 0, height: -20),
-                expectedAction: "\(tap) Live Mode.",
-                completionTrigger: .manual
-            )
-        ]
 
-        let onboardingWizardOffer = step(
-            id: "onboardingWizardOffer",
-            kind: .freeCanvas,
-            anchorId: "root.addMenu",
-            title: "Set up your first dashboard",
-            message: "",
-            sectionLabel: "Guided Setup",
-            supplement: nil,
-            placement: .center,
-            calloutOffset: CGSize(width: 0, height: -20),
-            presentation: .onboardingWizardPrompt,
-            expectedAction: nil,
-            completionTrigger: .manual
-        )
-
-        if context.hasPro {
-            return steps + [onboardingWizardOffer]
-        }
-
-        return steps + [
-            step(
-                id: "upgradePrompt",
-                kind: .freeCanvas,
-                anchorId: "root.addMenu",
-                title: "Unlock Automation",
-                message: "",
-                sectionLabel: "Unlock Automation",
-                supplement: nil,
-                placement: .center,
-                calloutOffset: CGSize(width: 0, height: -20),
-                presentation: .upgradePrompt,
-                requiredPlan: .pro,
-                expectedAction: nil,
-                completionTrigger: .manual
-            ),
-            onboardingWizardOffer
-        ]
-    }
-
-    private static func proCanvasSteps(for context: DashboardTutorialContext) -> [DashboardTutorialStep] {
+    private static func canvasSteps(for context: DashboardTutorialContext) -> [DashboardTutorialStep] {
         let (tap, doubleTap) = interactionCopy(for: context.platform)
         return [
             step(
                 id: "canvas",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.canvas",
                 title: "Build your dashboard",
                 message: "This canvas is your control room. Drag tiles into position and shape the layout.",
@@ -363,7 +194,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "add",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.addMenu",
                 title: "Add a tile",
                 message: "\(tap) Add to place a tile, then drag to arrange.",
@@ -374,7 +205,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "overview",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.overviewButton",
                 title: "Overview",
                 message: "Scan all tiles at once and jump directly to the one you need.",
@@ -385,7 +216,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "tabs",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.tabs",
                 title: "Organize tabs",
                 message: "\(tap) to switch dashboards, drag to reorder your run order.",
@@ -396,7 +227,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "planningCenter",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.tabSettings",
                 title: "Tab Settings",
                 message: "Set the Planning Center service, plan, and other tab-level options from here.",
@@ -407,7 +238,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "rosters",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.rosters",
                 title: "Rosters",
                 message: "Open the shared Rosters library to manage General, Equipment, and future People rosters for this dashboard.",
@@ -417,7 +248,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "settings",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.settings",
                 title: "Settings",
                 message: "Manage connections, devices, LAN sharing, OSC, and MIDI in one place.",
@@ -428,7 +259,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "inspector",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.inspectorButton",
                 title: "Edit with Inspector",
                 message: "Select a tile, then use Inspector to adjust content and style.",
@@ -439,7 +270,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "liveMode",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.canvas",
                 title: "Go Live",
                 message: context.platform == .mac ? "Live Mode turns your dashboard into a clean, real-time view. Use View → Live Mode or ⌘+L to toggle." : "Live Mode turns your dashboard into a clean, real-time view. \(doubleTap) to exit.",
@@ -450,7 +281,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "onboardingWizardOffer",
-                kind: .proCanvas,
+                kind: .canvas,
                 anchorId: "root.addMenu",
                 title: "Set up your first dashboard",
                 message: "",
@@ -465,11 +296,11 @@ struct DashboardTutorialStep: Identifiable, Equatable {
         ]
     }
 
-    private static func proAutomationSteps(for context: DashboardTutorialContext) -> [DashboardTutorialStep] {
+    private static func automationSteps(for context: DashboardTutorialContext) -> [DashboardTutorialStep] {
         [
             step(
                 id: "automationIntro",
-                kind: .proAutomation,
+                kind: .automation,
                 anchorId: "root.graph",
                 title: "What automation does",
                 message: "Automation lets triggers run actions across your tools. For example, using OSC to trigger events on a audio console.",
@@ -482,7 +313,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "automationCanvasBacked",
-                kind: .proAutomation,
+                kind: .automation,
                 anchorId: "root.graph",
                 title: "Canvas-backed nodes",
                 message: "Some nodes stay linked to your dashboard tiles so changes stay in sync.",
@@ -495,7 +326,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "automationAddNode",
-                kind: .proAutomation,
+                kind: .automation,
                 anchorId: "root.graph",
                 title: "Add a node",
                 message: "Use the Add menu to drop triggers, sources, and actions onto the canvas.",
@@ -508,7 +339,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "automationNodeTypes",
-                kind: .proAutomation,
+                kind: .automation,
                 anchorId: "root.graph",
                 title: "Know your node types",
                 message: "Each type has a role in your flow:",
@@ -521,7 +352,7 @@ struct DashboardTutorialStep: Identifiable, Equatable {
             ),
             step(
                 id: "automationLink",
-                kind: .proAutomation,
+                kind: .automation,
                 anchorId: "root.graph",
                 title: "Link nodes",
                 message: "Drag from a node output to connect it to the next step.",
@@ -535,36 +366,6 @@ struct DashboardTutorialStep: Identifiable, Equatable {
         ]
     }
 
-    private static func lockedAutomationPreviewSteps(for context: DashboardTutorialContext) -> [DashboardTutorialStep] {
-        [
-            step(
-                id: "automationPreview",
-                kind: .lockedAutomationPreview,
-                anchorId: "root.graphToggle",
-                title: "What automation does",
-                message: "Build node-based flows that trigger actions across your tools.",
-                sectionLabel: "Automation Preview",
-                supplement: .lockedAutomationPreviewDemo,
-                placement: .below,
-                calloutOffset: CGSize(width: 0, height: 32),
-                expectedAction: nil,
-                completionTrigger: .manual
-            ),
-            step(
-                id: "automationUpgrade",
-                kind: .lockedAutomationPreview,
-                anchorId: "root.addMenu",
-                title: "Unlock Automation",
-                message: "",
-                sectionLabel: "Unlock Automation",
-                placement: .center,
-                calloutOffset: CGSize(width: 0, height: -20),
-                presentation: .upgradePrompt,
-                requiredPlan: .pro,
-                completionTrigger: .manual
-            )
-        ]
-    }
 
     private static func interactionCopy(for platform: TutorialPlatform) -> (String, String) {
         switch platform {
@@ -592,7 +393,6 @@ enum TutorialSupplement: String, Equatable {
     case automationAddNodeDemo
     case automationCanvasBackedDemo
     case automationNodeTypesDemo
-    case lockedAutomationPreviewDemo
     case tabsPreview
     case overviewDemo
     case pcoSetupDemo
@@ -664,7 +464,6 @@ struct DashboardTutorialOverlay: View {
     @ObservedObject var controller: DashboardTutorialController
     let anchors: [String: CGRect]
     let lanSharingEnabled: Bool
-    let onUpgradeRequested: () -> Void
     let onOnboardingWizardRequested: () -> Void
 
     /// If you need to offset for safe areas / titlebars you can do it here later.
@@ -729,8 +528,8 @@ struct DashboardTutorialOverlay: View {
             let highlightRect = rect?.insetBy(dx: -spotlightPadding, dy: -spotlightPadding)
             let firstHighlightIndex = controller.steps.firstIndex(where: { $0.anchorId != "root.canvas" }) ?? 0
             let shouldAnimateHighlight = controller.stepIndex > firstHighlightIndex
-            let allowsCoachmarkHitTesting = step.presentation == .upgradePrompt || step.presentation == .onboardingWizardPrompt
-            let allowHighlightPulse = step.kind != .proAutomation && step.kind != .lockedAutomationPreview
+            let allowsCoachmarkHitTesting = step.presentation == .onboardingWizardPrompt
+            let allowHighlightPulse = step.kind != .automation
 
             ZStack {
                 Color.black.opacity(0.38)
@@ -799,17 +598,14 @@ struct DashboardTutorialOverlay: View {
     }
 
     private func coachmark(step: DashboardTutorialStep, near rect: CGRect, in size: CGSize) -> some View {
-        let isUpgradePrompt = step.presentation == .upgradePrompt
         let isOnboardingWizardPrompt = step.presentation == .onboardingWizardPrompt
         let baseWidth: CGFloat = {
-            if isUpgradePrompt { return 560 }
             if isOnboardingWizardPrompt { return 440 }
-            if step.kind == .proAutomation { return 520 }
-            if step.kind == .lockedAutomationPreview { return 500 }
+            if step.kind == .automation { return 520 }
             return 330
         }()
         let bubbleWidth: CGFloat = min(baseWidth, size.width - 48)
-        let bubbleHeightEstimate: CGFloat = isUpgradePrompt ? 320 : (isOnboardingWizardPrompt ? 260 : 210)
+        let bubbleHeightEstimate: CGFloat = isOnboardingWizardPrompt ? 260 : 210
         let margin: CGFloat = 16
         let progressText = "\(controller.stepIndex + 1) of \(controller.steps.count)"
 
@@ -821,52 +617,7 @@ struct DashboardTutorialOverlay: View {
         let adjustedBubbleY = clampedBubbleY
 
         return ZStack {
-            if isUpgradePrompt {
-                VStack(spacing: 10) {
-#if os(iOS)
-                    ProUpgradePromptViewIOS(
-                        buttonTitle: "Upgrade to Pro",
-                        secondaryButtonTitle: "Continue with Free",
-                        secondaryAction: {
-                            controller.stop()
-                        },
-                        animateOnAppear: true,
-                        showPlanSelector: true,
-                        showManageLinks: true
-                    ) {
-                        onUpgradeRequested()
-                        controller.stop()
-                    }
-#else
-                    if RelayLicensingConfig.isDirectMacDistribution {
-                        LicensingGateView(
-                            showsStatusView: false,
-                            secondaryButtonTitle: "Continue with Free",
-                            secondaryButtonAction: {
-                                controller.stop()
-                            },
-                            showsCloseButton: false
-                        )
-                    } else {
-                        ProUpgradePromptView(
-                            buttonTitle: "Upgrade to Pro",
-                            secondaryButtonTitle: "Continue with Free",
-                            secondaryAction: {
-                                controller.stop()
-                            },
-                            animateOnAppear: true,
-                            showPlanSelector: true,
-                            showManageLinks: true
-                        ) {
-                            onUpgradeRequested()
-                            controller.stop()
-                        }
-                    }
-#endif
-                }
-                .frame(width: bubbleWidth)
-                .transition(.opacity.combined(with: .scale))
-            } else if isOnboardingWizardPrompt {
+            if isOnboardingWizardPrompt {
                 VStack(spacing: 16) {
                     Image(systemName: "wand.and.stars")
                         .font(.system(size: 40))
@@ -905,11 +656,6 @@ struct DashboardTutorialOverlay: View {
                     calloutHeader(sectionLabel: step.sectionLabel, progressText: progressText)
 
                     HStack(spacing: 6) {
-                        if step.kind == .lockedAutomationPreview {
-                            Image(systemName: "lock.fill")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
                         Text(step.title)
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(.white)
@@ -1030,8 +776,6 @@ struct DashboardTutorialOverlay: View {
                 TutorialAutomationCanvasBackedDemo()
             case .automationNodeTypesDemo:
                 TutorialAutomationNodeTypesDemo()
-            case .lockedAutomationPreviewDemo:
-                TutorialLockedAutomationDemo()
             case .tabsPreview:
                 TutorialTabsPreview()
             case .overviewDemo:
@@ -1911,21 +1655,6 @@ struct DashboardTutorialOverlay: View {
         }
     }
 
-    private struct TutorialLockedAutomationDemo: View {
-        @State private var animatePulse: Bool = false
-
-        var body: some View {
-            TutorialDemoCard {
-                TutorialAutomationNodes()
-                    .opacity(animatePulse ? 0.8 : 0.55)
-                    .scaleEffect(animatePulse ? 1.0 : 0.985)
-                    .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: animatePulse)
-                    .onAppear {
-                        animatePulse = true
-                    }
-            }
-        }
-    }
 
     private struct TutorialTabsPreview: View {
         var body: some View {
@@ -2254,9 +1983,6 @@ struct DashboardTutorialOverlay: View {
     }
 
     private func shouldSkipHighlight(for step: DashboardTutorialStep) -> Bool {
-        if step.presentation == .upgradePrompt {
-            return true
-        }
         if step.anchorId == "root.canvas" || step.anchorId == "root.addMenu" {
             return true
         }
