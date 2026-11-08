@@ -1,0 +1,50 @@
+# Connecting audio consoles to Relay for scene control
+
+Connect supported mixing consoles to Relay to sync channel names, recall scenes, and send assignments.
+
+Relay can connect to supported digital mixing consoles over your network, turning your dashboard into a control and monitoring surface for audio workflows.
+
+## What audio console integration provides
+
+- Channel-name sync
+- Scene and snapshot recall on supported models — DiGiCo is the one notable exception; see below
+- Planning Center assignments to console channels
+- Rundown cues and snapshots
+- MIDI-based scene mapping on supported models
+- Automation destinations
+
+> [!NOTE]
+> Exactly which of these a given console supports depends on the model — see [Console actions](../dashboards/nodes/actions.md#console) for the full per-brand breakdown of what each integration can actually do.
+
+## Add an audio console
+
+1. Open `Relay > Settings`, then select **External Devices**.
+2. Click `Add Device`.
+3. Set the device type to `Audio Console`.
+4. Choose the model or family.
+5. Enter the host, IP, and port.
+6. Configure any model-specific options.
+7. Save the device.
+
+## Common model notes
+
+- X32/M32: OSC-based workflows, channel-name sync, cue or snippet sending, plus standard scene recall, mute, level, and pan automation actions with no third-party bridge required
+- Allen and Heath Qu: MIDI over TCP/IP, with 11 distinct automation action kinds (scene recall, soft key, channel/group/send/FX levels and mutes) — see [Console actions](../dashboards/nodes/actions.md#console)
+- Allen and Heath SQ, dLive, and Avantis: MixRack or Surface target selection
+- Yamaha: MIDI input and output plus Program Change mappings, across DM7, RIVAGE PM, and CL/QL model families; DM7 and RIVAGE also support standard scene recall, mute, level, and pan automation actions directly, with no third-party bridge required
+- DiGiCo: show RTF import for channel mapping when needed, plus direct OSC channel-name sync, DiGiCo automation actions, and a clearer Brand/Model split in console settings
+
+## DiGiCo
+
+DiGiCo workflows include:
+
+- syncing channel names from the console directly into Relay over OSC ("Sync from DiGiCo")
+- Mute, Solo, Fader, and Recall Macro automation actions across input, aux, group, matrix, and control-group channel types
+- picking channels by name across all of those channel types
+
+> [!WARNING]
+> DiGiCo consoles don't support true scene recall over this integration — snapshot actions can only create or rename a snapshot, not fire one. If your workflow depends on recalling a stored scene, plan around that limitation rather than around the "Scene and snapshot recall" feature listed above.
+
+## Troubleshooting
+
+If the console does not respond, verify the model, IP, port, network path, and any MIDI-specific prerequisites for that console family.

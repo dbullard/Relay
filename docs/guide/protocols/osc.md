@@ -1,0 +1,30 @@
+# OSC: receive and send control messages in Relay
+
+Configure OSC receive and send workflows in Relay for automation and control.
+
+Relay can receive and send OSC messages over the network.
+
+## Enable OSC receive
+
+1. Open `Relay > Settings`.
+2. Select **External Control**.
+3. Switch to `OSC`.
+4. Turn on `OSC Listener`.
+5. Set the listen port.
+6. Point the sender at this Mac's IP and that same UDP port.
+
+## Use OSC in Relay
+
+- Use OSC Receive triggers in Automation View — set the address pattern you want to match (for example `/relay/trigger1`), and the trigger fires whenever a message arrives at that address.
+- Use OSC Send actions to transmit a message to a target IP and port (defaults to port `9000`) at an address you define.
+- Use OSC from Button modules when configured.
+
+OSC sending and automation are improved in 1.2.2, and device discovery during onboarding is more reliable, so the Setup Wizard can find OSC-capable devices more consistently.
+
+Beyond the main OSC listener, Relay can run additional custom listening ports at the same time — useful if you want to keep OSC traffic for different purposes (say, a console integration vs. a lighting console) isolated on separate ports rather than sharing one.
+
+The `External Control` page also shows the current IP address, message counts, and the most recent OSC packet so you can validate traffic before wiring it into a graph.
+
+## Troubleshooting
+
+If packets do not arrive, confirm the sender IP target, port, Local Network permission, and that no other app is already bound to the same port.

@@ -1,0 +1,55 @@
+# Automation View: triggers, actions, and destinations
+
+Build Relay automations using triggers, actions, utility nodes, and device destinations.
+
+Automation View is Relay's node-based workspace for making things happen automatically.
+
+> [!TIP]
+> The easiest way to trust automation live is to earn that trust in layers. Build one reliable trigger and one reliable action first.
+
+## Open Automation View
+
+Use `View > Automation View` or `Command-2`.
+
+## What it connects
+
+- **Triggers** that start a workflow — see [Trigger Nodes](nodes/triggers.md)
+- **Sources** that feed data into the graph, like Current Time or an imported console or wireless channel name — see [Source Nodes](nodes/sources.md)
+- **Actions and destinations** that do something — see [Action & Destination Nodes](nodes/actions.md)
+- **Utilities** like delays, repeaters, variables, branching, toggles, counters, sequences, latches, and merges — see [Utility Nodes](nodes/utilities.md)
+
+## Universal Automation
+
+Automation graphs aren't locked to a single tab. Promote any graph to **Universal** using the mode picker in the Automation View toolbar, and it runs across every tab that needs it instead of only the tab it was built on. Scope controls in the same toolbar let you narrow which tabs a Universal graph actually applies to. This is useful for automations that shouldn't depend on which tab happens to be active, such as a console-linked trigger that should fire the same way no matter what an operator is looking at.
+
+## Variables in automations
+
+Values you define in the Variables window are available to automations as well as text inputs, so one change stays consistent across your graphs and dashboard. See [Shared values and variables](variables.md).
+
+## Console destinations
+
+Consoles are a special destination node: link it to a configured audio console and it exposes that console's own action set (mute, fader, scene recall, and more — the exact list depends on the console brand and model). Relay checks that any node linked into a console destination is actually usable by that console model — an incompatible link (for example, a Planning Center source feeding a console that can't rename channels) shows as a red-ring warning on the console node rather than failing silently.
+
+## Best practices
+
+- Start with one trigger and one action
+- Test one path at a time
+- Validate cooldowns and repeatability before using a flow live
+- Name nodes clearly once a graph grows beyond a few connections
+- Use `If / Else` only after the trigger and happy path already work — it's still labeled Preview in the node catalog
+- Use `Variable` nodes when you want text or inbound values reused across more than one action
+- Watch for warning pills on Condition and Console nodes — they surface dispatch failures (an operator that doesn't apply to the value type, a linked device that was removed) directly on the node instead of failing silently
+
+## Troubleshooting
+
+### The automation does not fire
+
+Check that the trigger type matches the signal you're sending, the source device or service is selected correctly, the expected input format is being received, and the nodes are actually connected.
+
+### The trigger fires but the action does nothing
+
+Check that the destination device is online, the action parameters are valid, and the integration behind the action is configured.
+
+### The graph became too hard to follow
+
+Break larger flows into smaller patterns. A few reliable automations are easier to trust than one giant graph full of conditionals and retries — Relay's graph handling has also improved for large, dense automation views in recent releases, but smaller graphs stay easier to reason about regardless.

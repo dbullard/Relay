@@ -1,0 +1,75 @@
+# Tiles: arrange and style your Relay dashboard layout
+
+Learn how to add, move, resize, group, and visually organize tiles on the canvas.
+
+Tiles are the layout containers on the Relay canvas. A clear tile layout is one of the biggest factors in whether a dashboard feels easy or stressful to use live.
+
+## Common tile tasks
+
+1. Add a tile from the toolbar.
+2. Click to select it.
+3. Drag it into place.
+4. Resize it using the resize controls or handles.
+5. Use the inspector to change appearance and layout behavior.
+
+## Resizing
+
+Each tile has 8 resize handles — 4 edges and 4 corners — so you can resize horizontally, vertically, or diagonally from whichever side is easiest to grab. A live width × height readout appears next to the tile while you drag, so you can hit an exact size without guessing. Select more than one tile and only the shared edge handles remain active, so you can resize the whole group together without distorting individual tiles.
+
+Tiles can be sized down to 44×44pt (previously 160×120pt), so compact button layouts and dense control grids fit much more tightly.
+
+## Option-drag snapping
+
+Hold **Option** while dragging a tile to snap it into a region of the canvas. A live preview shows where the tile will land before you release.
+
+## Selecting multiple tiles
+
+Selecting more than one tile brings up a floating toolbar with quick layout actions:
+
+- **Region presets** — snap a single tile to a half, third, or quarter of the canvas with one click, similar to macOS window tiling.
+- **Distribute** — with three or more tiles selected, spread them evenly horizontally or vertically.
+- **Grid Distribute** — arrange the selected tiles into an even grid in one click, including a one-click fill-window layout that expands the grid to use the whole canvas. Distribute buttons show a live preview of the resulting grid instead of a generic icon, so you can see the layout before applying it.
+
+## Tile Overview
+
+The Tile Overview sidebar lists every tile on the current tab in one place — useful once a tab has more tiles than fit comfortably on screen at once. It supports:
+
+- Searching tiles by name
+- Toggling a tile's visibility on or off without deleting it
+- Renaming a tile inline
+- Setting an exact width and height numerically instead of dragging
+- Seeing tile and group counts for the tab at a glance
+
+## Guides
+
+Guides are draggable reference lines for lining up tiles precisely. Add one from the canvas toolbar, then:
+
+- **On Mac**, hold **Option** and drag the guide to reposition it.
+
+Right-click (or long-press) a guide for **Edit Guide** — a popover where you can set its exact position numerically in pixels and pick a custom color — or **Delete Guide**. Guides stay a consistent visual weight regardless of canvas zoom level, so they're just as easy to grab zoomed all the way out as zoomed in.
+
+## Helpful layout habits
+
+- Put the most important live information in the largest tiles.
+- Group related information together visually.
+- Leave enough spacing for readability at a distance.
+- Split crowded layouts across multiple tabs instead of overloading one screen.
+
+## Helpful canvas tools
+
+- Grid snapping
+- Guides
+- Duplicate tile
+- Grouping
+- Resize dashboard canvas
+- Bring all tiles back into view if they drift off-screen
+
+## Troubleshooting
+
+### A tile seems missing
+
+Use the command that brings all tiles back into the visible canvas.
+
+### Tiles are difficult to align
+
+Turn on grid snapping or guides and build from one strong anchor tile first.

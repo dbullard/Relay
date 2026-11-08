@@ -1,0 +1,46 @@
+# ProPresenter integration: live slide status in Relay
+
+Link Relay to a running ProPresenter instance to display live slide and presentation status on your dashboard.
+
+The ProPresenter integration lets Relay talk directly to a running ProPresenter instance on your network. Once connected, a ProPresenter module can show current and next slides, presentation name, timer data, and other live state.
+
+## What the integration provides
+
+- Current and next slide status (slide numbers come from ProPresenter's slide index, and disabled slides are counted correctly in group ranges)
+- Slide text or thumbnail previews
+- Presentation name and arrangement data
+- Timer or message data
+- ProPresenter action nodes in Automation View
+
+## Add a connection profile
+
+1. Open `Relay > Settings`.
+2. Select **External Connections**.
+3. Select `ProPresenter`.
+4. Add a profile with the correct host, port, and credentials if needed.
+5. Save and confirm the connection succeeds.
+
+Credentials for a ProPresenter profile are stored in the macOS Keychain, not in the dashboard file itself — so a `.relay` file can be shared without exposing a saved password, but a profile's credentials won't automatically travel with it to another Mac.
+
+## Add the ProPresenter module
+
+1. Select a tile.
+2. Add the ProPresenter module.
+3. Choose the saved profile.
+4. Set the display mode that matches the data you want to show.
+
+## Best practices
+
+- Name profiles clearly so operators know which machine they're targeting.
+- Confirm both apps are on the same network as the Mac running Relay.
+- Test the module view before relying on it in Live Mode.
+
+## Troubleshooting
+
+### ProPresenter will not connect
+
+Check the host or IP address, port, password or token if required, Local Network permission on macOS, and whether ProPresenter network control is enabled.
+
+### The ProPresenter module is blank
+
+Confirm the profile is selected, ProPresenter has an active presentation, and the chosen display mode matches what ProPresenter is currently providing.

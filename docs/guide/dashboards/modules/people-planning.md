@@ -1,0 +1,66 @@
+# People & Planning Modules
+
+Modules for integrating Planning Center, Rosters, and assigning team members.
+
+These modules help you manage people, roles, and service plans directly from your dashboard.
+
+## Planning Center
+
+The Planning Center module connects to your PCO account to display service rundowns. It updates automatically as your plans change, ensuring operators always see the latest schedule.
+
+### Setup
+1. Ensure your Planning Center account is linked in the **Integrations** settings.
+2. Add the **Planning Center** module to a tile.
+3. Select the Service Type and the specific Plan you want to monitor.
+
+### Features
+- **Live Tracking:** Highlights the current live item in the rundown.
+- **Auto-Update:** Changes made in Planning Center are reflected on the dashboard automatically.
+- **Timing:** Displays scheduled lengths and actual running times for items.
+
+---
+
+## PCO Team Assignments
+
+This module surfaces the people scheduled in Planning Center for specific roles.
+
+### Setup
+1. Add the **PCO Team Assignments** module to a tile.
+2. Select the specific Plan and the Teams/Roles you want to display.
+
+### Features
+- **Visual Breakdown:** Clearly see who is serving in what capacity.
+- **Confirmation Status:** Displays whether a team member has accepted, declined, or not yet responded to their scheduling request.
+
+---
+
+## Roster Team Assignments
+
+If you aren't using Planning Center, Relay's built-in Rosters let you build your own teams locally.
+
+### Setup
+1. Click the **Rosters** button in the toolbar at the top of the dashboard window, then create a Roster and add members there.
+2. Add the **Roster Team Assignments** module to a tile and select your Roster.
+
+### Features
+- **Local Control:** Manage your teams entirely offline without relying on external APIs.
+- **Dynamic Updates:** Changes to the Roster are immediately reflected on the dashboard.
+- **Import:** Instead of entering members by hand, import a CSV, plain text, or (on Mac) Excel `.xlsx` file from the Rosters Manager's Import button. Choose **Replace** to overwrite the current roster or **Append** to add to it. Imports are capped at 12 columns and 250 rows per roster.
+
+---
+
+## Person
+
+The Person module is a flexible tile that displays a specific role or individual.
+
+### Setup
+1. Add the **Person** module to a tile.
+2. Manually assign a person, or link the module to a Picker for dynamic assignment.
+
+### Features
+- **Dynamic Roles:** Perfect for static positions (e.g., "Camera 1 Operator") that change hands week to week.
+- **Wireless linking:** A person's assignment can carry a direct link to a specific wireless channel — not just a label. The assignment stores the wireless vendor (Shure or Sennheiser), the device, and the exact channel index, so the Person tile and the wireless channel it's tied to stay in sync automatically as assignments change.
+- **PCO fields:** When sourced from Planning Center, a Person tile can show the assignment's position name, team name, and assignment slot — the team name and a small PCO badge can each be toggled on or off independently.
+- **Photo styling:** Show or hide the photo background entirely, offset it within the tile, and set an overlay opacity so name/role text stays readable over a photo.
+- **Header position:** Place the name/role/initials block at the top of the tile (default) or as a footer at the bottom.
+- **Automation Ready:** You can update the person displayed in this module via automation workflows.

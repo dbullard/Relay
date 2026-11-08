@@ -1,0 +1,74 @@
+# Building and managing your dashboards in Relay
+
+Learn how Relay dashboards are structured with tabs, tiles, and modules, and how Canvas View relates to Live Mode.
+
+Building a dashboard in Relay means placing tiles on a canvas, filling each tile with modules, and then operating the result in Live Mode during your event.
+
+## How dashboards are structured
+
+- **Tabs**: Separate different areas of responsibility or moments in your workflow.
+- **Canvas**: The surface where tiles are placed and arranged.
+- **Tiles**: Containers on the canvas that hold one or more modules.
+- **Modules**: The actual content or controls shown inside a tile.
+
+## Starting from the home screen
+
+Relay opens to a home screen showing your recent files. From there you can start a new dashboard (choosing a canvas size as you create it), open an existing `.relay` file, or check the **What's New** panel for recent release notes without leaving the app. What's New shows entries only for the version you have installed.
+
+Right-click any recent file to pin it as your startup file — Relay will skip the home screen and open that document automatically the next time you launch.
+
+Use **Close Home** to dismiss the launch screen and return to your dashboard.
+
+You can rerun the [Setup Wizard](../guides/setup-wizard.md) from the `File` menu whenever you add new devices or services.
+
+The home screen sidebar also has a **Quit** button, so you can close Relay without switching to the menu bar. Quit and Close both respond immediately now, even while a dialog is open.
+
+## Creating and saving dashboards
+
+Use `File > New Dashboard` to start fresh and `File > Open Dashboard...` to open an existing `.relay` file. Save with `Command-S`, or use `Save Dashboard As...` when you want a copy with a different name or location.
+
+Once a dashboard has a save location, it autosaves by default — the toolbar shows whether the current document is saving or already saved. The first time autosave triggers, Relay shows a one-time prompt with an inline toggle if you'd rather turn it off; after that it's silent. You can also change this behavior at any time under `Relay > Settings` → **General**.
+
+## Shared values and variables
+
+Define a value once and reuse it across text inputs and automations. See [Shared values and variables](variables.md).
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Cmd-N` | New Dashboard |
+| `Cmd-O` | Open Dashboard |
+| `Cmd-S` | Save Dashboard |
+| `Cmd-Shift-S` | Save Dashboard As |
+| `Cmd-,` | Settings |
+| `Cmd-Q` | Quit Relay |
+| `Cmd-1` | Switch to Canvas View |
+| `Cmd-2` | Switch to Automation View |
+| `Cmd-L` | Toggle Live Mode |
+| `Cmd-D` | Duplicate — the selected tiles in Canvas View, or the selected nodes in Automation View |
+| `Cmd-G` | Group selected tiles |
+| `Cmd-Shift-H` | Hide/show selected tiles |
+| `Delete` | Delete selected tiles |
+| `Cmd-Option-G` | Toggle snap to grid |
+| `Cmd-;` | Toggle guides |
+| `Cmd-Option-M` | Toggle auto-hide menu |
+| `Cmd-T` | New tab |
+| `Cmd-[` / `Cmd-]` | Select previous / next tab |
+| `Cmd-Option-[` / `Cmd-Option-]` | Select first / last tab |
+
+## Canvas View vs. Live Mode
+
+Canvas View is for building and editing. Live Mode is for running the dashboard during a real service or event.
+
+- Use Canvas View to add tiles, move them, align them, and change module configuration.
+- Use Live Mode when you want a cleaner operating experience with fewer accidental edits.
+
+Canvas panning and zooming stay smooth even on dashboards with lots of tiles, and trackpad pan/zoom gestures no longer get swallowed by scrollable content inside a module.
+
+## What to read next
+
+- [Tiles](tiles.md) — Learn how to place, size, align, and group content on the canvas.
+- [Modules](modules.md) — Choose the right module for each tile and understand what each one is for.
+- [NDI Feed](modules/video-presentation.md) — Add network video monitoring with quality tiers and NIC-aware routing.
+- [Team Assignments](modules/people-planning.md) — Build focused staffing views from Planning Center or shared rosters.

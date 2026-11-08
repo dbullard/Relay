@@ -1,0 +1,79 @@
+# Planning Center integration: plans, teams, and Services Live
+
+Connect Planning Center to Relay and use plans, assignments, and Services Live data in your dashboard.
+
+Relay can use Planning Center for service and plan selection, rundown display, dedicated team assignment modules, person-module population, and embedded Services Live views.
+
+## Before you connect
+
+Relay does not include a shared Planning Center app. Register your own free Public app in the Planning Center developer portal, set the callback URL to `app.relay.pco://oauth/callback`, and add its Client ID to the build. Step-by-step instructions are in [Integrations that need your own credentials](../../INTEGRATIONS.md#planning-center-pco). Without this, **Connect** shows "Planning Center sign-in is not configured".
+
+## Connect your account
+
+1. Open `Relay > Settings`.
+2. Select **External Connections**.
+3. Select `Planning Center`.
+4. Click `Connect to Planning Center`.
+5. Finish sign-in and approval in your browser.
+6. Return to Relay and confirm the connection is active.
+
+Relay requests the `services` and `people` OAuth scopes — enough to read plans, teams, and people, nothing more. Once connected, Relay refreshes your access token automatically using the stored refresh token, so you shouldn't need to reconnect unless the connection is explicitly revoked from your Planning Center account.
+
+## Configure the active tab
+
+After connecting, the current tab still needs a service context:
+
+1. Open tab settings.
+2. Choose the service type.
+3. Choose the plan.
+4. Choose the service time.
+5. Configure any relevant team settings.
+
+## What modules can show
+
+- Plan details
+- Rundown items
+- Service times
+- Team assignments
+- Team member status
+- Embedded Services Live content
+
+## Team Assignments in 1.1.0
+
+Relay `1.1.0` adds a dedicated `PCO Team Assignments` module alongside the broader `PCO Rundown` module.
+
+Use it when you want a tile focused on staffing instead of the full rundown. It works best when:
+
+- the tab already has a service type, plan, and service time selected
+- team configuration is set in the tab
+- any wireless or equipment assignment workflow has already been prepared
+
+This makes it easier to build dashboards that separate schedule context from operator-facing assignment views.
+
+## Person modules and assignments
+
+Person modules can be filled manually or linked to Planning Center positions:
+
+1. Add a Person module.
+2. Set the source to a Planning Center team.
+3. Choose the team and position.
+4. Pick an assignment when more than one person is available. Position assignment candidates stay in sync with live Planning Center data.
+
+If your team uses headshots, Relay can often match image files by name when a headshot folder is configured in general settings.
+
+## Troubleshooting
+
+### The module says setup is required
+
+Check both of these:
+
+- Planning Center is connected in settings
+- The active tab has a service, plan, and service time selected
+
+### No plan items appear
+
+Check whether the selected plan actually contains items for the selected service time.
+
+### Team assignments are missing
+
+Check whether team settings are configured on the tab, the selected plan contains assigned people, and the Person module is pointed at the correct team and position.

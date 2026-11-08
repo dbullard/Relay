@@ -8,6 +8,7 @@
 - `TranscriptionHelper/` and `TranscriptionShared/`: helper-process transcription code.
 - `ThirdParty/NDI/include/`: vendor headers with their original license notices.
 - `Config/`: safe defaults and an example for local service configuration.
+- `docs/guide/`: user documentation in plain Markdown. See [docs/guide/README.md](guide/README.md).
 
 The shipping scheme is `Relay`; local development uses `Relay (DEBUG)`. Both are free. The removed Beta scheme is replaced by the Preview setting.
 

@@ -1,0 +1,28 @@
+# MIDI: trigger and control Relay workflows
+
+Configure MIDI receive and send workflows in Relay on Mac.
+
+Relay can receive and send MIDI on Mac.
+
+## Enable MIDI receive
+
+1. Open `Relay > Settings`.
+2. Select **External Control**.
+3. Switch to `MIDI`.
+4. Turn on `MIDI Input`.
+5. Choose all sources or a specific input.
+6. Refresh the device list if a device was just connected.
+
+## Use MIDI in Relay
+
+- MIDI Receive triggers in Automation View — matches Note On/Off, Program Change, Control Change, or SysEx messages, depending on what you're triggering from.
+- MIDI Send actions in Automation View — sends the same message kinds to a connected MIDI destination.
+- MIDI-based scene recall workflows — Yamaha consoles in particular map incoming MIDI Program Change numbers to named console scenes, organized into scene banks, so a MIDI Send action can recall a specific named scene rather than just firing a raw Program Change number.
+- Timecode display workflows — Relay includes a built-in MIDI timecode parser for the Timecode module and DAW Transport's timecode display mode.
+- DAW Transport module workflows.
+
+The `External Control` page also shows message counts and the last received MIDI event, which makes it much easier to verify routing before you build an automation.
+
+## Troubleshooting
+
+If MIDI triggers do not fire, confirm the correct input source is selected and that the sending device is emitting the message type you expect.

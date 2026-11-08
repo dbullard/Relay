@@ -1,0 +1,74 @@
+# Action & Destination Nodes
+
+Nodes that execute tasks, control software, and communicate with external hardware.
+
+Actions are the endpoints of your automation graphs. They receive signals from triggers and execute commands.
+
+## System & LAN Notifications
+
+Keep your team informed.
+
+- **Setup:** Add the node and define the message text.
+- **Features:** **Notify** displays a standard macOS banner. **LAN Notification** broadcasts an alert to other Relay instances connected on your local network, displaying it directly over their dashboard.
+
+## In-App Action
+
+Control Relay itself as part of an automation, instead of an external device.
+
+- **Setup:** Add the node and pick one command.
+- **Available commands:** Select First / Previous / Next / Last Tab, Refresh Planning Center, Resync Device Names (consoles and wireless), Clear SPL Meters, Clear Live Transcript, Switch to Canvas View, Switch to Automation View, Enter / Exit / Toggle Live Mode, Save Dashboard, Save Dashboard As, and Start / Stop / Toggle SPL Logging.
+- **Features:** Useful for building a single "Pre-Service Setup" or "Go Live" sequence that flips Relay itself into the right state — enter Live Mode, jump to tab one, refresh Planning Center — without an operator touching anything.
+
+## HTTP Request
+
+Integrate with almost any web service.
+
+- **Setup:** Define the URL, method (`GET`, `POST`, `PUT`, `PATCH`, or `DELETE`), headers, and body content.
+- **Features:** Triggers web endpoints or APIs. Useful for custom webhooks, triggering IFTTT/Zapier flows, or controlling smart home devices that don't have a dedicated Relay integration.
+
+## ProPresenter Trigger
+
+Control your presentation software remotely.
+
+- **Setup:** Link the node to your configured ProPresenter connection.
+- **Features:** Trigger specific slides, clear layers (audio, video, props), or start/stop timers without leaving Relay.
+
+## Protocol Sends
+
+Communicate with standard show control protocols.
+
+- **OSC Send:** Transmits an OSC message to a target IP and port (defaults to `9000`) at a given address. Define the address path and arguments. OSC sending was improved in Relay 1.2.2.
+- **MIDI Send:** Sends a MIDI message to a connected MIDI destination — Note On/Off, Program Change, Control Change, or raw SysEx, depending on the message kind you choose.
+
+## Console
+
+Control a connected audio console. This is a destination node — link it to one of your configured console devices, and the node exposes that console's own action set.
+
+- **Setup:** Select a configured audio console from External Devices. Multiple Console nodes can point at the same physical device if you want independent routing paths for different parts of a graph. The node also has a **Test** control to fire the current configuration once by hand, separate from automated triggering.
+- **Auto-send binding:** A console node can be bound to a trigger so that channel assignments or snapshots are sent automatically whenever that trigger fires, instead of only on request.
+- **Capability gating:** Relay checks that anything linked into a console node is actually usable by that console model. An incompatible link — for example, a Planning Center source feeding a console that can't rename channels — shows as a red-ring "Incompatible links" warning directly on the node instead of failing silently at runtime.
+- **Standard Console Actions:** Behringer X32/M32, Yamaha DM7/Rivage, and Allen & Heath consoles support scene recall, mute, level, and pan directly — no third-party bridge required.
+- **Allen & Heath Qu actions:** Scene Recall, Soft Key, Channel Mute, Channel Level, Channel Pan, Mix Assign, Send Level, Group Level, Group Mute, FX Send Level, FX Return Level — sent over MIDI.
+- **DiGiCo actions:** Mute, Solo, Fader, and Recall Macro — sent over OSC, addressable across input, aux, group, matrix, and control-group channel types. DiGiCo doesn't support true scene recall; snapshot actions create or rename snapshots rather than firing a stored scene. Relay sends to the console's OSC receive port (default `9000`) and listens for replies on its own local port (default `8000`). "Sync from DiGiCo" channel-name discovery scans up to 256 input channels, 128 aux outputs, 128 group outputs, 64 matrix outputs, and 64 control groups by default.
+- **Send to All Consoles:** A separate action node that sends assignments and/or snapshots to every connected console at once, with an optional stagger between sends.
+
+## Wireless
+
+Send control commands to a connected wireless receiver.
+
+- **Setup:** Select a configured Shure or Sennheiser device — each brand is its own action node.
+- **Features:** Mute or unmute a channel and adjust other supported per-channel settings without leaving the automation graph.
+
+## Smart Light Control `Preview`
+
+Control your environment's lighting.
+
+- **Setup:** Connect to a supported smart light bridge on your network.
+- **Features:** Set colors, adjust brightness, or recall scenes on Philips Hue or Govee devices as part of any automation flow. See [Smart lights](../../integrations/lighting.md) for the full guide.
+
+## Vista `Preview`
+
+Trigger your Vista lighting/show system.
+
+- **Setup:** Connect to a supported Vista device.
+- **Features:** Export cue lists and trigger basic Vista OSC commands directly from Relay. See [Vista](../../integrations/vista.md) for the full guide.

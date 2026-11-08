@@ -1,0 +1,58 @@
+# Utility Nodes
+
+Nodes that shape timing, branching, repetition, and hold values.
+
+Utility nodes sit between triggers and actions. They help you build complex logic, manage timing, and route signals appropriately.
+
+## Flow Control
+
+### Delay
+
+- **Setup:** Define the delay in milliseconds (defaults to 500ms).
+- **Features:** Pauses the signal before passing it to the next node. Crucial for sequencing actions that require hardware to process previous commands.
+
+### Repeater
+
+- **Setup:** Define how many times to repeat the signal (defaults to 1), the delay between repeats in milliseconds (defaults to 250ms), and how many output connections it fans out to.
+- **Features:** Takes a single incoming signal and fires it multiple times. Useful for "pinging" a device or sending a warning flash multiple times.
+
+### Sequence
+
+- **Setup:** Set the number of steps (defaults to 3) and add an output path for each one.
+- **Features:** Steps through its outputs one at a time, advancing by one each time it receives a trigger, and wraps back to the start after the last step. Perfect for building a "Next Cue" button that fires different commands in order. Can optionally reset to step one on app launch.
+
+### Merge
+
+- **Setup:** Connect multiple triggers to the input side.
+- **Features:** Combines multiple incoming paths into a single output path, keeping your graph clean when several different triggers should result in the exact same action.
+
+## State Management
+
+### Toggle
+
+- **Setup:** Connect a trigger to the input.
+- **Features:** Flips a boolean state (On → Off → On) each time it's triggered. Route the "On" and "Off" outputs to different actions — for example, a single button that mutes and unmutes a console channel. Can optionally reset to Off on app launch.
+
+### Counter
+
+- **Setup:** Define a threshold (defaults to 3).
+- **Features:** Increments each time it's triggered and fires once it reaches the threshold. By default it resets back to zero after firing (`resetAfterFire`), so it's ready to count again immediately — turn that off if you want it to fire only once until manually reset. Can also be set to reset to zero on app launch.
+
+### Latch / Gate
+
+- **Setup:** Choose which trigger node opens the latch and which one closes it.
+- **Features:** Holds open until the "close" trigger fires, or acts as a gate that only lets signals through while it's open. Can optionally start closed again on app launch instead of remembering its last state.
+
+## Conditionals and Variables
+
+### If / Else `Preview`
+
+Still shown with a Preview badge in the node catalog, though it's fully available to use.
+
+- **Setup:** Choose what to evaluate — the incoming payload's text, number, or boolean value, or a Variable node — and an operator: Equals, Does Not Equal, Contains, Greater Than, Less Than, Is True, Is False, Is Empty, or Is Not Empty.
+- **Features:** Routes the signal out the "True" path or the "False" path based on the evaluation. Use it once your trigger and happy-path action are already working reliably — branching adds a second path you need to test.
+
+### Variable
+
+- **Setup:** Define a variable name, a value type (text, number, or boolean), and either a manual value or a node that feeds it.
+- **Features:** Stores a value in memory and makes it available for reuse in other parts of the same automation flow — useful when more than one downstream action needs the same piece of data (like a name or a measured level) without re-deriving it each time.

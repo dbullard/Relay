@@ -1,0 +1,59 @@
+# Utility Modules
+
+A guide to the utility modules in Relay used for layout, formatting, and general info.
+
+Relay provides several utility modules that help you structure your dashboard, display static information, and execute simple commands.
+
+## Informational Modules
+
+### Text
+- **Setup:** Add the Text module and type your content. Use the inspector to adjust fonts, sizes, and colors.
+- **Features:** Supports rich text formatting. Use it to label sections, provide operator cues, or display static lyrics.
+- **Shared Values:** Text inputs can use values you define in the Variables window, so you can change a value once and have it update everywhere it is used. See [Shared values and variables](../variables.md).
+
+### Image
+- **Setup:** Add the Image module and upload a file from your Mac.
+- **Features:** Supports standard image formats. Useful for branding your dashboard with a church logo or displaying reference stage plots.
+
+### Document
+- **Setup:** Add the Document module and select a PDF or Word document.
+- **Features:** Provides a scrollable, preview-only view. Perfect for keeping rundowns or schedules visible without leaving the app.
+
+### Webpage
+- **Setup:** Add the Webpage module and enter a valid URL.
+- **Features:** Embeds a live web view. Useful for displaying external resources, secondary dashboards, or web-based tools.
+
+---
+
+## Structural and Action Modules
+
+### Separator
+- **Setup:** Add the Separator module to a tile containing multiple other modules.
+- **Features:** Adds a visual break (horizontal or vertical line) to help you group related controls visually.
+
+### Button
+- **Setup:** Add a Button module, then add one or more buttons to it — a single Button module now holds a group of buttons sharing a common layout and style, not just one. Customize each button's label, icon, and color individually, and choose a grid layout for the group.
+- **Icon picker:** A searchable popover across roughly 340 SF Symbols, replacing the older preset grid and free-text entry — type to filter instead of scrolling or typing an exact symbol name.
+- **Features:**
+  - **Interaction mode:** Momentary (fires while held) or Toggle (flips on/off).
+  - **Confirmation:** Optionally require a confirm step before the button fires, with a custom title and message — useful for anything destructive or hard to undo live.
+  - **Cooldown:** Set a minimum interval between presses to prevent accidental double-fires.
+  - **Availability:** Restrict a button to Live Mode only, Edit Mode only, or always available, and optionally disable it while its action is running or during its cooldown.
+  - **Feedback:** Animate on press, show a running indicator while the action executes, and show a result badge for a configurable duration afterward.
+  - Buttons can trigger in-app actions directly (like clearing transcriptions or SPL logs) or be bound to Manual Triggers in Automation View to kick off larger automated workflows.
+
+### Picker
+- **Setup:** Add a Picker module and link it to a Roster or a static list of options.
+- **Features:** Lets operators dynamically assign people or equipment to specific roles directly from Live Mode.
+
+---
+
+## Time and Clocks
+
+### Time
+- **Setup:** Add the Time module and choose your preferred time format (12h/24h) and styling.
+- **Features:** Displays the current system time in a highly visible format to keep your team on schedule.
+
+### Timecode
+- **Setup:** Configure incoming MIDI or OSC timecode in your global settings, then add the Timecode module.
+- **Features:** Monitors and displays incoming timecode data, ensuring operators stay synchronized with your DAW or lighting timeline.

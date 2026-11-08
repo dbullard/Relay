@@ -51,6 +51,10 @@ The test suite includes integration fixtures that use shared preferences; serial
 
 See [development setup](docs/DEVELOPMENT.md) for optional configuration and NDI runtime setup. Planning Center, YouTube, and other integrations that need API keys or tokens use your own accounts; see [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
+## Documentation
+
+User guides live in the repository under [docs/guide](docs/guide/README.md): dashboards, automation, integrations, protocols, and troubleshooting. They are plain Markdown, so you can read them on GitHub and improve them with pull requests.
+
 ## Reporting bugs and contributing
 
 - [Report a bug](https://github.com/dbullard/Relay/issues/new/choose) with your app version, macOS version, reproduction steps, and expected behavior.

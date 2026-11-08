@@ -1,0 +1,113 @@
+# Audio & Visual Analysis Modules
+
+Modules for monitoring audio levels, visualizing frequencies, and transcribing speech.
+
+Relay provides deep audio integration for monitoring your production environment. These modules rely on inputs configured in your **Global Audio Settings**.
+
+## SPL Meter
+
+The SPL Meter module displays sound level data from any Mac audio input.
+
+### Setup
+1. Open the **Global Audio Settings** and configure an input in the **Measurement** tab.
+2. Add the SPL Meter module to a tile and select that measurement input.
+3. Select your desired weighting (**A**, **C**, **Z** for flat, or **C-A** to show the difference between the two) and time weighting (**Fast** or **Slow**).
+
+### Features
+- **Calibration:** Apply an offset (in dB) within Global Audio Settings to match a known reference meter.
+- **Averaging:** Optionally average readings over a configurable window (in seconds) instead of showing the instantaneous level.
+- **History graph:** Show a running graph of raw or averaged SPL, with configurable history length and graph height.
+- **Warning and alert thresholds:** Set two dB thresholds with independent colors for normal, warning, and alert states, so a tile visibly changes color as levels climb.
+- **Bar meter:** Optionally show a bar-style meter alongside the numeric readout, with separate upper and lower limits for the C-A comparison view.
+- **SPL Logging:** Relay can record SPL data directly to CSV files when Live Mode is active, complete with a pulsing green indicator on your tiles. Logged exports can include raw dBFS and peak values in addition to the weighted SPL reading.
+
+---
+
+## Real-Time Analyzer (RTA)
+
+A visual analysis module that breaks down your audio inputs into discrete frequency bands in real-time.
+
+### Setup
+1. Configure a measurement input in **Global Audio Settings**.
+2. Add the RTA module to a tile and select the input. You can add more than one input to the same RTA tile to compare sources directly.
+
+### Features
+- **Display Modes:** Choose between standard bar graphs or a filled-curve display.
+- **Resolution:** Six band resolutions from 1-octave (10 bands) up to 1/48-octave (478 bands), trading detail for a busier display: 1-octave, 1/3-octave (31 bands), 1/6-octave (61 bands), 1/12-octave (120 bands), 1/24-octave (240 bands), and 1/48-octave.
+- **Peak Hold:** Enable peak-hold to track the highest frequency levels over time, with a configurable decay rate in dB per second.
+- **Time smoothing:** Fast or Slow smoothing controls how quickly the display responds to level changes.
+- **Range:** Set the visible frequency range and dB range independently, and apply A/C/Z/C-A weighting to the analysis.
+- **Warning colors:** Optional threshold-based coloring, same as the SPL Meter.
+- **No-input state:** Shows a clear "No audio input available" message instead of a blank tile when no input is selected.
+
+---
+
+## Spectrograph
+
+A scrolling waterfall view that visualizes audio frequency distributions over time, helping you spot persistent feedback frequencies or structural imbalances.
+
+### Setup
+1. Configure a measurement input and set a custom display color in **Global Audio Settings**.
+2. Add the Spectrograph module to a tile.
+
+### Features
+- **Visual Heatmap:** Frequency intensity is displayed as color density over time, with configurable scroll rate and a choice of frequency scale.
+- **Color maps:** Fire/Plasma, Green Phosphor, Purple Glow, Amber, or a Custom map.
+- **Range:** Set the dB range independently of other modules, and apply the same A/C/Z/C-A weighting options as the SPL Meter and RTA.
+- **Link to RTA:** Optionally link the color and range settings to a companion RTA tile so both stay in sync.
+- **Color Syncing:** The module automatically utilizes the custom color you defined for that input in your global settings, making it easy to identify which mic you are looking at.
+- **No-input state:** Shows a clear "No audio input available" message instead of a blank tile when no input is selected.
+
+---
+
+## DAW Transport
+
+Keep your dashboard in sync with your playback rigs by monitoring and controlling supported DAW (Digital Audio Workstation) transport workflows.
+
+### Setup
+1. Connect your DAW via MIDI or network protocol in the External Devices settings, and choose the matching transport type: Pro Tools HUI, Logic Pro HUI, Reaper HUI, Reaper MCU, Cubase/Nuendo HUI, Digital Performer HUI, Generic HUI, or Generic MTC/MMC.
+2. Add the DAW Transport module to a tile.
+
+### Features
+- **Transport Monitoring:** See exactly when your DAW is playing, stopped, or recording.
+- **Dashboard Control:** Send Rewind, Stop, Play, Record, or Fast Forward directly from your Relay tiles without switching applications.
+- **Command mode:** Choose Automatic, MMC, or MCU to control how transport commands are actually sent, depending on what your DAW and connection type support.
+- **Display mode:** Show a running clock or SMPTE-style timecode, depending on the transport type.
+
+---
+
+## Live Transcription
+
+Converts a selected audio input into scrolling text on the dashboard. This is incredibly useful for providing live cues or context to operators without an intercom.
+
+### Setup
+1. Add inputs via the **Transcription** tab of your **Global Audio Settings**.
+2. Add the Live Transcription module to a tile and select the input.
+
+### Features
+- **Advanced Controls:** Fine-tune auto-gain sensitivity and engine preference per-input.
+- **Word Substitutions:** Easily filter or replace specific words on the fly (e.g., replacing a speaker's verbal tick).
+- **Profanity Controls:** Automatically mask or remove profanity from the transcript. The filter catches inflected words and text that is already censored, and its settings persist between sessions.
+- **Automation Triggers:** You can use word detection to trigger automation workflows.
+- **Transcript tools:** Show live transcript entries, copy or export the transcript as text, clear it, or jump to the most recent entry.
+
+## Global Audio Settings
+
+Relay uses a centralized configuration manager for all audio sources, split into two tabs:
+
+- **Measurement** — inputs used for visual monitoring (SPL Meter, RTA, Spectrograph). Add inputs, set a calibration offset in dB, and choose a custom display color for visualization graphs.
+- **Transcription** — inputs used specifically for speech-to-text, including the auto-gain, engine preference, word substitution, and profanity controls described above.
+
+## Permissions that matter
+
+These modules commonly depend on microphone access, Speech Recognition access, and a usable audio input source. If system audio transcription is part of the workflow, screen or system-audio capture permissions may also matter depending on the capture path.
+
+## Troubleshooting
+
+### Transcription does not start
+
+Check microphone permission, Speech Recognition permission, whether another app is already using the same input, and whether Live Mode is required for your current setup.
+
+### SPL Meter is paused or flat
+
+Check the selected input source, microphone permission, whether Live Mode is enabled, and whether your calibration assumptions are reasonable.

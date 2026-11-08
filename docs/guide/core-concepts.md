@@ -1,0 +1,65 @@
+# Core concepts: dashboards, tiles, modules, and more
+
+Learn the key terms in Relay so the rest of the docs makes immediate sense.
+
+Relay has a small set of building blocks that appear throughout the app and these docs. Understanding them first makes everything else easier to follow.
+
+<details>
+<summary><strong>Dashboard</strong></summary>
+
+A dashboard is the top-level Relay document. It contains all of your tabs, tiles, modules, and automation configuration. Dashboards are typically saved as `.relay` files and can be opened, backed up, or shared like other files on your Mac.
+
+</details>
+
+<details>
+<summary><strong>Tab</strong></summary>
+
+A tab is a page inside a dashboard. Each tab has its own canvas and tile arrangement. Tabs are useful for separating different roles, different production moments, or different event segments inside one dashboard file.
+
+</details>
+
+<details>
+<summary><strong>Canvas</strong></summary>
+
+The canvas is the workspace inside a tab where you place and arrange tiles. Canvas View is the editing mode you use before and between events. It supports moving, resizing, aligning, and grouping content visually.
+
+</details>
+
+<details>
+<summary><strong>Tile</strong></summary>
+
+A tile is a movable, resizable container on the canvas. Every piece of dashboard content lives inside a tile. A tile can hold one module or multiple modules depending on how you want the layout grouped.
+
+</details>
+
+<details>
+<summary><strong>Module</strong></summary>
+
+A module is the actual content inside a tile. Examples include Planning Center, Person, ProPresenter, Shure, SPL Meter, Live Transcription, Text, Document, Webpage, Time, and Button.
+
+</details>
+
+<details>
+<summary><strong>Live Mode</strong></summary>
+
+Live Mode is the focused operating mode designed for real use during a show or service. It reduces editing controls and is where many live-updating workflows are expected to run.
+
+</details>
+
+<details>
+<summary><strong>Automation View</strong></summary>
+
+Automation View is the node-based editor where you connect triggers, actions, utilities, and destinations. It lets Relay respond to incoming events and control connected systems without requiring code.
+
+</details>
+
+## Finding your way around
+
+Two parts of the interface come up constantly in these docs, so it's worth knowing them before you start:
+
+- **Settings** (`Relay > Settings`, or `Cmd-,`) opens a window with a sidebar of icon-labeled sections — things like External Devices, External Control, and Access. Throughout these docs, a reference like "`Relay > Settings` → Sync & Mirror" means: open Settings, then click the section with that icon and label in the sidebar.
+- **The toolbar** at the top of the dashboard window has several icon-only buttons for quick actions — Tab Settings, Rosters, and switching between Canvas View and Automation View among them. Docs call these out by icon and label rather than a menu path, since there isn't one — they only exist as toolbar buttons.
+
+## Dashboard files
+
+Relay dashboards are normally saved as `.relay` files. Older `.pld` files may still be supported for opening existing work. If a dashboard already has a file location, Relay can also autosave changes back to it when autosave is enabled in settings.
