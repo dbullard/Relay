@@ -12,8 +12,8 @@ enum RelayPurchaseMode: String {
 }
 
 struct RelayLicensingConfig {
-    static let privacyPolicyURL = URL(string: "https://help.ondeckapps.com/relay/privacy-policy")!
-    static let termsURL = URL(string: "https://help.ondeckapps.com/relay/terms-conditions")!
+    static let privacyPolicyURL = URL(string: "https://github.com/dbullard/Relay#privacy-and-optional-services")!
+    static let termsURL = URL(string: "https://github.com/dbullard/Relay/blob/main/LICENSE")!
     static let supportURL = URL(string: "https://github.com/dbullard/Relay")!
 
     static var apiBaseURL: URL? {

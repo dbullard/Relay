@@ -328,7 +328,7 @@ struct RelayCommands: Commands {
     }
 
     private func openHelpCenter() {
-        guard let url = URL(string: "https://help.ondeckapps.com/") else { return }
+        let url = RelaySupportContact.helpCenterURL
         #if os(macOS)
         NSWorkspace.shared.open(url)
         #elseif os(iOS)

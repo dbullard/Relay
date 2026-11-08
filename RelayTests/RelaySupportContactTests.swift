@@ -44,6 +44,6 @@ final class RelaySupportContactTests: XCTestCase {
     }
 
     func test_helpCenterURL_isExpectedAddress() {
-        XCTAssertEqual(RelaySupportContact.helpCenterURL.absoluteString, "https://help.ondeckapps.com/")
+        XCTAssertEqual(RelaySupportContact.helpCenterURL.absoluteString, "https://github.com/dbullard/Relay")
     }
 }

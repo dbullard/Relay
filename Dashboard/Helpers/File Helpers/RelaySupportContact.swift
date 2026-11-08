@@ -7,7 +7,7 @@ import UIKit
 
 enum RelaySupportContact {
     static let supportEmail = "support@ondeckapps.com"
-    static let helpCenterURL = URL(string: "https://help.ondeckapps.com/")!
+    static let helpCenterURL = URL(string: "https://github.com/dbullard/Relay")!
 
     @MainActor
     static func openSupportEmail(context: String? = nil) {
