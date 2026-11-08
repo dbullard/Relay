@@ -43,6 +43,7 @@ These pages live in the repository so they can be improved with pull requests. F
 ## The app
 
 - [Permissions](app/permissions.md)
+- [Import from your previous Relay](app/import-from-previous-relay.md)
 - [Updates](app/updates.md)
 - [Preview features](app/preview-features.md)
 - [Getting help](app/support.md)

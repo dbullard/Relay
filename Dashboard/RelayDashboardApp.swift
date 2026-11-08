@@ -15,6 +15,9 @@ import AppKit
 
 @main
 struct RelayDashboardApp: App {
+    /// Must stay the first stored property: it applies a requested import of the previous
+    /// Relay's settings before any store reads UserDefaults.
+    private let appliedPendingImport: Bool = PreviousRelayImporter.applyPendingImportIfNeeded()
 #if canImport(Sparkle)
     private let updaterController: SPUStandardUpdaterController
     private let updaterDelegate = SparkleUpdateDelegate()
@@ -75,6 +78,7 @@ struct RelayDashboardApp: App {
     // stays hidden until this resolves, so the on-launch order is always fixed:
     // What's New (only if there are unseen releases) -> Home.
     @State private var showingWhatsNewSheet = false
+    @State private var showingPreviousImportOffer = false
     @State private var hasCheckedWhatsNewThisLaunch = false
     @State private var hasResolvedWhatsNewGate = false
     // Start with home screen already dismissed if a valid startup file is pinned —
@@ -109,6 +113,13 @@ struct RelayDashboardApp: App {
 
         let configuredRootView = baseView
         .preferredColorScheme(colorSchemePreference.colorScheme)
+        .sheet(isPresented: $showingPreviousImportOffer) {
+            if let available = PreviousRelayImporter.availableImport() {
+                PreviousRelayImportSheet(summary: available.summary, isFirstLaunchOffer: true) {
+                    showingPreviousImportOffer = false
+                }
+            }
+        }
         .sheet(isPresented: $showingWhatsNewSheet, onDismiss: { whatsNewStore.markLatestReleaseSeen() }) {
             WhatsNewSheet(releases: whatsNewStore.unseenReleases) {
                 whatsNewStore.markLatestReleaseSeen()
@@ -175,7 +186,7 @@ struct RelayDashboardApp: App {
 
         configuredRootView
             .sheet(isPresented: Binding(
-                get: { !launchScreenDismissed && !showingWhatsNewSheet && hasResolvedWhatsNewGate },
+                get: { !launchScreenDismissed && !showingWhatsNewSheet && !showingPreviousImportOffer && hasResolvedWhatsNewGate },
                 set: { shown in if !shown { launchScreenDismissed = true } }
             )) {
                 RelayLaunchScreenView(
@@ -275,6 +286,8 @@ struct RelayDashboardApp: App {
 
             if whatsNewStore.shouldPresentAutoPopup() {
                 showingWhatsNewSheet = true
+            } else if PreviousRelayImporter.shouldOfferOnLaunch() {
+                showingPreviousImportOffer = true
             }
             hasResolvedWhatsNewGate = true
         }

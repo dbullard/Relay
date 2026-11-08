@@ -676,6 +676,8 @@ struct DashboardPreviewSettingsView: View {
 /// Placeholder for general dashboard settings.
 struct GeneralDashboardSettingsPane: View {
     @AppStorage("dashboard_personImageFolder") private var personImageFolder: String = ""
+    @State private var previousImport: (entries: [String: Any], summary: PreviousRelayImporter.Summary)?
+    @State private var showingPreviousImportSheet = false
     @AppStorage("dashboard_personImageFolderBookmark") private var personImageFolderBookmarkData: Data?
     @AppStorage("dashboard_gridSize") private var gridSizeSetting: Double = 20.0
     @AppStorage("gridBackgroundOpacity") private var gridBackgroundOpacity: Double = 0.35
@@ -951,6 +953,26 @@ struct GeneralDashboardSettingsPane: View {
                     }
                 }
 
+#if os(macOS)
+                if let previousImport {
+                    GroupBox("Previous Relay") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Settings from your earlier Relay (the version before 2.0) are available to import.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Import from Previous Relay…") { showingPreviousImportSheet = true }
+                                .buttonStyle(.bordered)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .sheet(isPresented: $showingPreviousImportSheet) {
+                        PreviousRelayImportSheet(summary: previousImport.summary, isFirstLaunchOffer: false) {
+                            showingPreviousImportSheet = false
+                        }
+                    }
+                }
+#endif
+
 #if DEBUG
                 GroupBox("Debug") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -996,6 +1018,11 @@ struct GeneralDashboardSettingsPane: View {
             .padding(24)
         }
         .toggleStyle(.switch)
+        .onAppear {
+            #if os(macOS)
+            previousImport = PreviousRelayImporter.availableImport()
+            #endif
+        }
     }
 
     /// Folder picker. On macOS uses NSOpenPanel; on iOS uses a Document Picker via `.fileImporter`.
