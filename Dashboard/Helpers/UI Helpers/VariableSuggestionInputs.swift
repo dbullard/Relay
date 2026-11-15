@@ -8,10 +8,23 @@ private struct DashboardVariableValuesKey: EnvironmentKey {
     static let defaultValue: [String: String] = [:]
 }
 
+private struct DashboardVariableValuesProviderKey: EnvironmentKey {
+    static let defaultValue: (() -> [String: String])? = nil
+}
+
 extension EnvironmentValues {
     var dashboardVariableValues: [String: String] {
         get { self[DashboardVariableValuesKey.self] }
         set { self[DashboardVariableValuesKey.self] = newValue }
+    }
+
+    /// Lazily computed variable values for autocomplete. When set, it wins over
+    /// `dashboardVariableValues`. It's only called while the user types a `#token`,
+    /// so building the values never happens (or subscribes the view to the stores
+    /// behind them) during a render.
+    var dashboardVariableValuesProvider: (() -> [String: String])? {
+        get { self[DashboardVariableValuesProviderKey.self] }
+        set { self[DashboardVariableValuesProviderKey.self] = newValue }
     }
 }
 
@@ -141,7 +154,7 @@ extension PlainVariableSuggestingTextView: SharedValueInsertionTarget {
 
 private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
     @Binding var text: String
-    let variableValues: [String: String]
+    let variableValues: () -> [String: String]
     let multiline: Bool
 
     func makeCoordinator() -> Coordinator {
@@ -168,7 +181,11 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
         textView.textContainer?.lineFragmentPadding = 0
         textView.isVerticallyResizable = multiline
         textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
+        // Single-line: not vertically resizable, so it never sizes itself to its text.
+        // With only [.width] it stayed at its initial zero height inside the scroll view,
+        // which made typed text invisible and clicks land on the scroll view instead.
+        // Track the clip view's height as well.
+        textView.autoresizingMask = multiline ? [.width] : [.width, .height]
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.minSize = NSSize(width: 0, height: multiline ? 72 : 22)
         textView.textContainer?.widthTracksTextView = true
@@ -176,7 +193,7 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
             textView.textContainer?.heightTracksTextView = false
             textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         }
-        textView.variableValueProvider = { variableValues }
+        textView.variableValueProvider = variableValues
         textView.string = text
 
         let scrollView = NSScrollView()
@@ -193,7 +210,7 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? PlainVariableSuggestingTextView else { return }
-        textView.variableValueProvider = { variableValues }
+        textView.variableValueProvider = variableValues
         if textView.string != text, !context.coordinator.isSynchronizingFromSwiftUI {
             context.coordinator.isSynchronizingFromSwiftUI = true
             let selectedRange = textView.selectedRange()
@@ -302,6 +319,7 @@ struct VariableSuggestingTextField: View {
     private let title: String
     @Binding private var text: String
     @Environment(\.dashboardVariableValues) private var variableValues
+    @Environment(\.dashboardVariableValuesProvider) private var variableValuesProvider
 
     init(_ title: String, text: Binding<String>) {
         self.title = title
@@ -318,9 +336,16 @@ struct VariableSuggestingTextField: View {
                     .allowsHitTesting(false)
             }
 
-            VariableSuggestingPlainTextInput(text: $text, variableValues: variableValues, multiline: false)
+            VariableSuggestingPlainTextInput(
+                text: $text,
+                variableValues: variableValuesProvider ?? { [variableValues] in variableValues },
+                multiline: false
+            )
         }
-        .frame(minHeight: 28)
+        // Fixed height: the NSScrollView inside has no intrinsic height, so with only a
+        // minimum it grew to fill whatever height it was offered (e.g. a whole graph
+        // node placed with .position, which offers the full canvas height).
+        .frame(height: 28)
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
@@ -339,8 +364,25 @@ struct VariableSuggestingTextField: View {
 struct AutomationVariableTokenField: View {
     let title: String
     @Binding var text: String
-    let variableValues: [String: String]
+    /// Evaluated lazily, only when autocomplete needs it. Call sites pass expressions like
+    /// `GraphRuntime.universalVariableValuesByName(tab: tab)`, which read observable stores
+    /// (SharedValueStore updates every second and on device telemetry) and build a large
+    /// dictionary. Evaluating that during render made every graph node with one of these
+    /// fields re-render continuously and dominated main-thread time.
+    let variableValues: () -> [String: String]
     var multiline = false
+
+    init(
+        title: String,
+        text: Binding<String>,
+        variableValues: @autoclosure @escaping () -> [String: String],
+        multiline: Bool = false
+    ) {
+        self.title = title
+        self._text = text
+        self.variableValues = variableValues
+        self.multiline = multiline
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -352,7 +394,9 @@ struct AutomationVariableTokenField: View {
                     VariableSuggestingTextField(title, text: $text)
                 }
             }
-            .environment(\.dashboardVariableValues, variableValues.filter { !$0.key.contains(":") })
+            .environment(\.dashboardVariableValuesProvider, { [variableValues] in
+                variableValues().filter { !$0.key.contains(":") }
+            })
 
             AutomationVariableInsertButton(title: title, text: $text)
         }
@@ -388,6 +432,7 @@ struct AutomationVariableInsertButton: View {
 struct VariableSuggestingTextEditor: View {
     @Binding private var text: String
     @Environment(\.dashboardVariableValues) private var variableValues
+    @Environment(\.dashboardVariableValuesProvider) private var variableValuesProvider
 
     init(text: Binding<String>) {
         self._text = text
@@ -395,8 +440,13 @@ struct VariableSuggestingTextEditor: View {
 
     var body: some View {
         #if os(macOS)
-        VariableSuggestingPlainTextInput(text: $text, variableValues: variableValues, multiline: true)
-            .frame(minHeight: 96)
+        VariableSuggestingPlainTextInput(
+            text: $text,
+            variableValues: variableValuesProvider ?? { [variableValues] in variableValues },
+            multiline: true
+        )
+            // Bounded for the same reason as VariableSuggestingTextField; it scrolls.
+            .frame(minHeight: 96, maxHeight: 96)
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)

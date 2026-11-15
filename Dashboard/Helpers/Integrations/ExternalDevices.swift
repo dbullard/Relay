@@ -147,7 +147,36 @@ enum ShureNetworkModel: String, CaseIterable, Identifiable, Codable {
             .first(where: { upper.contains($0.rawValue) })
     }
 
+    private struct MostSpecificCacheKey: Hashable {
+        let texts: [String?]
+        let previewEnabled: Bool
+    }
+    private static let mostSpecificCacheLock = NSLock()
+    private static var mostSpecificCache: [MostSpecificCacheKey: ShureNetworkModel?] = [:]
+
+    /// Memoized: Shure telemetry calls this (via `ExternalDeviceConfig.shureNetworkModel`)
+    /// for every incoming packet on the main thread, and each uncached call uppercases and
+    /// substring-searches every name field against every model. The result only depends on
+    /// the inputs and the preview-features flag, which are both part of the key.
     static func mostSpecific(from texts: [String?]) -> ShureNetworkModel? {
+        let key = MostSpecificCacheKey(texts: texts, previewEnabled: RelayBuildConfig.isPreviewEnabled)
+        mostSpecificCacheLock.lock()
+        if let cached = mostSpecificCache[key] {
+            mostSpecificCacheLock.unlock()
+            return cached
+        }
+        mostSpecificCacheLock.unlock()
+
+        let result = uncachedMostSpecific(from: texts)
+
+        mostSpecificCacheLock.lock()
+        if mostSpecificCache.count >= 512 { mostSpecificCache.removeAll(keepingCapacity: true) }
+        mostSpecificCache[key] = .some(result)
+        mostSpecificCacheLock.unlock()
+        return result
+    }
+
+    private static func uncachedMostSpecific(from texts: [String?]) -> ShureNetworkModel? {
         var best: ShureNetworkModel?
 
         for text in texts {

@@ -8631,6 +8631,9 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         }
         canvasActions.onSetTab = { newValue in
             guard newValue.id == tabBinding.wrappedValue.id else { return }
+            // Every write to `tabs` re-renders everything that reads it (including the
+            // Automation graph, which stays mounted), even when the value is identical.
+            guard newValue != tabBinding.wrappedValue else { return }
             tabBinding.wrappedValue = newValue
         }
         canvasActions.onGetTab = { tabID in
@@ -8638,6 +8641,14 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
             return tabs[index]
         }
         canvasActions.onSetTile = { tabID, tileID, newValue in
+            // Passing `&tabs` writes the @State back even when nothing changed, which
+            // re-rendered every view reading `tabs` (the whole Automation graph included)
+            // on each idempotent tile write from the canvas. Skip unchanged tiles.
+            if let tabIndex = DashboardTabIdentityMutation.index(of: tabID, in: tabs),
+               let current = tabs[tabIndex].tiles.first(where: { $0.id == tileID }),
+               current == newValue {
+                return
+            }
             guard DashboardTabIdentityMutation.replaceTile(newValue, tabID: tabID, tileID: tileID, in: &tabs) else {
                 // The target tab or tile disappeared between render and write (reorder,
                 // delete, or a stale inspector binding). Dropping the write is correct,

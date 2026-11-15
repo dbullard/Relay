@@ -58,6 +58,8 @@ private let isWorkEnabled: Bool = true
 // Drag state
 @State private var dragStartByTileId: [UUID: CGPoint] = [:]
 @State private var dragGrabOffsetByTileId: [UUID: CGPoint] = [:]
+/// Start positions of the other selected nodes moving with the dragged one.
+@State private var dragCompanionStartsByTileId: [UUID: CGPoint] = [:]
 // Pan/zoom, live drag positions, the in-progress link line and the marquee live in this
 // store instead of @State so per-event updates don't re-run this entire body.
 // See GraphInteractionStore.
@@ -155,7 +157,10 @@ private struct AddNodeHelpContent: Equatable {
 
 #if os(macOS)
 private struct GraphDeleteKeyMonitor: NSViewRepresentable {
-    let isEnabled: Bool
+    /// Checked when the key is pressed, not when the view renders: a value captured at
+    /// render time could still be `true` after the user clicked into a node's text field,
+    /// so Backspace there deleted the selected node instead of a character.
+    let isEnabled: () -> Bool
     let onDelete: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -179,11 +184,11 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
     }
 
     final class Coordinator {
-        var isEnabled: Bool
+        var isEnabled: () -> Bool
         var onDelete: () -> Void
         private var localMonitor: Any?
 
-        init(isEnabled: Bool, onDelete: @escaping () -> Void) {
+        init(isEnabled: @escaping () -> Bool, onDelete: @escaping () -> Void) {
             self.isEnabled = isEnabled
             self.onDelete = onDelete
         }
@@ -191,7 +196,7 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
         func installMonitor() {
             guard localMonitor == nil else { return }
             localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.isEnabled else { return event }
+                guard let self, self.isEnabled() else { return event }
                 if event.keyCode == 51 || event.keyCode == 117 {
                     self.onDelete()
                     return nil
@@ -233,7 +238,49 @@ private func dismissGraphTextInput() {
     }
 }
 
+/// Whether the click being handled landed in a text input (an NSTextView-backed field or
+/// a SwiftUI TextField's field editor). Uses the live mouse position rather than
+/// `NSApp.currentEvent`, which isn't reliably the mouse event when a SwiftUI tap gesture
+/// ends.
+private func currentClickLandedInTextInput() -> Bool {
+    guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return false }
+    let mouseInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+
+    // AppKit makes the clicked field first responder on mouse-down, before the tap
+    // gesture ends on mouse-up. If that text input is under the mouse, the click was in it.
+    if let responder = window.firstResponder as? NSView, responder is NSText || responder is NSTextField {
+        var candidates: [NSView] = [responder]
+        if let scrollView = responder.enclosingScrollView { candidates.append(scrollView) }
+        if let fieldEditor = responder as? NSTextView, let owner = fieldEditor.delegate as? NSView {
+            candidates.append(owner)
+        }
+        for view in candidates {
+            let frameInWindow = view.convert(view.bounds, to: nil).insetBy(dx: -4, dy: -4)
+            if frameInWindow.contains(mouseInWindow) { return true }
+        }
+    }
+
+    // Fallback: hit-test the window. hitTest(_:) takes a point in the receiver's
+    // superview's coordinates.
+    guard let contentView = window.contentView else { return false }
+    let point = contentView.superview?.convert(mouseInWindow, from: nil) ?? mouseInWindow
+    var view = contentView.hitTest(point)
+    while let current = view {
+        if current is NSText || current is NSTextField { return true }
+        if let scrollView = current as? NSScrollView, scrollView.documentView is NSText { return true }
+        if let clipView = current as? NSClipView, clipView.documentView is NSText { return true }
+        view = current.superview
+    }
+    return false
+}
+
 private func focusGraphSurface() {
+    // Node and background tap gestures call this. A click into a node's text field also
+    // fires the node's tap gesture, which used to resign the field right after AppKit
+    // focused it, so typing in nodes was impossible.
+    if currentClickLandedInTextInput() {
+        return
+    }
     dismissGraphTextInput()
     graphIsFocused = true
     DispatchQueue.main.async {
@@ -926,8 +973,9 @@ private func handleNodeTapSelect(_ nodeId: UUID) {
     graphIsFocused = true
     #endif
     #if os(macOS)
-    let flags = NSEvent.modifierFlags
-    let isShift = flags.contains(.shift)
+    // Prefer the click event's own modifiers; the global key state can lag or miss them.
+    let isShift = NSEvent.modifierFlags.contains(.shift)
+        || (NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false)
     #else
     let isShift = false
     #endif
@@ -2778,7 +2826,6 @@ private func graphSceneView(
         // Keep the viewport region stable and only transform the graph content inside it.
         // If the event monitor moves with pan/zoom, wheel and magnify handling can stop
         // once the transformed layer drifts outside its original bounds.
-        dottedGridLayer(in: geoSize)
         linksLayer(in: geoSize)
         moduleGroupNodesLayer(in: geoSize, groups: groups, peopleTeamOptions: teamOptions)
         consoleNodesLayer(in: geoSize, canvasPeopleMembers: canvasPeopleMembers, currentGroups: groups)
@@ -2863,9 +2910,17 @@ private func graphSceneView(
                 }
         )
     .simultaneousGesture(
-        TapGesture()
-            .onEnded {
+        SpatialTapGesture(coordinateSpace: .named("GraphSceneSpace"))
+            .onEnded { value in
                 if suppressNextBackgroundTap { return }
+                // This fires for clicks on nodes too (simultaneous with the node's own tap).
+                // Clearing the selection there broke Shift-click multi-select whenever this
+                // ran after the node's tap had added to the selection.
+                let tapGraphPoint = graphPoint(fromViewPoint: value.location)
+                let tappedNode = allVisibleGraphNodeIds.contains { id in
+                    nodeRect(center: nodePosition(for: id), size: nodeHitTestSize(for: id)).contains(tapGraphPoint)
+                }
+                if tappedNode { return }
                 selectedGraphNodeIds.removeAll()
                 #if os(macOS)
                 focusGraphSurface()
@@ -5422,7 +5477,7 @@ var body: some View {
             }
             .background(
                 GraphDeleteKeyMonitor(
-                    isEnabled: shouldHandleGraphDeleteKey(),
+                    isEnabled: { shouldHandleGraphDeleteKey() },
                     onDelete: deleteSelectedGraphNodes
                 )
             )
@@ -7480,6 +7535,7 @@ private func consoleTriggerSendConfigBinding(forConsoleNodeId nodeId: UUID) -> B
             size: size,
             drawPadding: canvasDrawPadding
         )
+        .equatable()
     }
 
 
@@ -9407,44 +9463,26 @@ private func nodePositioner(_ nodeId: UUID) -> GraphNodePositioner {
     )
 }
 
+/// Commits several node positions in one graph write (one re-render and one autosave
+/// instead of one per node), then drops their live drag positions.
+private func setNodePositions(_ positions: [UUID: CGPoint]) {
+    guard !positions.isEmpty else { return }
+    var graph = tab.graph ?? DashboardGraph()
+    for (id, p) in positions {
+        var layout = graph.tileLayouts[id] ?? TileGraphLayout(position: .zero)
+        layout.position = CGPointCodable(p)
+        graph.tileLayouts[id] = layout
+    }
+    tab.graph = graph
+    interaction.clearDragPositions(Array(positions.keys))
+}
+
 private func setNodePosition(_ p: CGPoint, for tileId: UUID) {
     if tab.graph == nil { tab.graph = DashboardGraph() }
     var layout = tab.graph?.tileLayouts[tileId] ?? TileGraphLayout(position: .zero)
     layout.position = CGPointCodable(p)
     tab.graph?.tileLayouts[tileId] = layout
     interaction.setDragPosition(nil, for: tileId)
-}
-
-private func dottedGridLayer(in size: CGSize) -> some View {
-    let pad = canvasDrawPadding
-    return Canvas { context, canvasSize in
-        context.blendMode = .plusLighter
-
-        let step: CGFloat = 40
-        let majorEvery: Int = 4
-        let minorDot: CGFloat = 2.0
-        let majorDot: CGFloat = 3.0
-        let cols = Int(canvasSize.width / step) + 2
-        let rows = Int(canvasSize.height / step) + 2
-        let minorColor = Color.white.opacity(0.10)
-        let majorColor = Color.white.opacity(0.16)
-
-        for row in 0...rows {
-            for col in 0...cols {
-                let x = CGFloat(col) * step
-                let y = CGFloat(row) * step
-                let isMajor = row % majorEvery == 0 && col % majorEvery == 0
-                let size = isMajor ? majorDot : minorDot
-                let color = isMajor ? majorColor : minorColor
-                let rect = CGRect(x: x, y: y, width: size, height: size)
-                context.fill(Path(ellipseIn: rect), with: .color(color))
-            }
-        }
-    }
-    .frame(width: size.width + pad * 2, height: size.height + pad * 2)
-    .offset(x: -pad, y: -pad)
-    .allowsHitTesting(false)
-    .blendMode(.plusLighter)
 }
 
 // MARK: - Collision avoidance (prevent nodes overlapping)
@@ -9648,6 +9686,17 @@ private func nodeDragGesture(tileId: UUID) -> some Gesture {
             let start = dragStartByTileId[tileId] ?? nodePosition(for: tileId)
             if dragStartByTileId[tileId] == nil {
                 dragStartByTileId[tileId] = start
+                // Dragging a node that's part of a multi-selection moves the whole selection.
+                if selectedGraphNodeIds.count > 1, selectedGraphNodeIds.contains(tileId) {
+                    let hidden = hiddenGraphNodeIds
+                    var companions: [UUID: CGPoint] = [:]
+                    for id in selectedGraphNodeIds where id != tileId && !hidden.contains(id) {
+                        companions[id] = nodePosition(for: id)
+                    }
+                    dragCompanionStartsByTileId = companions
+                } else {
+                    dragCompanionStartsByTileId = [:]
+                }
             }
 
             let safeZoom = max(0.0001, zoom)
@@ -9670,18 +9719,28 @@ private func nodeDragGesture(tileId: UUID) -> some Gesture {
             )
             let newPos = graphPoint(fromViewPoint: desiredViewPoint)
 
-            interaction.setDragPosition(newPos, for: tileId)
+            var updates: [UUID: CGPoint] = [tileId: newPos]
+            let dx = newPos.x - start.x
+            let dy = newPos.y - start.y
+            for (id, companionStart) in dragCompanionStartsByTileId {
+                updates[id] = CGPoint(x: companionStart.x + dx, y: companionStart.y + dy)
+            }
+            interaction.setDragPositions(updates)
         }
         .onEnded { _ in
             if isNodeDragging {
                 isNodeDragging = false
             }
-            let finalPos = nodePosition(for: tileId)
-            setNodePosition(finalPos, for: tileId)
+            let movedIds = [tileId] + Array(dragCompanionStartsByTileId.keys)
+            var finalPositions: [UUID: CGPoint] = [:]
+            for id in movedIds {
+                finalPositions[id] = nodePosition(for: id)
+            }
+            setNodePositions(finalPositions)
 
             dragStartByTileId[tileId] = nil
             dragGrabOffsetByTileId[tileId] = nil
-            interaction.setDragPosition(nil, for: tileId)
+            dragCompanionStartsByTileId = [:]
         }
 }
 
