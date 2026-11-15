@@ -32,7 +32,11 @@ final class GraphAutomationRuntime: ObservableObject {
     // Provide access to the currently-active tab graphs.
     // You can inject from DashboardRootView (recommended),
     // or fetch via some shared store if you have one.
-    @Published var activeTabs: [DashboardTab] = []
+    ///
+    /// Deliberately not `@Published`: no view reads this, but the Automation view and
+    /// DashboardRootView both observe the runtime, so publishing re-rendered the whole
+    /// app on every graph edit, key press (keystroke trigger path) and runtime writeback.
+    var activeTabs: [DashboardTab] = []
     /// When false, the runtime will not synthesize OSC->trigger fires or execute downstream actions.
     @Published var isEnabled: Bool = true
 
@@ -1489,7 +1493,9 @@ final class GraphAutomationRuntime: ObservableObject {
             for (key, cfg) in graph.currentTimeSourceConfigByNodeId {
                 guard UUID(uuidString: key) != nil else { continue }
                 let value = currentTimeValue(format: cfg.format, date: now)
-                if var varCfg = graph.variableNodeConfigByNodeId[key] {
+                // Most formats only change once a minute; writing back an unchanged value
+                // every second re-rendered the app and scheduled an autosave each tick.
+                if var varCfg = graph.variableNodeConfigByNodeId[key], varCfg.currentTextValue != value {
                     varCfg.currentTextValue = value
                     graph.variableNodeConfigByNodeId[key] = varCfg
                     timeMutated = true

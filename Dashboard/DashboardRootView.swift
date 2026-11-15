@@ -5995,12 +5995,20 @@ private func updateLANSharedTabs(_ currentTabs: [DashboardTab]? = nil) {
                     }
                     // Unchanged routing: universal edits go to `universalGraph`, and the
                     // tab's own `graph` is preserved so no universal copy is persisted.
+                    //
+                    // Skip no-op writes. The Automation view writes through this binding
+                    // from node onAppear handlers and other idempotent "ensure" helpers;
+                    // each write re-renders this whole view and schedules an autosave.
+                    // The comparisons are cheap: unchanged arrays/dictionaries share
+                    // storage with the current value, so Swift's == short-circuits.
                     if self.tabs[index].automationMode == .universal {
-                        if let editedGraph = newValue.graph { self.universalGraph = editedGraph }
+                        if let editedGraph = newValue.graph, editedGraph != self.universalGraph {
+                            self.universalGraph = editedGraph
+                        }
                         var t = newValue
                         t.graph = self.tabs[index].graph
-                        self.tabs[index] = t
-                    } else {
+                        if t != self.tabs[index] { self.tabs[index] = t }
+                    } else if newValue != self.tabs[index] {
                         self.tabs[index] = newValue
                     }
                 }

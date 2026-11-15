@@ -2076,9 +2076,9 @@ struct TriggerGraphNodeView: View {
 
     private var proPresenterTriggerSettings: some View {
         let cfg = proPresenterTriggerCfg
-        let profiles = ProPresenterProfilesStore.loadProfiles()
-        let proPresenterGlobal = ProPresenterGlobalConnectionSettings.loadFromAppStorage()
-        let showMissingProfilesWarning = profiles.isEmpty && !proPresenterGlobal.isValid
+        let profiles = ProPresenterProfilesStore.loadProfilesCached()
+        let showMissingProfilesWarning = profiles.isEmpty
+            && !ProPresenterGlobalConnectionSettings.hasValidHostAndPort()
 
         return VStack(alignment: .leading, spacing: 10) {
             if showMissingProfilesWarning {
