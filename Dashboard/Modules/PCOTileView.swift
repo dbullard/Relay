@@ -3754,6 +3754,15 @@ struct PCOTileView: View {
 
     // MARK: - Tab-level PCO assignments refresh
 
+    /// Applies several tab changes as one write, on top of the current tab.
+    @MainActor
+    private func updateTab(_ mutate: (inout DashboardTab) -> Void) {
+        var updated = tab
+        mutate(&updated)
+        guard updated != tab else { return }
+        tab = updated
+    }
+
     /// Refreshes tab-level PCO assignment maps so Person tiles can update even
     /// when there is no PCO rundown tile on the dashboard.
     private func refreshTabPCOAssignments() async {
@@ -3762,18 +3771,23 @@ struct PCOTileView: View {
               let planID = tab.planID
         else {
             await MainActor.run {
-                tab.pcoAllPositionAssignments = [:]
-                tab.pcoPositionAssignmentCandidates = nil
-                tab.pcoPositionToTeamName = nil
-                tab.pcoRundownSnapshotTitles = []
-                tab.pcoSnapshotKey = nil
-                tab.pcoCachedRundownRows = []
-                tab.pcoCachedTeamAssignments = []
-                tab.pcoTeamPositionsByTeamName = nil
+                updateTab { tab in
+                    tab.pcoAllPositionAssignments = [:]
+                    tab.pcoPositionAssignmentCandidates = nil
+                    tab.pcoPositionToTeamName = nil
+                    tab.pcoRundownSnapshotTitles = []
+                    tab.pcoSnapshotKey = nil
+                    tab.pcoCachedRundownRows = []
+                    tab.pcoCachedTeamAssignments = []
+                    tab.pcoTeamPositionsByTeamName = nil
+                }
             }
             return
         }
 
+        // Capture the selection once: `tab` reads the live tab, which can
+        // change while the network calls below are in flight.
+        let selectedTimeLabel = tab.serviceTimeName
         let client = makeClient()
 
         do {
@@ -3788,7 +3802,7 @@ struct PCOTileView: View {
             let selectedPlanTimeIDs = selectedPlanTimeIDs(
                 client: client,
                 itemsAndTimes: context.itemsAndTimes,
-                rawSelectedLabels: tab.serviceTimeName
+                rawSelectedLabels: selectedTimeLabel
             )
 
             // Filter members by selected plan times (all teams)
@@ -3848,7 +3862,7 @@ struct PCOTileView: View {
                 serviceTypeID: serviceTypeID,
                 itemsAndTimes: context.itemsAndTimes,
                 members: members,
-                rawSelectedLabels: tab.serviceTimeName
+                rawSelectedLabels: selectedTimeLabel
             )
 
             let positionsByTeamName = try await getRuntimeTeamPositionsByTeamName(
@@ -3859,29 +3873,41 @@ struct PCOTileView: View {
 
             let cachedRundownRows = Self.makeTabSnapshotRundownRows(
                 itemsAndTimes: context.itemsAndTimes,
-                rawSelectedLabels: tab.serviceTimeName
+                rawSelectedLabels: selectedTimeLabel
             )
             let cachedTeamAssignments = Self.buildTeamAssignmentRows(
                 members: timeFiltered,
                 itemsAndTimes: context.itemsAndTimes,
                 client: client,
-                rawSelectedLabels: tab.serviceTimeName
+                rawSelectedLabels: selectedTimeLabel
             )
             let packedTitles = Self.snapshotTitles(from: cachedRundownRows)
+            let fetchedSnapshotKey = PCOTileView.makeTabSnapshotKey(
+                serviceTypeID: serviceTypeID,
+                planID: planID,
+                serviceTimeName: selectedTimeLabel
+            )
 
             await MainActor.run {
-                tab.pcoAllPositionAssignments = allMap
-                tab.pcoPositionAssignmentCandidates = assignmentCandidates.isEmpty ? nil : assignmentCandidates
-                tab.pcoPositionToTeamName = positionToTeam.isEmpty ? nil : positionToTeam
-                tab.pcoRundownSnapshotTitles = packedTitles
-                tab.pcoSnapshotKey = PCOTileView.makeTabSnapshotKey(
-                    serviceTypeID: tab.serviceTypeID,
-                    planID: tab.planID,
-                    serviceTimeName: tab.serviceTimeName
-                )
-                tab.pcoCachedRundownRows = cachedRundownRows
-                tab.pcoCachedTeamAssignments = cachedTeamAssignments
-                tab.pcoTeamPositionsByTeamName = positionsByTeamName.isEmpty ? nil : positionsByTeamName
+                updateTab { tab in
+                    // The selection changed while this fetch was in flight; its
+                    // rows belong to the old plan/time, so don't save them.
+                    let currentKey = PCOTileView.makeTabSnapshotKey(
+                        serviceTypeID: tab.serviceTypeID,
+                        planID: tab.planID,
+                        serviceTimeName: tab.serviceTimeName
+                    )
+                    guard currentKey == fetchedSnapshotKey else { return }
+
+                    tab.pcoAllPositionAssignments = allMap
+                    tab.pcoPositionAssignmentCandidates = assignmentCandidates.isEmpty ? nil : assignmentCandidates
+                    tab.pcoPositionToTeamName = positionToTeam.isEmpty ? nil : positionToTeam
+                    tab.pcoRundownSnapshotTitles = packedTitles
+                    tab.pcoSnapshotKey = fetchedSnapshotKey
+                    tab.pcoCachedRundownRows = cachedRundownRows
+                    tab.pcoCachedTeamAssignments = cachedTeamAssignments
+                    tab.pcoTeamPositionsByTeamName = positionsByTeamName.isEmpty ? nil : positionsByTeamName
+                }
             }
         } catch is CancellationError {
             return

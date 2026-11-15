@@ -44,6 +44,12 @@ final class DashboardCanvasActionCoordinator {
 
     var onSetTile: ((UUID, UUID, DashboardTileModel) -> Void)?
     var onSetTab: ((DashboardTab) -> Void)?
+    /// Read side of the tab binding: returns the root's *current* value for a
+    /// tab ID. Without it, a module binding can only return the tab value
+    /// captured at the container's last render. Each `tab.x = v` write through
+    /// that binding then copies the stale tab, changes one field and replaces
+    /// the whole tab, which undoes earlier writes and any change made since.
+    var onGetTab: ((UUID) -> DashboardTab?)?
 
     // MARK: Live Mode interactive-tap tracking
     //
@@ -84,4 +90,18 @@ final class DashboardCanvasActionCoordinator {
 
     func setTile(tabID: UUID, tileID: UUID, to newValue: DashboardTileModel) { onSetTile?(tabID, tileID, newValue) }
     func setTab(_ newValue: DashboardTab) { onSetTab?(newValue) }
+    func currentTab(id: UUID) -> DashboardTab? { onGetTab?(id) }
+
+    /// A `Binding` for module views that reads the live tab from the root on
+    /// every access (falling back to `fallback` when the root can't resolve
+    /// it yet, e.g. before configuration or after deletion) and writes through
+    /// `setTab`. Several writes in a row, or a write after an `await`, then
+    /// apply on top of the latest tab instead of putting back an old copy.
+    func liveTabBinding(fallback: DashboardTab) -> Binding<DashboardTab> {
+        let tabID = fallback.id
+        return Binding(
+            get: { [weak self] in self?.currentTab(id: tabID) ?? fallback },
+            set: { [weak self] newValue in self?.setTab(newValue) }
+        )
+    }
 }

@@ -8625,6 +8625,10 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
             guard newValue.id == tabBinding.wrappedValue.id else { return }
             tabBinding.wrappedValue = newValue
         }
+        canvasActions.onGetTab = { tabID in
+            guard let index = DashboardTabIdentityMutation.index(of: tabID, in: tabs) else { return nil }
+            return tabs[index]
+        }
         canvasActions.onSetTile = { tabID, tileID, newValue in
             guard DashboardTabIdentityMutation.replaceTile(newValue, tabID: tabID, tileID: tileID, in: &tabs) else {
                 // The target tab or tile disappeared between render and write (reorder,

@@ -66,13 +66,14 @@ struct DashboardTileContainer: View {
         )
     }
 
-    /// Synthetic `Binding` backed by the plain `tab` value for reads and
-    /// `actions.setTab` for writes. See `tileBinding` above.
+    /// Synthetic `Binding` that reads the root's *live* tab (falling back to
+    /// the plain `tab` value) and writes via `actions.setTab`. It must not
+    /// read the captured `tab`: modules (e.g. the PCO rundown) set several
+    /// tab fields in a row, and from long-running tasks. With a stale getter
+    /// each write would replace the whole tab with the render-time copy,
+    /// dropping fresh Planning Center data and undoing newer edits.
     private var tabBinding: Binding<DashboardTab> {
-        Binding(
-            get: { tab },
-            set: { newValue in actions.setTab(newValue) }
-        )
+        actions.liveTabBinding(fallback: tab)
     }
 
     @GestureState private var dragOffset: CGSize = .zero
