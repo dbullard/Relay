@@ -658,7 +658,7 @@ private struct TranscriptionInputDetailView: View {
             } header: {
                 Text("Word Substitutions")
             } footer: {
-                Text("Case-insensitive. Applied after profanity filtering. Use these for custom corrections or shorthand expansions.")
+                Text("Matches whole words or phrases, case-insensitively. Applied before profanity filtering, so you can swap a blocked word for a clean one. Use these for custom corrections or shorthand expansions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

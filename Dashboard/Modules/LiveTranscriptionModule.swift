@@ -230,6 +230,12 @@ struct TranscriptOutputPayload: Equatable {
     var latestEntry: TranscriptEntry?
     var window: [TranscriptEntry]
     var inputLevel: Double
+    /// Entries that were added or updated by the publish that produced this payload.
+    /// Word-trigger automation evaluates these rather than `latestEntry`: with several
+    /// sources, the entry that just changed is not necessarily the newest by timestamp
+    /// (a finalized line keeps the timestamp of its first partial). Empty for publishes
+    /// that only re-filter or trim existing entries, so those never re-fire triggers.
+    var changedEntries: [TranscriptEntry] = []
 
     static let empty = TranscriptOutputPayload(latestEntry: nil, window: [], inputLevel: 0)
 }
@@ -916,6 +922,7 @@ final class LiveTranscriptionController: ObservableObject {
     private var retryWorkItem: DispatchWorkItem?
     private let logQueue = DispatchQueue(label: "LiveTranscription.Log", qos: .userInitiated)
     private var transcriptionInputsObserver: NSObjectProtocol?
+    private var clearRequestObserver: NSObjectProtocol?
 
     static func shared(
         tabId: UUID,
@@ -967,10 +974,26 @@ final class LiveTranscriptionController: ObservableObject {
                 self.evaluateRunState(restartIfRunning: true)
             }
         }
+        // Observed here rather than in the tile view: the "Clear Live Transcript" automation
+        // action must work while the tile is off screen (automation view, culled canvas tile).
+        clearRequestObserver = NotificationCenter.default.addObserver(
+            forName: .liveTranscriptionClearRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let requestedTileId = note.userInfo?["tileId"] as? UUID else { return }
+            Task { @MainActor [weak self] in
+                guard let self, requestedTileId == self.tileId else { return }
+                self.clearOutputs()
+            }
+        }
     }
 
     deinit {
         if let observer = transcriptionInputsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = clearRequestObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         let tileId = tileId
@@ -1041,12 +1064,19 @@ final class LiveTranscriptionController: ObservableObject {
         evaluateRunState(restartIfRunning: true)
     }
 
+    /// Clears the visible transcript. The recognizer's stream-tracking state (committed
+    /// prefixes, final-word history) is kept while it is running: the recognizer reports
+    /// cumulative text, so dropping that state would make already-cleared lines reappear
+    /// on the next partial result.
     func clearOutputs() {
         entries.removeAll()
-        committedPrefixes.removeAll()
         recentFinals.removeAll()
-        finalWordHistoryByChannel.removeAll()
         LiveTranscriptionOutputStore.shared.clear(tileId: tileId)
+    }
+
+    private func resetStreamTracking() {
+        committedPrefixes.removeAll()
+        finalWordHistoryByChannel.removeAll()
     }
 
     func restoreFromStore() {
@@ -1163,10 +1193,11 @@ final class LiveTranscriptionController: ObservableObject {
     /// Text filters are read from the input store on demand rather than cached at pipeline
     /// start. A cache is emptied on every restart, and entries recomputed in that window
     /// silently lost their profanity filtering.
-    private func textFilters(forSourceID id: UUID) -> (profanity: ProfanityFilter, wordFilters: [WordReplacementFilter]) {
-        let input = settings.sources.first(where: { $0.id == id }).flatMap(resolveTranscriptionInput(for:))
-        return (ProfanityFilter(settings: input?.profanitySettings ?? LiveTranscriptionProfanitySettings()),
-                input?.wordFilters ?? [])
+    private func textFilter(forSourceID id: UUID) -> TranscriptTextFilter {
+        guard let input = settings.sources.first(where: { $0.id == id }).flatMap(resolveTranscriptionInput(for:)) else {
+            return .passthrough
+        }
+        return TranscriptTextFilter(wordFilters: input.wordFilters, profanitySettings: input.profanitySettings)
     }
 
     private func setupPipelines(with sources: [LiveTranscriptionSourceConfig]) throws {
@@ -1428,6 +1459,7 @@ final class LiveTranscriptionController: ObservableObject {
         }
         if shouldClearOutputs {
             clearOutputs()
+            resetStreamTracking()
         }
     }
 
@@ -1454,19 +1486,20 @@ final class LiveTranscriptionController: ObservableObject {
         guard !entries.isEmpty else { return }
 
         var updated = entries
-        var didChange = false
+        var changed: [TranscriptEntry] = []
 
         for idx in updated.indices {
             if !updated[idx].isFinal {
                 updated[idx].isFinal = true
-                didChange = true
-                committedPrefixes[updated[idx].sourceId] = updated[idx].displayText
+                changed.append(updated[idx])
+                // Compared against raw recognizer text in stripCommittedPrefix, so store raw.
+                committedPrefixes[updated[idx].sourceId] = updated[idx].rawText
             }
         }
 
-        if didChange {
+        if !changed.isEmpty {
             entries = updated
-            publishOutputs(entries: updated)
+            publishOutputs(entries: updated, changedEntries: changed)
         }
     }
 
@@ -1546,6 +1579,12 @@ final class LiveTranscriptionController: ObservableObject {
         let update = segmenter.handleUpdate(text: cleanedText, isFinal: event.isFinal, now: event.timestamp)
         segmenters[channel.id] = segmenter
         applySegmenterUpdate(update, channelId: channel.id, overrideChannel: channel)
+        if event.isFinal {
+            // A final result ends the recognizer task, and the next one starts from empty text.
+            // A stale prefix would make overlap stripping drop the new task's first words
+            // whenever they repeat the end of the last line ("…let's go" → "go again").
+            committedPrefixes[channel.id] = ""
+        }
     }
 
     private func applySegmenterUpdate(_ update: TranscriptSegmenterUpdate, channelId: UUID, overrideChannel: TranscriptChannel? = nil) {
@@ -1638,7 +1677,9 @@ final class LiveTranscriptionController: ObservableObject {
         let recent = (recentFinals[channelId] ?? []).filter { now.timeIntervalSince($0.timestamp) <= duplicateFinalSuppressWindow }
         recentFinals[channelId] = recent
         for entry in recent {
-            if entry.text.contains(normalized) || normalized.contains(entry.text) {
+            // Word-level containment: a character-level check would drop "no" after "I know".
+            if TranscriptPhraseMatcher.containsWordSequence(entry.text, normalized)
+                || TranscriptPhraseMatcher.containsWordSequence(normalized, entry.text) {
                 return true
             }
             if isNearDuplicate(lhs: normalized, rhs: entry.text) {
@@ -1698,21 +1739,6 @@ final class LiveTranscriptionController: ObservableObject {
         return false
     }
 
-    private func applyWordFilters(_ filters: [WordReplacementFilter], to text: String) -> String {
-        guard !filters.isEmpty else { return text }
-        var result = text
-        for filter in filters {
-            let from = filter.from.trimmingCharacters(in: .whitespacesAndNewlines)
-            let to = filter.to
-            guard !from.isEmpty else { continue }
-            let escaped = NSRegularExpression.escapedPattern(for: from)
-            guard let regex = try? NSRegularExpression(pattern: escaped, options: [.caseInsensitive]) else { continue }
-            let range = NSRange(result.startIndex..<result.endIndex, in: result)
-            result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: to)
-        }
-        return result
-    }
-
     private func appendEntry(
         source: TranscriptChannel,
         raw: String,
@@ -1722,8 +1748,7 @@ final class LiveTranscriptionController: ObservableObject {
         timestamp: Date
     ) {
         let retention = settings.retention
-        let filters = textFilters(forSourceID: source.id)
-        let displayText = applyWordFilters(filters.wordFilters, to: filters.profanity.apply(to: display))
+        let displayText = textFilter(forSourceID: source.id).apply(to: display)
         let normalizedDisplay = normalizeForDedup(displayText)
 
         if isFinal, shouldSkipFinal(displayText, channelId: source.id, now: timestamp) {
@@ -1736,8 +1761,8 @@ final class LiveTranscriptionController: ObservableObject {
             let lastNormalized = normalizeForDedup(lastFinal.displayText)
             if !normalizedDisplay.isEmpty {
                 let isDuplicateFinal = normalizedDisplay == lastNormalized
-                    || lastNormalized.contains(normalizedDisplay)
-                    || normalizedDisplay.contains(lastNormalized)
+                    || TranscriptPhraseMatcher.containsWordSequence(lastNormalized, normalizedDisplay)
+                    || TranscriptPhraseMatcher.containsWordSequence(normalizedDisplay, lastNormalized)
                 let isRecentDuplicateFinal = timestamp.timeIntervalSince(lastFinal.timestamp) <= duplicateFinalSuppressWindow
                 if isFinal && isDuplicateFinal && isRecentDuplicateFinal {
                     return
@@ -1749,6 +1774,7 @@ final class LiveTranscriptionController: ObservableObject {
         }
 
         var updated = currentEntries
+        let changedEntry: TranscriptEntry
 
         if let index = updated.lastIndex(where: { $0.sourceId == source.id && !$0.isFinal }) {
             let existing = updated[index]
@@ -1760,7 +1786,7 @@ final class LiveTranscriptionController: ObservableObject {
                 return
             }
             let existingTimestamp = updated[index].timestamp
-            updated[index] = TranscriptEntry(
+            changedEntry = TranscriptEntry(
                 id: existing.id,
                 timestamp: existingTimestamp,
                 sourceId: source.id,
@@ -1770,19 +1796,19 @@ final class LiveTranscriptionController: ObservableObject {
                 isFinal: isFinal,
                 confidence: confidence
             )
+            updated[index] = changedEntry
         } else {
-            updated.append(
-                TranscriptEntry(
-                    id: UUID(),
-                    timestamp: timestamp,
-                    sourceId: source.id,
-                    sourceDisplayName: source.displayName,
-                    rawText: raw,
-                    displayText: displayText,
-                    isFinal: isFinal,
-                    confidence: confidence
-                )
+            changedEntry = TranscriptEntry(
+                id: UUID(),
+                timestamp: timestamp,
+                sourceId: source.id,
+                sourceDisplayName: source.displayName,
+                rawText: raw,
+                displayText: displayText,
+                isFinal: isFinal,
+                confidence: confidence
             )
+            updated.append(changedEntry)
         }
 
         if isFinal {
@@ -1792,11 +1818,15 @@ final class LiveTranscriptionController: ObservableObject {
         let trimmed = LiveTranscriptionController.trimmedEntries(updated, retention: retention)
         entries = trimmed.sorted { $0.timestamp < $1.timestamp }
         if isFinal {
-            appendFinalWordHistory(displayText, channelId: source.id)
+            // The word history and committed prefix are compared against raw recognizer text
+            // (stripLeadingFinalText / stripCommittedPrefix), so they must be stored raw. Storing
+            // the filtered text broke overlap stripping whenever a word filter or the profanity
+            // filter changed the line, which duplicated transcript text.
+            appendFinalWordHistory(raw, channelId: source.id)
             recordFinal(displayText, channelId: source.id, timestamp: timestamp)
-            updateCommittedPrefix(displayText, channelId: source.id)
+            updateCommittedPrefix(raw, channelId: source.id)
         }
-        publishOutputs(entries: entries)
+        publishOutputs(entries: entries, changedEntries: [changedEntry])
     }
 
     private func stripLeadingFinalText(_ text: String, channelId: UUID) -> String {
@@ -1889,18 +1919,18 @@ final class LiveTranscriptionController: ObservableObject {
     }
 
     private func recomputeDisplayTexts() {
-        var filtersBySource: [UUID: (profanity: ProfanityFilter, wordFilters: [WordReplacementFilter])] = [:]
+        var filtersBySource: [UUID: TranscriptTextFilter] = [:]
         let updated = entries.map { entry in
             let source = settings.sources.first(where: { $0.id == entry.sourceId })
-            let filters = filtersBySource[entry.sourceId] ?? textFilters(forSourceID: entry.sourceId)
-            filtersBySource[entry.sourceId] = filters
+            let filter = filtersBySource[entry.sourceId] ?? textFilter(forSourceID: entry.sourceId)
+            filtersBySource[entry.sourceId] = filter
             return TranscriptEntry(
                 id: entry.id,
                 timestamp: entry.timestamp,
                 sourceId: entry.sourceId,
                 sourceDisplayName: source?.transcriptDisplayName ?? entry.sourceDisplayName,
                 rawText: entry.rawText,
-                displayText: applyWordFilters(filters.wordFilters, to: filters.profanity.apply(to: entry.rawText)),
+                displayText: filter.apply(to: entry.rawText),
                 isFinal: entry.isFinal,
                 confidence: entry.confidence
             )
@@ -1917,9 +1947,14 @@ final class LiveTranscriptionController: ObservableObject {
         }
     }
 
-    private func publishOutputs(entries: [TranscriptEntry]) {
+    private func publishOutputs(entries: [TranscriptEntry], changedEntries: [TranscriptEntry] = []) {
         let latest = entries.last
-        let payload = TranscriptOutputPayload(latestEntry: latest, window: entries, inputLevel: Self.sanitizedInputLevel(inputLevel))
+        let payload = TranscriptOutputPayload(
+            latestEntry: latest,
+            window: entries,
+            inputLevel: Self.sanitizedInputLevel(inputLevel),
+            changedEntries: changedEntries
+        )
         LiveTranscriptionOutputStore.shared.update(tileId: tileId, payload: payload)
     }
 
@@ -2285,10 +2320,6 @@ struct LiveTranscriptionTileView: View {
                 #if os(iOS)
                 controller.setLiveMode(effectiveLiveMode && phase == .active)
                 #endif
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .liveTranscriptionClearRequested)) { note in
-                guard let id = note.userInfo?["tileId"] as? UUID, id == tileId else { return }
-                controller.clearOutputs()
             }
             .onReceive(SharedSecondTicker.shared.publisher) { date in
                 guard model.usesRelativeTimestamps == true else { return }
@@ -2838,8 +2869,7 @@ private func attributedTranscriptText(_ text: String, rules: [DashboardGraph.Wor
                 searchStart = range.upperBound
             }
         case .wholeWord:
-            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: needle) + "\\b"
-            underlineMatches(pattern: pattern, in: base, output: &output)
+            underlineMatches(pattern: TranscriptPhraseMatcher.wholeWordPattern(for: needle), in: base, output: &output)
         }
     }
     return output

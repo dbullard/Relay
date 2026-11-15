@@ -90,8 +90,7 @@ nonisolated struct ProfanityFilter {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
         if !customWords.isEmpty {
-            let escaped = customWords.map { NSRegularExpression.escapedPattern(for: $0) }
-            alternatives.append("\\b(?:" + escaped.joined(separator: "|") + ")\\b")
+            alternatives.append(contentsOf: customWords.map(TranscriptPhraseMatcher.wholeWordPattern(for:)))
             // A censored token is a single word, so multi-word phrases can't match it.
             censoredWhole += customWords.filter { !$0.contains(" ") }.map { Array($0) }
         }
@@ -177,5 +176,73 @@ nonisolated struct ProfanityFilter {
             .replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)
             .replacingOccurrences(of: " +([,.!?;:])", with: "$1", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+// MARK: - Phrase Matching
+
+/// Shared word/phrase matching for transcript text, used by word replacement filters,
+/// custom blocked words, word-trigger automation rules and trigger underlines so they
+/// all agree on what counts as a "whole word".
+nonisolated enum TranscriptPhraseMatcher {
+    /// A regex pattern matching `phrase` literally as a whole word or phrase.
+    ///
+    /// Uses letter/number lookarounds instead of `\b`, because `\b` never matches next to a
+    /// phrase that starts or ends with punctuation ("c++", "a$$", "amen!").
+    static func wholeWordPattern(for phrase: String) -> String {
+        "(?<![\\p{L}\\p{N}_])" + NSRegularExpression.escapedPattern(for: phrase) + "(?![\\p{L}\\p{N}_])"
+    }
+
+    /// Whether `needle` occurs in `haystack` as a whole word sequence (not as a fragment of
+    /// a longer word). Both strings are expected to be normalized (lowercased, single-spaced).
+    static func containsWordSequence(_ haystack: String, _ needle: String) -> Bool {
+        let hay = haystack.split(separator: " ")
+        let words = needle.split(separator: " ")
+        guard !words.isEmpty, hay.count >= words.count else { return false }
+        return (0...(hay.count - words.count)).contains { start in
+            hay[start..<(start + words.count)].elementsEqual(words)
+        }
+    }
+}
+
+// MARK: - Transcript Text Filter
+
+/// The per-source display pipeline: word replacements first, then profanity filtering.
+///
+/// Replacements run first so a filter can swap a blocked word for a clean one
+/// ("shit" → "shoot") and so a replacement can never introduce unfiltered profanity.
+/// Replacement regexes are compiled once per filter set rather than per transcript update.
+nonisolated struct TranscriptTextFilter {
+    private struct CompiledReplacement {
+        let regex: NSRegularExpression
+        let template: String
+    }
+
+    private let replacements: [CompiledReplacement]
+    private let profanity: ProfanityFilter
+
+    init(wordFilters: [WordReplacementFilter], profanitySettings: LiveTranscriptionProfanitySettings) {
+        self.replacements = wordFilters.compactMap { filter in
+            let from = filter.from.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !from.isEmpty,
+                  let regex = try? NSRegularExpression(
+                      pattern: TranscriptPhraseMatcher.wholeWordPattern(for: from),
+                      options: [.caseInsensitive]
+                  ) else { return nil }
+            // The replacement is literal text: "$5" or "\" must not be read as a template.
+            return CompiledReplacement(regex: regex, template: NSRegularExpression.escapedTemplate(for: filter.to))
+        }
+        self.profanity = ProfanityFilter(settings: profanitySettings)
+    }
+
+    static let passthrough = TranscriptTextFilter(wordFilters: [], profanitySettings: LiveTranscriptionProfanitySettings())
+
+    func apply(to text: String) -> String {
+        var result = text
+        for replacement in replacements {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            result = replacement.regex.stringByReplacingMatches(in: result, range: range, withTemplate: replacement.template)
+        }
+        return profanity.apply(to: result)
     }
 }

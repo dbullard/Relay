@@ -928,8 +928,13 @@ final class GraphAutomationRuntime: ObservableObject {
         guard isEnabled else { return }
         guard let ui = note.userInfo,
               let tileId = ui["tileId"] as? UUID,
-              let payload = ui["payload"] as? TranscriptOutputPayload,
-              let latest = payload.latestEntry else { return }
+              let payload = ui["payload"] as? TranscriptOutputPayload else { return }
+        // Evaluate the entries this publish actually added or updated. `latestEntry` is the
+        // newest by timestamp, which with several sources is often not the line that just
+        // finalized, so its triggers were silently skipped. Re-filter/trim publishes carry no
+        // changed entries and never re-fire triggers.
+        let changedEntries = payload.changedEntries
+        guard !changedEntries.isEmpty else { return }
 
         let tabs = tabsToProcess()
         guard !tabs.isEmpty else { return }
@@ -956,21 +961,24 @@ final class GraphAutomationRuntime: ObservableObject {
             if let transcriptionNodeId { sourceNodeIds.append(transcriptionNodeId) }
 
             let isUniversal = (tab.automationMode == .universal)
-            // Per-entry phrase dedup: prevents two configs with the same phrase (e.g. a
-            // standalone word trigger node + the canvas transcription node both having "hello")
-            // from firing the same action twice for a single transcript entry.
-            var firedPhrases: Set<String> = []
-            for nodeId in candidateNodeIds {
-                if nodeId != transcriptionNodeId && !isUniversal {
-                    // Per-tab graphs keep the explicit tile-link requirement.
-                    guard isLinked(fromNodeIds: sourceNodeIds, toNodeId: nodeId, graph: graph) else { continue }
-                }
-                let cfg = graph.wordTriggerConfigByNodeId[nodeId.uuidString] ?? DashboardGraph.WordTriggerConfig()
-                for rule in cfg.rules {
-                    guard shouldFireWordRule(rule, entry: latest) else { continue }
-                    let phraseKey = rule.phrase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                    guard firedPhrases.insert(phraseKey).inserted else { continue }
-                    postWordTrigger(nodeId: nodeId, rule: rule, entry: latest)
+            let eligibleNodeIds = candidateNodeIds.filter { nodeId in
+                // Per-tab graphs keep the explicit tile-link requirement.
+                nodeId == transcriptionNodeId || isUniversal
+                    || isLinked(fromNodeIds: sourceNodeIds, toNodeId: nodeId, graph: graph)
+            }
+            for entry in changedEntries {
+                // Per-entry phrase dedup: prevents two configs with the same phrase (e.g. a
+                // standalone word trigger node + the canvas transcription node both having "hello")
+                // from firing the same action twice for a single transcript entry.
+                var firedPhrases: Set<String> = []
+                for nodeId in eligibleNodeIds {
+                    let cfg = graph.wordTriggerConfigByNodeId[nodeId.uuidString] ?? DashboardGraph.WordTriggerConfig()
+                    for rule in cfg.rules {
+                        guard shouldFireWordRule(rule, entry: entry) else { continue }
+                        let phraseKey = rule.phrase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        guard firedPhrases.insert(phraseKey).inserted else { continue }
+                        postWordTrigger(nodeId: nodeId, rule: rule, entry: entry)
+                    }
                 }
             }
         }
@@ -1276,19 +1284,23 @@ final class GraphAutomationRuntime: ObservableObject {
             if let lastMatch = lastWordTriggerMatchByRuleId[rule.id], (now - lastMatch) < debounce { return false }
         }
 
-        let haystack = entry.rawText
+        // Not trimmed: in contains mode, padding a phrase with spaces is a deliberate boundary.
         let needle = rule.phrase.lowercased()
-        let text = haystack.lowercased()
         guard !needle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        _ = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let matchCount: Int
-        switch rule.matchMode {
-        case .contains:
-            matchCount = countOccurrences(of: needle, in: text)
-        case .wholeWord:
-            matchCount = matchWholeWordCount(needle: needle, in: text, ruleId: rule.id)
+        // Match both what was heard and what is displayed: raw text keeps triggers on words the
+        // profanity filter masks, and display text lets triggers use word-filter corrections
+        // ("rely" → "Relay"), matching what the tile underlines.
+        func count(in text: String) -> Int {
+            let lowered = text.lowercased()
+            switch rule.matchMode {
+            case .contains:
+                return countOccurrences(of: needle, in: lowered)
+            case .wholeWord:
+                return matchWholeWordCount(needle: needle, in: lowered, ruleId: rule.id)
+            }
         }
+        let matchCount = max(count(in: entry.rawText), count(in: entry.displayText))
 
         guard matchCount > 0 else { return false }
 
@@ -1317,8 +1329,7 @@ final class GraphAutomationRuntime: ObservableObject {
     }
 
     private func matchWholeWordCount(needle: String, in text: String, ruleId: UUID) -> Int {
-        let pattern = "\\b" + NSRegularExpression.escapedPattern(for: needle) + "\\b"
-        return matchRegexCount(pattern: pattern, in: text, ruleId: ruleId)
+        matchRegexCount(pattern: TranscriptPhraseMatcher.wholeWordPattern(for: needle), in: text, ruleId: ruleId)
     }
 
     private func matchRegexCount(pattern: String, in text: String, ruleId: UUID) -> Int {
