@@ -112,32 +112,35 @@ final class RTAController: ObservableObject {
                                           frequencyRangeHigh: settings.frequencyRangeHigh)
         var sub = Subscription(processor: processor, task: nil, subID: nil)
         let resolution = settings.bandResolution
+        // Hold `self` only briefly (per frame), never for the stream's lifetime: a strong
+        // capture kept the controller alive forever, so deinit never cancelled the FFT and
+        // analysis kept running after the tile was removed.
         sub.task = Task { [weak self] in
-            guard let self else { return }
             let (subID, stream) = await AudioAnalysisEngine.shared.subscribeFFT(
                 to: inputID, config: config, resolution: resolution)
             // stopSubscription may have run while subscribeFFT was in-flight on the
             // AudioAnalysisEngine actor — in that case subscriptions[inputID] is already
             // gone and the subID will never be stored, leaking FFT computation indefinitely.
-            // Detect cancellation here and clean up before the leak can occur.
-            guard !Task.isCancelled else {
+            // Detect cancellation (or a released controller) and clean up before the leak can occur.
+            if !Task.isCancelled, let owner = self {
+                owner.subscriptions[inputID]?.subID = subID
+            } else {
                 await AudioAnalysisEngine.shared.unsubscribeFFT(id: subID)
                 return
             }
-            self.subscriptions[inputID]?.subID = subID
             for await frame in stream {
-                guard !Task.isCancelled else { break }
-                guard let p = self.subscriptions[inputID]?.processor else { break }
-                let timeSmoothing = self.settings.timeSmoothing
-                let peakHoldDecayDbPerSec = self.settings.peakHoldDecayDbPerSec
+                guard !Task.isCancelled, let owner = self else { break }
+                guard let p = owner.subscriptions[inputID]?.processor else { break }
+                let timeSmoothing = owner.settings.timeSmoothing
+                let peakHoldDecayDbPerSec = owner.settings.peakHoldDecayDbPerSec
                 // Runs on the RTABandProcessor actor, off the main actor, so the
                 // per-band aggregation (largest at 1/48-octave) doesn't block UI.
                 let updated = await p.process(frame: frame,
                                                timeSmoothing: timeSmoothing,
                                                peakHoldDecayDbPerSec: peakHoldDecayDbPerSec)
                 guard !Task.isCancelled else { break }
-                self.latestBands[inputID] = updated
-                self.latestBandsDirty = true
+                owner.latestBands[inputID] = updated
+                owner.latestBandsDirty = true
             }
         }
         subscriptions[inputID] = sub

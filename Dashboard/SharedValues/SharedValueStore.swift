@@ -355,6 +355,7 @@ final class SharedValueStore {
     private let registry: SharedValueRegistry
     private(set) var snapshot: SharedValueSnapshot = .empty
     private var pendingPersistence: Task<Void, Never>?
+    private var pendingOSCSnapshotRefresh: Task<Void, Never>?
     private var hasLoaded = false
 
     init(registry: SharedValueRegistry = SharedValueRegistry()) {
@@ -428,7 +429,17 @@ final class SharedValueStore {
 
     func observeOSC(address: String, payload: SharedValuePayload, at date: Date = Date()) async {
         await registry.observeOSC(address: address, payload: payload, at: date)
-        snapshot = await registry.snapshot()
+        // The recent-address list only feeds the Shared Values window, so refresh it at most
+        // 4×/s instead of re-sorting and re-publishing the snapshot for every OSC message (a
+        // console can send 30–100/s). Bound values still publish immediately via `update`.
+        guard pendingOSCSnapshotRefresh == nil else { return }
+        let registry = registry
+        pendingOSCSnapshotRefresh = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            let next = await registry.snapshot()
+            if next != snapshot { snapshot = next }
+            pendingOSCSnapshotRefresh = nil
+        }
     }
 
     func observeTrigger(triggerID: UUID, field: String, payload: SharedValuePayload, at date: Date = Date()) async {

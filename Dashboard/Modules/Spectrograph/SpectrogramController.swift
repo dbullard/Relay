@@ -110,21 +110,23 @@ final class SpectrogramController: ObservableObject {
               let config = AudioInputsConfigStore.shared.input(for: inputID) else {
             isRunning = false; return
         }
+        // Hold `self` only per frame: a strong capture for the stream's lifetime kept the
+        // controller alive, so deinit never cancelled the FFT after the tile was removed.
         fftTask = Task { [weak self] in
-            guard let self else { return }
             let (subID, stream) = await AudioAnalysisEngine.shared.subscribeFFT(
                 to: inputID, config: config, resolution: .thirdOct)
-            guard !Task.isCancelled else {
+            if !Task.isCancelled, let owner = self {
+                owner.fftSubscriptionID = subID
+                owner.isRunning = true
+            } else {
                 await AudioAnalysisEngine.shared.unsubscribeFFT(id: subID)
                 return
             }
-            self.fftSubscriptionID = subID
-            self.isRunning = true
             for await frame in stream {
-                guard !Task.isCancelled else { break }
-                self.appendRow(frame: frame)
+                guard !Task.isCancelled, let owner = self else { break }
+                owner.appendRow(frame: frame)
             }
-            self.isRunning = false
+            self?.isRunning = false
         }
     }
 

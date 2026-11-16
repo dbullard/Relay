@@ -8053,6 +8053,11 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         }
     }
 
+    /// Serial queue for document saves and autosaves. On the concurrent global queue two
+    /// overlapping writes could finish out of order, leaving the older one on disk while the UI
+    /// showed the document as saved.
+    private static let documentWriteQueue = DispatchQueue(label: "app.relay.documentWrite", qos: .userInitiated)
+
     private var shouldAutoSaveWithoutPrompt: Bool {
         fileAutosaveEnabled && lastSavedURL != nil
     }
@@ -8071,7 +8076,7 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         let payloadToWrite = payload ?? currentDashboardPayload()
         let generationToComplete = expectedEditGeneration ?? autosaveEditGeneration
 
-        DispatchQueue.global(qos: .utility).async {
+        Self.documentWriteQueue.async {
             let scoped = url.startAccessingSecurityScopedResource()
             defer {
                 if scoped {
@@ -8429,7 +8434,7 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         completion: @escaping (Bool) -> Void
     ) {
         saveState.isSaving = true
-        DispatchQueue.global(qos: .userInitiated).async {
+        Self.documentWriteQueue.async {
             let scoped = url.startAccessingSecurityScopedResource()
             defer {
                 if scoped {

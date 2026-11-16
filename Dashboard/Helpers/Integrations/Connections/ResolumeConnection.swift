@@ -363,7 +363,9 @@ public final class ResolumeConnection: ObservableObject {
             guard let self else { return }
             while !Task.isCancelled {
                 await self.pollOnce(compositionPath: compositionPath)
-                try? await Task.sleep(nanoseconds: UInt64(max(0.1, intervalSeconds)) * 1_000_000_000)
+                // Convert after multiplying: UInt64(0.5) truncates to 0, which made the default
+                // 0.5 s interval a tight loop.
+                try? await Task.sleep(nanoseconds: UInt64(max(0.1, intervalSeconds) * 1_000_000_000))
             }
         }
     }
@@ -419,6 +421,8 @@ public final class ResolumeConnection: ObservableObject {
 
         } catch {
             let msg = error.localizedDescription
+            // Log and publish only when the failure changes, not on every retry while offline.
+            if case .error(let previous) = state, previous == msg { return }
             state = .error(msg)
             log("Poll FAILED \(endpoint.display) path=\(compositionPath) err=\(msg)")
         }

@@ -707,8 +707,9 @@ public struct OutgoingPairingRequest: Equatable {
 
 // Diagnostics (helps confirm the service is actively running)
 @Published public private(set) var lastBrowseUpdateAt: Date? = nil
-@Published public private(set) var lastPollAt: Date? = nil
-@Published public private(set) var pollCount: Int = 0
+// Not @Published: they change every poll, and this service is observed by the dashboard root.
+public private(set) var lastPollAt: Date? = nil
+public private(set) var pollCount: Int = 0
 
 // When false, the service will keep browsing/advertising, but will not poll peers.
 @Published public private(set) var pollingEnabled: Bool = true
@@ -3603,6 +3604,23 @@ private func mergePeer(_ peer: Peer) {
     }
 }
 
+// MARK: - Change-only writes
+
+// `@Published` notifies on every assignment, even of an equal value (and `Set.remove` of a
+// missing element still counts as a mutation). The dashboard root observes this service, so
+// each no-op write from the 1 s polls re-rendered the whole app.
+private func setIfChanged<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<LANSharedTabsService, T>, _ value: T) {
+    if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+}
+
+private func insertIfMissing(_ keyPath: ReferenceWritableKeyPath<LANSharedTabsService, Set<String>>, _ element: String) {
+    if !self[keyPath: keyPath].contains(element) { self[keyPath: keyPath].insert(element) }
+}
+
+private func removeIfPresent(_ keyPath: ReferenceWritableKeyPath<LANSharedTabsService, Set<String>>, _ element: String) {
+    if self[keyPath: keyPath].contains(element) { self[keyPath: keyPath].remove(element) }
+}
+
 // MARK: - Polling
 
 private func pollPeersOnce() async {
@@ -3639,9 +3657,9 @@ private func pollPeersOnce() async {
             authFailedPeerEndpointKeys: self.authFailedPeerEndpointKeys,
             cutoff: cutoff
         )
-        self.peers = cleanup.peers
+        self.setIfChanged(\.peers, cleanup.peers)
         self.peerManifests = cleanup.peerManifests
-        self.authFailedPeerEndpointKeys = cleanup.authFailedPeerEndpointKeys
+        self.setIfChanged(\.authFailedPeerEndpointKeys, cleanup.authFailedPeerEndpointKeys)
         if cleanup.removedAny {
             self.peerSyncedManifests = cleanup.peerSyncedManifests
             self.peerPresence = cleanup.peerPresence
@@ -3784,18 +3802,18 @@ private func pollSyncedPeersOnce() async {
                 let presenceStatus = (presenceResp as? HTTPURLResponse)?.statusCode ?? -1
                 switch Self.authFailureState(forPresencePollStatusCode: presenceStatus) {
                 case true:
-                    authFailedPeerEndpointKeys.insert(p.endpointKey)
+                    insertIfMissing(\.authFailedPeerEndpointKeys, p.endpointKey)
                 case false:
-                    authFailedPeerEndpointKeys.remove(p.endpointKey)
+                    removeIfPresent(\.authFailedPeerEndpointKeys, p.endpointKey)
                 case nil:
                     break
                 }
                 if presenceStatus == 200, let payload = try? JSONDecoder().decode(SyncedPresencePayload.self, from: presenceData) {
-                    peerPresence[p.endpointKey] = payload
-                } else {
+                    if peerPresence[p.endpointKey] != payload { peerPresence[p.endpointKey] = payload }
+                } else if peerPresence[p.endpointKey] != nil {
                     peerPresence.removeValue(forKey: p.endpointKey)
                 }
-            } else {
+            } else if peerPresence[p.endpointKey] != nil {
                 peerPresence.removeValue(forKey: p.endpointKey)
             }
         }
@@ -3831,24 +3849,24 @@ private func pollSyncedPeersOnce() async {
             let wasOrphaned = orphanedSyncGroupIDs.contains(groupID)
             let wasUnverified = unverifiedSyncGroupIDs.contains(groupID)
             consecutiveGroupMisses[groupID] = 0
-            orphanedSyncGroupIDs.remove(groupID)
-            unverifiedSyncGroupIDs.remove(groupID)
+            removeIfPresent(\.orphanedSyncGroupIDs, groupID)
+            removeIfPresent(\.unverifiedSyncGroupIDs, groupID)
             if wasOrphaned || wasUnverified {
                 // Host reappeared after being orphaned, OR this is the first live confirmation
                 // after an app restart — either way the currently-displayed content may be stale
                 // (an old autosaved snapshot, not what the host actually has now), so signal
                 // DashboardRootView to force-fetch the authoritative snapshot rather than silently
                 // leaving the outdated content on screen just because the "stale" badge cleared.
-                reconnectedSyncGroupIDs.insert(groupID)
+                insertIfMissing(\.reconnectedSyncGroupIDs, groupID)
             }
         } else {
             let misses = (consecutiveGroupMisses[groupID] ?? 0) + 1
             consecutiveGroupMisses[groupID] = misses
-            reconnectedSyncGroupIDs.remove(groupID)
+            removeIfPresent(\.reconnectedSyncGroupIDs, groupID)
             let missThreshold = unverifiedSyncGroupIDs.contains(groupID) ? 2 : 8
             if misses >= missThreshold {
-                orphanedSyncGroupIDs.insert(groupID)
-                unverifiedSyncGroupIDs.remove(groupID)
+                insertIfMissing(\.orphanedSyncGroupIDs, groupID)
+                removeIfPresent(\.unverifiedSyncGroupIDs, groupID)
             }
         }
     }
@@ -3971,6 +3989,9 @@ private func makePeerRequest(
     var req = URLRequest(url: url)
     req.httpMethod = method
     req.httpBody = body
+    // Peers are polled one after another; with the 60 s default a single sleeping or
+    // unplugged peer stalled synced tabs and variables from every other peer for minutes.
+    req.timeoutInterval = (method == "GET") ? 5 : 20
     if let contentType {
         req.setValue(contentType, forHTTPHeaderField: "Content-Type")
     }
@@ -4053,7 +4074,7 @@ private func rebuildRemoteTabs() {
         return $0.tabName < $1.tabName
     }
 
-    remoteTabs = all
+    setIfChanged(\.remoteTabs, all)
 }
 
 private func rebuildSyncedRemoteManifests() {
@@ -4094,7 +4115,7 @@ private func rebuildSyncedRemoteManifests() {
             }
         }
     }
-    peerVersionsForJoinedGroups = joinedPeerVersions
+    setIfChanged(\.peerVersionsForJoinedGroups, joinedPeerVersions)
 
     // Exclude already-joined groups from the "available to join" list — EXCEPT orphaned ones,
     // which should reappear in the sync button so the user can reconnect.
@@ -4105,7 +4126,7 @@ private func rebuildSyncedRemoteManifests() {
         if $0.deviceName != $1.deviceName { return $0.deviceName < $1.deviceName }
         return $0.tabName < $1.tabName
     }
-    syncedRemoteManifests = all
+    setIfChanged(\.syncedRemoteManifests, all)
 }
 
 

@@ -228,6 +228,33 @@ final class GraphAutomationRuntime: ObservableObject {
             mergedGraph.conditionNodeConfigByNodeId[nodeId] = mergedConfig
         }
 
+        // Runtime-owned state of stateful utility nodes. Without these, each persist reset the
+        // nodes to the editor's copy: a Toggle always took the same branch, a Counter never
+        // reached its threshold, a Sequence stayed on step 1 and a Latch never stayed off.
+        // Editor-owned settings (threshold, step count, reset flags, latch triggers) are kept.
+        // Nodes deleted in the editor while a flow ran are skipped, not resurrected.
+        let liveNodeIds = Set(mergedGraph.moduleGroupNodeInstances.map(\.id.uuidString))
+        for (nodeId, runtimeConfig) in runtimeGraph.toggleNodeConfigByNodeId where liveNodeIds.contains(nodeId) {
+            var mergedConfig = mergedGraph.toggleNodeConfigByNodeId[nodeId] ?? runtimeConfig
+            mergedConfig.currentState = runtimeConfig.currentState
+            mergedGraph.toggleNodeConfigByNodeId[nodeId] = mergedConfig
+        }
+        for (nodeId, runtimeConfig) in runtimeGraph.counterNodeConfigByNodeId where liveNodeIds.contains(nodeId) {
+            var mergedConfig = mergedGraph.counterNodeConfigByNodeId[nodeId] ?? runtimeConfig
+            mergedConfig.currentCount = runtimeConfig.currentCount
+            mergedGraph.counterNodeConfigByNodeId[nodeId] = mergedConfig
+        }
+        for (nodeId, runtimeConfig) in runtimeGraph.sequenceNodeConfigByNodeId where liveNodeIds.contains(nodeId) {
+            var mergedConfig = mergedGraph.sequenceNodeConfigByNodeId[nodeId] ?? runtimeConfig
+            mergedConfig.currentStep = runtimeConfig.currentStep
+            mergedGraph.sequenceNodeConfigByNodeId[nodeId] = mergedConfig
+        }
+        for (nodeId, runtimeConfig) in runtimeGraph.latchNodeConfigByNodeId where liveNodeIds.contains(nodeId) {
+            var mergedConfig = mergedGraph.latchNodeConfigByNodeId[nodeId] ?? runtimeConfig
+            mergedConfig.isEnabled = runtimeConfig.isEnabled
+            mergedGraph.latchNodeConfigByNodeId[nodeId] = mergedConfig
+        }
+
         return mergedGraph
     }
 
@@ -509,7 +536,12 @@ final class GraphAutomationRuntime: ObservableObject {
 
         center.publisher(for: .relayLiveModeDidChange)
             .receive(on: queue)
-            .sink { [weak self] note in self?.handleAppStateEvent(.enterLiveMode, note: note) }
+            .sink { [weak self] note in
+                // One notification covers both directions; route it to the matching trigger
+                // kind (always passing .enterLiveMode meant Exit Live Mode triggers never fired).
+                let isLive = (note.userInfo?["isLiveMode"] as? Bool) ?? false
+                self?.handleAppStateEvent(isLive ? .enterLiveMode : .exitLiveMode, note: note)
+            }
             .store(in: &cancellables)
 
         center.publisher(for: .relayTabDidChange)
@@ -575,28 +607,41 @@ final class GraphAutomationRuntime: ObservableObject {
         let tabs = tabsToProcess()
         guard !tabs.isEmpty else { return }
 
+        // Match against the NSEvent here on the main thread, then do the cooldown bookkeeping on
+        // `queue`: `lastSynthesizedFireByTriggerId` is also written there by the OSC/MIDI/PCO
+        // handlers, and mutating the dictionary from two threads at once can crash.
+        var matches: [(nodeId: UUID, cfg: DashboardGraph.KeystrokeTriggerConfig)] = []
         for tab in tabs {
             guard let graph = effectiveGraph(for: tab) else { continue }
             for (nodeKey, cfg) in graph.keystrokeTriggerConfigByNodeId {
                 guard keystrokeConfigMatches(cfg, event: event) else { continue }
                 guard let nodeId = UUID(uuidString: nodeKey) else { continue }
-                let now = Date()
-                let last = lastSynthesizedFireByTriggerId[nodeId] ?? 0
-                guard now.timeIntervalSince1970 - last >= max(synthFireMinInterval, cfg.cooldownSeconds) else { continue }
-                lastSynthesizedFireByTriggerId[nodeId] = now.timeIntervalSince1970
+                matches.append((nodeId, cfg))
+            }
+        }
+        guard !matches.isEmpty else { return }
 
-                NotificationCenter.default.post(
-                    name: TriggerNodeNotifications.fired,
-                    object: nil,
-                    userInfo: [
-                        TriggerNodeUserInfoKeys.triggerNodeId: nodeId,
-                        TriggerNodeUserInfoKeys.payloadText: formattedShortcutLabel(cfg),
-                        TriggerNodeUserInfoKeys.payloadBoolean: true,
-                        "source": "runtime.keystroke",
-                        "timestamp": now,
-                        "eventKind": "keystroke.trigger"
-                    ]
-                )
+        queue.async { [weak self] in
+            guard let self else { return }
+            for (nodeId, cfg) in matches {
+                let now = Date()
+                let last = self.lastSynthesizedFireByTriggerId[nodeId] ?? 0
+                guard now.timeIntervalSince1970 - last >= max(self.synthFireMinInterval, cfg.cooldownSeconds) else { continue }
+                self.lastSynthesizedFireByTriggerId[nodeId] = now.timeIntervalSince1970
+
+                let userInfo: [AnyHashable: Any] = [
+                    TriggerNodeUserInfoKeys.triggerNodeId: nodeId,
+                    TriggerNodeUserInfoKeys.payloadText: self.formattedShortcutLabel(cfg),
+                    TriggerNodeUserInfoKeys.payloadBoolean: true,
+                    "source": "runtime.keystroke",
+                    "timestamp": now,
+                    "eventKind": "keystroke.trigger"
+                ]
+                // Keystroke triggers have always been posted on the main thread; keep that for
+                // the SwiftUI listeners.
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: TriggerNodeNotifications.fired, object: nil, userInfo: userInfo)
+                }
             }
         }
     }

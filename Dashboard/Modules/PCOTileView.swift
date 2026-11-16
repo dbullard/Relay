@@ -3013,7 +3013,9 @@ struct PCOTileView: View {
                 }
             }
         }
-        .task(id: "pcoLiveRefresh|\(isLiveMode ? "1" : "0")|\(currentTabSnapshotKey)") {
+        // isPCOConfigOpen is part of the id so closing the config sheet starts the refresh;
+        // otherwise entering live mode with the sheet open left it never running.
+        .task(id: "pcoLiveRefresh|\(isLiveMode ? "1" : "0")|\(isPCOConfigOpen ? "1" : "0")|\(currentTabSnapshotKey)") {
             guard isLiveMode, !isLANSnapshotRendering, !isPCOConfigOpen else { return }
             guard shouldRenderPCODataSections else { return }
             while isLiveMode && !Task.isCancelled {

@@ -188,21 +188,28 @@ final class LinkedDeviceVariableStore {
     static let shared = LinkedDeviceVariableStore()
     private(set) var entries: [LinkedDeviceVariableEntry] = []
 
+    // These run on every 1 s LAN poll. Observation notifies on any write, even an unchanged
+    // array, so each builds the new value and assigns it only when it differs.
     func receive(_ values: [LinkedDeviceVariable], deviceID: String, deviceName: String) {
-        entries.removeAll { $0.deviceID == deviceID }
-        entries.append(contentsOf: LinkedDeviceVariable.categorized(values).map {
+        var next = entries.filter { $0.deviceID != deviceID }
+        next.append(contentsOf: LinkedDeviceVariable.categorized(values).map {
             LinkedDeviceVariableEntry(deviceID: deviceID, deviceName: deviceName, value: $0, isDisconnected: false)
         })
-        entries.sort { $0.tokenName < $1.tokenName }
+        next.sort { $0.tokenName < $1.tokenName }
+        if next != entries { entries = next }
     }
 
     func disconnected(deviceID: String) {
+        guard entries.contains(where: { $0.deviceID == deviceID && !$0.isDisconnected }) else { return }
         for index in entries.indices where entries[index].deviceID == deviceID {
             entries[index].isDisconnected = true
         }
     }
 
-    func clear(deviceID: String) { entries.removeAll { $0.deviceID == deviceID } }
+    func clear(deviceID: String) {
+        guard entries.contains(where: { $0.deviceID == deviceID }) else { return }
+        entries.removeAll { $0.deviceID == deviceID }
+    }
     func clearAll() { entries.removeAll() }
 
     func payload(named name: String) -> SharedValuePayload? {
@@ -228,18 +235,23 @@ final class SyncedTabVariableStore {
     private(set) var entries: [SyncedTabVariableEntry] = []
 
     func receive(_ values: [LinkedDeviceVariable], groupID: String, tabName: String, deviceName: String) {
-        entries.removeAll { $0.groupID == groupID }
-        entries.append(contentsOf: LinkedDeviceVariable.categorized(values).map {
+        var next = entries.filter { $0.groupID != groupID }
+        next.append(contentsOf: LinkedDeviceVariable.categorized(values).map {
             SyncedTabVariableEntry(groupID: groupID, tabName: tabName, deviceName: deviceName, value: $0, isDisconnected: false)
         })
-        entries.sort { $0.tokenName < $1.tokenName }
+        next.sort { $0.tokenName < $1.tokenName }
+        if next != entries { entries = next }
     }
 
     func disconnected(groupID: String) {
+        guard entries.contains(where: { $0.groupID == groupID && !$0.isDisconnected }) else { return }
         for index in entries.indices where entries[index].groupID == groupID { entries[index].isDisconnected = true }
     }
 
-    func clear(groupID: String) { entries.removeAll { $0.groupID == groupID } }
+    func clear(groupID: String) {
+        guard entries.contains(where: { $0.groupID == groupID }) else { return }
+        entries.removeAll { $0.groupID == groupID }
+    }
 
     func payload(named name: String) -> SharedValuePayload? {
         return entries.first { $0.tokenName == normalizeSharedValueName(name) }?.value.payload

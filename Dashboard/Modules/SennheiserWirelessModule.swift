@@ -416,8 +416,11 @@ final class SennheiserWirelessService: ObservableObject {
                 let nanos = UInt64(max(0.5, interval) * 1_000_000_000)
                 try? await Task.sleep(nanoseconds: nanos)
             } else {
-                // Avoid background polling when not live.
-                connectionStateByDevice[deviceID] = .disconnected
+                // Avoid background polling when not live. Write only on change: the dictionary
+                // is @Published, so the same value every second redrew every Sennheiser tile.
+                if connectionStateByDevice[deviceID] != .disconnected {
+                    connectionStateByDevice[deviceID] = .disconnected
+                }
                 try? await Task.sleep(nanoseconds: 1 * 1_000_000_000)
             }
         }
