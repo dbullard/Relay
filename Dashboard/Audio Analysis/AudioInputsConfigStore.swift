@@ -54,8 +54,8 @@ final class AudioInputsConfigStore {
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(inputs) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
+        guard let data = try? JSONEncoder.stableKeyOrder().encode(inputs) else { return }
+        UserDefaults.standard.setIfChanged(data, forKey: storageKey)
     }
 
     private func load() {

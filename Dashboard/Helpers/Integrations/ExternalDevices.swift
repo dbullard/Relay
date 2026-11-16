@@ -1956,8 +1956,8 @@ final class ExternalDevicesStore: ObservableObject {
         persistWorkItem?.cancel()
         let item = DispatchWorkItem { [storageKey] in
             do {
-                let data = try JSONEncoder().encode(state)
-                UserDefaults.standard.set(data, forKey: storageKey)
+                let data = try JSONEncoder.stableKeyOrder().encode(state)
+                UserDefaults.standard.setIfChanged(data, forKey: storageKey)
             } catch {
                 print("[ExternalDevicesStore] Failed to encode devices: \(error)")
             }

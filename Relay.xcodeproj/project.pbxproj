@@ -160,6 +160,7 @@
 				"Helpers/File Helpers/DashboardDocument.swift",
 				"Helpers/File Helpers/DashboardDocumentController.swift",
 				"Helpers/File Helpers/DashboardFocusedValues.swift",
+				"Helpers/File Helpers/UserDefaults+ChangeOnly.swift",
 				"Helpers/File Helpers/DashboardUndoManager.swift",
 				"Helpers/File Helpers/DebugFactoryReset.swift",
 				"Helpers/File Helpers/RelayCommands.swift",

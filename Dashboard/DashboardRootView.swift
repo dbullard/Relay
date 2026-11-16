@@ -485,8 +485,8 @@ struct DashboardRootView: View {
 
     private static func clearLegacyDashboardRestorationState() {
         let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: storageKey)
-        defaults.removeObject(forKey: workingDocumentBookmarkKey)
+        defaults.removeIfPresent(forKey: storageKey)
+        defaults.removeIfPresent(forKey: workingDocumentBookmarkKey)
     }
 
     private struct RosterMigrationResult {
@@ -4342,32 +4342,32 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
     private func applySettingsSnapshot(_ snapshot: DashboardSettingsSnapshot) {
         let defaults = UserDefaults.standard
 
-        defaults.set(snapshot.oscEnabled, forKey: "osc.global.enabled")
-        defaults.set(snapshot.oscPort, forKey: "osc.global.port")
+        defaults.setIfChanged(snapshot.oscEnabled, forKey: "osc.global.enabled")
+        defaults.setIfChanged(snapshot.oscPort, forKey: "osc.global.port")
 
-        defaults.set(snapshot.midiEnabled, forKey: "midi.global.enabled")
-        defaults.set(snapshot.midiSourceId, forKey: "midi.global.sourceId")
+        defaults.setIfChanged(snapshot.midiEnabled, forKey: "midi.global.enabled")
+        defaults.setIfChanged(snapshot.midiSourceId, forKey: "midi.global.sourceId")
 
-        defaults.set(snapshot.proPresenterHost, forKey: "propresenter_host")
-        defaults.set(snapshot.proPresenterPort, forKey: "propresenter_port")
+        defaults.setIfChanged(snapshot.proPresenterHost, forKey: "propresenter_host")
+        defaults.setIfChanged(snapshot.proPresenterPort, forKey: "propresenter_port")
         if ProPresenterPasswordPolicy.shouldApplyImported(snapshot.proPresenterPassword) { ProPresenterKeychainStore.shared.password = snapshot.proPresenterPassword }
-        defaults.set(snapshot.proPresenterTransport, forKey: "propresenter_transport")
-        defaults.set(snapshot.proPresenterPollInterval, forKey: "propresenter_pollInterval")
+        defaults.setIfChanged(snapshot.proPresenterTransport, forKey: "propresenter_transport")
+        defaults.setIfChanged(snapshot.proPresenterPollInterval, forKey: "propresenter_pollInterval")
         if let data = snapshot.proPresenterProfilesData {
-            defaults.set(data, forKey: "propresenter_profiles")
+            defaults.setIfChanged(data, forKey: "propresenter_profiles")
         } else {
-            defaults.removeObject(forKey: "propresenter_profiles")
+            defaults.removeIfPresent(forKey: "propresenter_profiles")
         }
         if let active = snapshot.proPresenterActiveProfileID {
-            defaults.set(active, forKey: "propresenter_activeProfileID")
+            defaults.setIfChanged(active, forKey: "propresenter_activeProfileID")
         } else {
-            defaults.removeObject(forKey: "propresenter_activeProfileID")
+            defaults.removeIfPresent(forKey: "propresenter_activeProfileID")
         }
 
         if let data = snapshot.resolumeProfilesData {
-            defaults.set(data, forKey: "Relay.ResolumeProfilesStore.v1")
+            defaults.setIfChanged(data, forKey: "Relay.ResolumeProfilesStore.v1")
         } else {
-            defaults.removeObject(forKey: "Relay.ResolumeProfilesStore.v1")
+            defaults.removeIfPresent(forKey: "Relay.ResolumeProfilesStore.v1")
         }
 
         NDIPreferencesStore.save(
@@ -4388,22 +4388,22 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                 let syncTimestampKey = "prodlink.x32sync.ts.\(device.id.uuidString)"
                 let showSendModeKey = "prodlink.x32show.sendmode.\(device.id.uuidString)"
 
-                if let map = settings.syncMap, let data = try? JSONEncoder().encode(map) {
-                    defaults.set(data, forKey: syncMapKey)
+                if let map = settings.syncMap, let data = try? JSONEncoder.stableKeyOrder().encode(map) {
+                    defaults.setIfChanged(data, forKey: syncMapKey)
                 } else {
-                    defaults.removeObject(forKey: syncMapKey)
+                    defaults.removeIfPresent(forKey: syncMapKey)
                 }
 
                 if let ts = settings.syncTimestamp {
-                    defaults.set(ts, forKey: syncTimestampKey)
+                    defaults.setIfChanged(ts, forKey: syncTimestampKey)
                 } else {
-                    defaults.removeObject(forKey: syncTimestampKey)
+                    defaults.removeIfPresent(forKey: syncTimestampKey)
                 }
 
                 if let mode = settings.showSendMode {
-                    defaults.set(mode, forKey: showSendModeKey)
+                    defaults.setIfChanged(mode, forKey: showSendModeKey)
                 } else {
-                    defaults.removeObject(forKey: showSendModeKey)
+                    defaults.removeIfPresent(forKey: showSendModeKey)
                 }
             }
         }
@@ -7208,7 +7208,7 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
             // that fires on the caller's thread and causes 500–1200 ms main-thread hangs.
             let hasHidden = currentTabHasHiddenTiles()
             DispatchQueue.global(qos: .utility).async {
-                UserDefaults.standard.set(hasHidden, forKey: "dashboard_has_hidden_tiles")
+                UserDefaults.standard.setIfChanged(hasHidden, forKey: "dashboard_has_hidden_tiles")
             }
         }
 

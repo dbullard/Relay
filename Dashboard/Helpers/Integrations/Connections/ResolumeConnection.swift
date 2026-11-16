@@ -229,6 +229,8 @@ public final class ResolumeProfilesStore: ObservableObject {
     }
 
     private let storageKey = "Relay.ResolumeProfilesStore.v1"
+    /// Set while `load()` assigns, so the didSet saves don't write a half-loaded state.
+    private var isLoading = false
 
     private init() {
         load()
@@ -263,10 +265,13 @@ public final class ResolumeProfilesStore: ObservableObject {
 
     fileprivate func load() {
         guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
+        isLoading = true
+        defer { isLoading = false }
         do {
             let decoded = try JSONDecoder().decode(Persisted.self, from: data)
-            self.profiles = decoded.profiles
-            self.selectedProfileID = decoded.selectedProfileID
+            // Assign only on change: each assignment publishes and re-saves.
+            if self.profiles != decoded.profiles { self.profiles = decoded.profiles }
+            if self.selectedProfileID != decoded.selectedProfileID { self.selectedProfileID = decoded.selectedProfileID }
         } catch {
             // If decode fails, start fresh.
             self.profiles = []
@@ -275,10 +280,11 @@ public final class ResolumeProfilesStore: ObservableObject {
     }
 
     fileprivate func save() {
+        guard !isLoading else { return }
         do {
             let persisted = Persisted(profiles: profiles, selectedProfileID: selectedProfileID)
-            let data = try JSONEncoder().encode(persisted)
-            UserDefaults.standard.set(data, forKey: storageKey)
+            let data = try JSONEncoder.stableKeyOrder().encode(persisted)
+            UserDefaults.standard.setIfChanged(data, forKey: storageKey)
         } catch {
             // Ignore save failures.
         }

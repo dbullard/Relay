@@ -2978,6 +2978,7 @@ final class ShureWirelessService: ObservableObject {
     private var didLogFastUdpFallbackNoDecode = false
     private var currentConnectionIdentity: String?
     private var lastLiveSyncPersistAt: Date?
+    private static let liveSyncPersistInterval: TimeInterval = 300
     private var anx4NextSelector: UInt16 = 0xED17
     private var anx4PreviousSelector: UInt16 = 0xED16
     private var anx4OldestSelector: UInt16 = 0xED16
@@ -6790,7 +6791,9 @@ final class ShureWirelessService: ObservableObject {
     private func recordLiveSyncIfNeeded(force: Bool = false) {
         guard let deviceID else { return }
         let now = Date()
-        if !force, let lastLiveSyncPersistAt, now.timeIntervalSince(lastLiveSyncPersistAt) < 30 {
+        // Each persist rewrites the device list in UserDefaults, which wakes every
+        // @AppStorage view, so routine "still synced" stamps are kept infrequent.
+        if !force, let lastLiveSyncPersistAt, now.timeIntervalSince(lastLiveSyncPersistAt) < Self.liveSyncPersistInterval {
             return
         }
         lastLiveSyncPersistAt = now
