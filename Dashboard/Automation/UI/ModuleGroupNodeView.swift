@@ -569,11 +569,11 @@ struct ModuleGroupNodeView: View {
 
             // Manual People node: choose whether this node is driven by PCO or custom entries.
             if isManualPeople {
-                Picker("", selection: $peopleSourceMode) {
+                GraphPicker("", selection: $peopleSourceMode) {
                     Text("PCO").tag("pco")
                     Text("Custom").tag("custom")
                 }
-                .pickerStyle(.segmented)
+                .graphPickerStyle(.segmented)
             }
 
             if isRosterSource {
@@ -732,7 +732,7 @@ struct ModuleGroupNodeView: View {
                                         .lineLimit(1)
                                 }
                                 #if os(macOS)
-                                .toggleStyle(.checkbox)
+                                .toggleStyle(GraphCheckboxToggleStyle())
                                 #endif
                             }
 
@@ -759,10 +759,10 @@ struct ModuleGroupNodeView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
-                        TextField("Position", text: $newCustomPosition)
+                        GraphTextField("Position", text: $newCustomPosition)
                             .textFieldStyle(.roundedBorder)
 
-                        TextField("Name", text: $newCustomName)
+                        GraphTextField("Name", text: $newCustomName)
                             .textFieldStyle(.roundedBorder)
 
                         Button {
@@ -828,7 +828,7 @@ struct ModuleGroupNodeView: View {
             ForEach(rules) { rule in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        TextField("Phrase", text: Binding(
+                        GraphTextField("Phrase", text: Binding(
                             get: { rule.phrase },
                             set: { newValue in
                                 updateTranscriptionRule(rule.id) { $0.phrase = newValue }
@@ -845,7 +845,7 @@ struct ModuleGroupNodeView: View {
                         .buttonStyle(.plain)
                     }
 
-                    Picker("Match", selection: Binding(
+                    GraphPicker("Match", selection: Binding(
                         get: { rule.matchMode },
                         set: { newValue in
                             updateTranscriptionRule(rule.id) { $0.matchMode = newValue }
@@ -854,7 +854,7 @@ struct ModuleGroupNodeView: View {
                         Text("Contains").tag(DashboardGraph.WordTriggerRule.MatchMode.contains)
                         Text("Whole word").tag(DashboardGraph.WordTriggerRule.MatchMode.wholeWord)
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
 
                     Toggle("Final only", isOn: Binding(
                         get: { rule.finalOnly },
@@ -868,7 +868,7 @@ struct ModuleGroupNodeView: View {
                         Text("Cooldown")
                             .font(.caption)
                             .opacity(0.8)
-                        TextField("Seconds", value: Binding(
+                        GraphTextField("Seconds", value: Binding(
                             get: { rule.cooldownSeconds },
                             set: { newValue in
                                 updateTranscriptionRule(rule.id) { $0.cooldownSeconds = newValue }
@@ -930,7 +930,7 @@ struct ModuleGroupNodeView: View {
     private var rosterSourceSettings: some View {
         let cfg = rosterSourceConfig
         return VStack(alignment: .leading, spacing: 10) {
-            Picker("Mode", selection: Binding(
+            GraphPicker("Mode", selection: Binding(
                 get: { cfg.wrappedValue.mode },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -941,9 +941,9 @@ struct ModuleGroupNodeView: View {
                 Text("Single").tag(DashboardGraph.RosterSourceConfig.Mode.singleValue)
                 Text("Whole Column").tag(DashboardGraph.RosterSourceConfig.Mode.wholeColumn)
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
 
-            Picker("Column", selection: Binding<String?>(
+            GraphPicker("Column", selection: Binding<String?>(
                 get: { cfg.wrappedValue.selectedColumnID },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -956,10 +956,10 @@ struct ModuleGroupNodeView: View {
                     Text(column.title).tag(Optional(column.id.uuidString))
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             if cfg.wrappedValue.mode == .singleValue {
-                Picker("Row", selection: Binding<UUID?>(
+                GraphPicker("Row", selection: Binding<UUID?>(
                     get: { cfg.wrappedValue.selectedRowID },
                     set: { newValue in
                         var value = cfg.wrappedValue
@@ -972,7 +972,7 @@ struct ModuleGroupNodeView: View {
                         Text(rosterRowLabel(row: row, index: index)).tag(Optional(row.id))
                     }
                 }
-                .pickerStyle(.menu)
+                .graphPickerStyle(.menu)
             }
 
             if tab.rosterColumns.isEmpty || tab.rosterRows.isEmpty {
@@ -986,7 +986,7 @@ struct ModuleGroupNodeView: View {
     private var consoleLabelSourceSettings: some View {
         let cfg = consoleLabelSourceConfig
         return VStack(alignment: .leading, spacing: 10) {
-            Picker("Mode", selection: Binding(
+            GraphPicker("Mode", selection: Binding(
                 get: { cfg.wrappedValue.mode },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -997,9 +997,9 @@ struct ModuleGroupNodeView: View {
                 Text("Single").tag(DashboardGraph.ConsoleLabelSourceConfig.Mode.singleChannel)
                 Text("All Channels").tag(DashboardGraph.ConsoleLabelSourceConfig.Mode.allChannels)
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
 
-            Picker("Console", selection: Binding<UUID?>(
+            GraphPicker("Console", selection: Binding<UUID?>(
                 get: { cfg.wrappedValue.deviceId },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -1012,10 +1012,10 @@ struct ModuleGroupNodeView: View {
                     Text(device.name).tag(Optional(device.id))
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             if cfg.wrappedValue.mode == .singleChannel {
-                Picker("Channel", selection: Binding<Int>(
+                GraphPicker("Channel", selection: Binding<Int>(
                     get: { max(1, cfg.wrappedValue.channelIndex) },
                     set: { newValue in
                         var value = cfg.wrappedValue
@@ -1027,7 +1027,7 @@ struct ModuleGroupNodeView: View {
                         Text(option.label).tag(option.channel)
                     }
                 }
-                .pickerStyle(.menu)
+                .graphPickerStyle(.menu)
             }
 
             if consoleDevices.isEmpty {
@@ -1043,7 +1043,7 @@ struct ModuleGroupNodeView: View {
         let devices = cfg.wrappedValue.deviceKind == .shure ? shureDevices : sennheiserDevices
         let channelCount = max(1, selectedWirelessChannelCount(config: cfg.wrappedValue))
         return VStack(alignment: .leading, spacing: 10) {
-            Picker("Mode", selection: Binding(
+            GraphPicker("Mode", selection: Binding(
                 get: { cfg.wrappedValue.mode },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -1054,9 +1054,9 @@ struct ModuleGroupNodeView: View {
                 Text("Single").tag(DashboardGraph.WirelessLabelSourceConfig.Mode.singleChannel)
                 Text("All Channels").tag(DashboardGraph.WirelessLabelSourceConfig.Mode.allChannels)
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
 
-            Picker("Type", selection: Binding(
+            GraphPicker("Type", selection: Binding(
                 get: { cfg.wrappedValue.deviceKind },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -1069,9 +1069,9 @@ struct ModuleGroupNodeView: View {
                 Text("Shure").tag(DashboardGraph.WirelessLabelSourceConfig.DeviceKind.shure)
                 Text("Sennheiser").tag(DashboardGraph.WirelessLabelSourceConfig.DeviceKind.sennheiser)
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
 
-            Picker("Device", selection: Binding<UUID?>(
+            GraphPicker("Device", selection: Binding<UUID?>(
                 get: { cfg.wrappedValue.deviceId },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -1085,10 +1085,10 @@ struct ModuleGroupNodeView: View {
                     Text(device.name).tag(Optional(device.id))
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             if cfg.wrappedValue.mode == .singleChannel {
-                Picker("Channel", selection: Binding<Int>(
+                GraphPicker("Channel", selection: Binding<Int>(
                     get: { max(1, min(channelCount, cfg.wrappedValue.channelIndex)) },
                     set: { newValue in
                         var value = cfg.wrappedValue
@@ -1100,7 +1100,7 @@ struct ModuleGroupNodeView: View {
                         Text("CH \(index)").tag(index)
                     }
                 }
-                .pickerStyle(.menu)
+                .graphPickerStyle(.menu)
             }
 
             if devices.isEmpty {
@@ -1114,7 +1114,7 @@ struct ModuleGroupNodeView: View {
     private var staticLabelSourceSettings: some View {
         let cfg = staticLabelSourceConfig
         return VStack(alignment: .leading, spacing: 10) {
-            Picker("Mode", selection: Binding(
+            GraphPicker("Mode", selection: Binding(
                 get: { cfg.wrappedValue.mode },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -1125,7 +1125,7 @@ struct ModuleGroupNodeView: View {
                 Text("Single").tag(DashboardGraph.StaticLabelSourceConfig.Mode.singleValue)
                 Text("List").tag(DashboardGraph.StaticLabelSourceConfig.Mode.labelList)
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
 
             if cfg.wrappedValue.mode == .labelList {
                 AutomationVariableTokenField(title: "Labels", text: Binding(
@@ -1163,7 +1163,7 @@ struct ModuleGroupNodeView: View {
         )
         let currentValue = graph?.variableNodeConfigByNodeId[nodeKey]?.currentTextValue ?? "–"
         return VStack(alignment: .leading, spacing: 10) {
-            Picker("Format", selection: Binding(
+            GraphPicker("Format", selection: Binding(
                 get: { cfg.wrappedValue.format },
                 set: { var v = cfg.wrappedValue; v.format = $0; cfg.wrappedValue = v }
             )) {
@@ -1171,7 +1171,7 @@ struct ModuleGroupNodeView: View {
                     Text($0.displayName).tag($0)
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
             Text("Current value: \(currentValue)")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -1188,7 +1188,7 @@ struct ModuleGroupNodeView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            TextField(
+            GraphTextField(
                 "Variable name",
                 text: Binding(
                     get: { cfg.wrappedValue.name },
@@ -1201,7 +1201,7 @@ struct ModuleGroupNodeView: View {
             )
             .textFieldStyle(.roundedBorder)
 
-            Picker("Type", selection: Binding(
+            GraphPicker("Type", selection: Binding(
                 get: { cfg.wrappedValue.valueType },
                 set: { newValue in
                     var value = cfg.wrappedValue
@@ -1213,7 +1213,7 @@ struct ModuleGroupNodeView: View {
                     Text(type.displayName).tag(type)
                 }
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
 
             if let token = cfg.wrappedValue.sharedValueToken {
                 HStack(spacing: 8) {
@@ -1243,7 +1243,7 @@ struct ModuleGroupNodeView: View {
             Group {
                 switch cfg.wrappedValue.valueType {
                 case .text:
-                    TextField(
+                    GraphTextField(
                         "Manual value",
                         text: Binding(
                             get: { cfg.wrappedValue.manualTextValue },
@@ -1255,7 +1255,7 @@ struct ModuleGroupNodeView: View {
                         )
                     )
                 case .number:
-                    TextField(
+                    GraphTextField(
                         "Manual value",
                         value: Binding(
                             get: { Int(cfg.wrappedValue.manualNumberValue.rounded(.towardZero)) },
@@ -1268,7 +1268,7 @@ struct ModuleGroupNodeView: View {
                         format: .number
                     )
                 case .float:
-                    TextField(
+                    GraphTextField(
                         "Manual value",
                         value: Binding(
                             get: { cfg.wrappedValue.manualNumberValue },
@@ -1292,7 +1292,7 @@ struct ModuleGroupNodeView: View {
                             }
                         )
                     )
-                    .toggleStyle(.switch)
+                    .toggleStyle(GraphSwitchToggleStyle())
                 }
             }
             .textFieldStyle(.roundedBorder)
@@ -1399,7 +1399,7 @@ struct ModuleGroupNodeView: View {
             HStack {
                 Text("Fire after")
                 Spacer()
-                TextField("", value: Binding(
+                GraphTextField("", value: Binding(
                     get: { cfg.wrappedValue.threshold },
                     set: { var v = cfg.wrappedValue; v.threshold = max(1, $0); cfg.wrappedValue = v }
                 ), format: .number)
@@ -1426,7 +1426,7 @@ struct ModuleGroupNodeView: View {
                 v.currentCount = 0
                 cfg.wrappedValue = v
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(GraphPushButtonStyle())
         }
     }
 
@@ -1441,7 +1441,7 @@ struct ModuleGroupNodeView: View {
             HStack {
                 Text("Steps")
                 Spacer()
-                Stepper(
+                GraphStepper(
                     "\(cfg.wrappedValue.stepCount)",
                     value: Binding(
                         get: { cfg.wrappedValue.stepCount },
@@ -1465,7 +1465,7 @@ struct ModuleGroupNodeView: View {
                 v.currentStep = 0
                 cfg.wrappedValue = v
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(GraphPushButtonStyle())
             Text("Wire output 1 to the first action, output 2 to the second, etc.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -1499,22 +1499,22 @@ struct ModuleGroupNodeView: View {
                 Text(cfg.wrappedValue.isEnabled ? "Enabled (open)" : "Disabled (closed)")
                     .foregroundStyle(cfg.wrappedValue.isEnabled ? Color.green : Color.red)
             }
-            Picker("Enable trigger", selection: Binding<UUID?>(
+            GraphPicker("Enable trigger", selection: Binding<UUID?>(
                 get: { cfg.wrappedValue.enableTriggerNodeId },
                 set: { var v = cfg.wrappedValue; v.enableTriggerNodeId = $0; cfg.wrappedValue = v }
             )) {
                 Text("None").tag(Optional<UUID>.none)
                 ForEach(linkedTriggerIds, id: \.0) { Text($1).tag(Optional($0)) }
             }
-            .pickerStyle(.menu)
-            Picker("Disable trigger", selection: Binding<UUID?>(
+            .graphPickerStyle(.menu)
+            GraphPicker("Disable trigger", selection: Binding<UUID?>(
                 get: { cfg.wrappedValue.disableTriggerNodeId },
                 set: { var v = cfg.wrappedValue; v.disableTriggerNodeId = $0; cfg.wrappedValue = v }
             )) {
                 Text("None").tag(Optional<UUID>.none)
                 ForEach(linkedTriggerIds, id: \.0) { Text($1).tag(Optional($0)) }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
             Toggle("Reset to Enabled on launch", isOn: Binding(
                 get: { cfg.wrappedValue.resetOnLaunch },
                 set: { var v = cfg.wrappedValue; v.resetOnLaunch = $0; cfg.wrappedValue = v }

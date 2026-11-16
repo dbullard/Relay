@@ -139,6 +139,7 @@
 				Automation/UI/GraphDashboardPersistenceAdapter.swift,
 				Automation/UI/GraphDashboardView.swift,
 				Automation/UI/GraphNodeChrome.swift,
+				Automation/UI/GraphNodeControls.swift,
 				Automation/UI/GraphReflectionAdapter.swift,
 				Automation/UI/ModuleGroupNodeView.swift,
 				Automation/UI/TriggerGraphLinkInspector.swift,

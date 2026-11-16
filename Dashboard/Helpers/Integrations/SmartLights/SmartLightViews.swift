@@ -111,7 +111,7 @@ struct SmartLightNodeSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Connection", selection: Binding<UUID?>(
+                GraphPicker("Connection", selection: Binding<UUID?>(
                     get: { config.profileID },
                     set: { newValue in
                         config.profileID = newValue
@@ -128,7 +128,7 @@ struct SmartLightNodeSettingsView: View {
                         Text(profile.displayName).tag(Optional(profile.id))
                     }
                 }
-                .pickerStyle(.menu)
+                .graphPickerStyle(.menu)
 
                 if let selectedProfile {
                     HStack(spacing: 10) {
@@ -152,7 +152,7 @@ struct SmartLightNodeSettingsView: View {
                     }
 
                     if !sceneModeActive {
-                        Picker("Action", selection: Binding(
+                        GraphPicker("Action", selection: Binding(
                             get: { config.action.kind },
                             set: { newValue in
                                 config.action.kind = newValue
@@ -162,7 +162,7 @@ struct SmartLightNodeSettingsView: View {
                                 Text(action.displayName).tag(action)
                             }
                         }
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
 
                         actionParameterEditors
                     }
@@ -377,7 +377,7 @@ struct SmartLightNodeSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                TextField("Hex color (#RRGGBB)", text: Binding(
+                GraphTextField("Hex color (#RRGGBB)", text: Binding(
                     get: { config.action.color?.hexString ?? "" },
                     set: { config.action.color = SmartLightColor.parse($0) }
                 ))
@@ -421,7 +421,7 @@ struct SmartLightNodeSettingsView: View {
 
                 let primaryDevice = selectedDevices.first
                 if let primaryDevice, !primaryDevice.scenes.isEmpty {
-                    Picker("Scene", selection: Binding(
+                    GraphPicker("Scene", selection: Binding(
                         get: { config.action.sceneID ?? "" },
                         set: { newSceneID in
                             config.action.sceneID = newSceneID
@@ -433,9 +433,9 @@ struct SmartLightNodeSettingsView: View {
                             Text(scene.name).tag(scene.id)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
                 } else {
-                    TextField("Scene or effect name / ID", text: Binding(
+                    GraphTextField("Scene or effect name / ID", text: Binding(
                         get: { config.action.sceneID ?? "" },
                         set: {
                             config.action.sceneID = $0.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -468,7 +468,7 @@ struct SmartLightNodeSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Stepper(
+                    GraphStepper(
                         "\(config.action.flashCount ?? 3)",
                         value: Binding(
                             get: { config.action.flashCount ?? 3 },

@@ -87,23 +87,68 @@ state lost on persist, keystroke trigger data race, compact-card size pop.
     when the clock ticks, and is notified when the weekday changes. Not measured in the app (the
     test dashboard has no text tiles).
 
-- [ ] **Other periodic `UserDefaults` writers re-render every `@AppStorage` view** — S each
-  - Same mechanism as above. Known example: Shure live sync saves the device list every 30 s
-    (`recordLiveSyncIfNeeded`). Audit for other timers that write `UserDefaults`.
+- [x] **Other `UserDefaults` writers re-rendered every `@AppStorage` view** — fixed
+  - Measured with a temporary `UserDefaults.didChangeNotification` logger on FOH NEW: 0 writes
+    in 90 s of idle, so the shared-values file move removed the only steady writer on this
+    machine. Opening a document caused 41 writes, now 9: AppKit's own 3, plus 6 `@AppStorage`
+    assignments made once at launch.
+  - **Fixes:** `UserDefaults.setIfChanged(_:forKey:)` / `removeIfPresent(forKey:)` skip
+    identical writes, used by `applySettingsSnapshot` (about 20 keys on every document open),
+    `NDIPreferencesStore`, `ResolumeProfilesStore`, `ExternalDevicesStore`, the audio and
+    transcription input stores, canvas size presets, the hidden-tiles flag (written on every
+    tile change) and the window frame. `DashboardRootView.init` also removed two legacy keys on
+    every re-init.
+  - `JSONEncoder` key order varies between runs, so identical values encoded to different bytes
+    and defeated the comparison. Those payloads now use `JSONEncoder.stableKeyOrder()`
+    (sorted keys).
+  - `ResolumeProfilesStore.load()` saved a half-loaded state twice (once per property
+    assignment); saves are now suppressed while loading.
+  - Shure live sync still stamps "last synced" while a receiver is online, but every 5 min
+    instead of every 30 s (`ShureWirelessService.liveSyncPersistInterval`). Not checked with a
+    live receiver.
 
-- [ ] **Remaining per-frame cost: native controls and accessibility** — L
-  - With rebuilds gone, frame time is mostly native-control geometry (text fields, segmented
-    pickers, steppers repositioned each frame) and accessibility updates (Logi Options+ and
-    Raycast keep an accessibility client attached).
-  - **Fix options:** click-to-edit fields (plain `Text` until focused), SwiftUI-drawn segmented
-    controls in nodes, or a cached snapshot while a gesture is in progress.
+- [x] **Per-frame cost: native controls under the zoom transform** — fixed, interaction not yet
+  verified in the app
+  - **Measured before:** a scripted zoom/pan at 100% on FOH NEW took 100–160 ms per frame with
+    the main thread ~98% busy; the same zoom on compact cards (no native controls) stayed under
+    42 ms. Earlier "median 8 ms" numbers counted idle frames and hid this.
+  - **Cause:** SwiftUI applies `scaleEffect` to each AppKit-backed control (`TextField`,
+    `Picker`, `Stepper`, `Toggle`, bordered `Button`, the variable token field's `NSTextView`)
+    with `setFrameTransform`. AppKit treats every scale change as a backing-property change, so
+    the controls re-measure, which threw away the node layout caches: each frame re-measured
+    every node form (visible as `SecondaryLayerGeometryQuery` → `sizeThatFits` in samples).
+    Ruled out on the way: the `GraphSceneSpace` coordinate space and the zoom controls overlay.
+  - **Fix:** graph nodes use SwiftUI-drawn controls from `GraphNodeControls.swift`, with the
+    native initializers so call sites only changed the type name:
+    - `GraphTextField` shows the value as text and swaps in a real `TextField` (focused) when
+      clicked, back to text when focus leaves. `AutomationVariableTokenField` does the same
+      with its AppKit text view (`activatesOnAppear` / `onEndEditing`).
+    - `GraphPicker` reads the existing `.tag(...)` content (`ContainerValues.tag(for:)`):
+      `.graphPickerStyle(.segmented)` draws inline segments, menu style opens a popover list.
+    - `GraphStepper`, `GraphMenu`, `GraphSwitchToggleStyle` / `GraphCheckboxToggleStyle`,
+      `GraphPushButtonStyle` / `GraphBorderlessButtonStyle`. `.graphNodeControlStyles()` on
+      the node layer covers buttons and (macOS) toggles without an explicit style.
+    - Left native: the two OSC trigger fields and the add-node search field (they use
+      programmatic focus), and two `Slider`s.
+  - **Measured after** (CPU time the app used for the same 3 s scripted zoom, window
+    off-screen so no frame timings): about 3.4 s before → 1.2–1.8 s after. Samples no longer
+    show the per-frame re-measure.
+  - **Trade-offs:** Tab no longer moves between graph fields (the static fields aren't
+    focusable); a click places the caret at the end; menu pickers open a popover instead of a
+    native menu.
+  - **Not verified in the app:** editing a field, choosing from a menu picker, steppers. The
+    test window stayed on another Space, where background clicks don't reach it. Frame timings
+    on screen are also still to measure.
 
-- [ ] **Stall when crossing the compact-card threshold** — M
-  - **Where:** `GraphDashboardView` (`shouldRenderDetailedGraphNode`, `GraphInteractionStore.isZoomedOut`).
-  - **What goes wrong:** zooming in past ~65% builds every detailed node in the same frame.
-  - **Fix:** stagger the swap over a few frames (nearest-to-center first), or keep detailed nodes
-    built but hidden once they've been built in this session.
-  - **Check:** hitch trace while zooming across the threshold.
+- [x] **Stall when crossing the compact-card threshold** — reduced
+  - Zooming back in past 65% used to build every detailed node in one frame. Detailed forms now
+    appear three nodes per frame, nearest the viewport center first
+    (`GraphDashboardView.handleZoomedOutChange`); the rest stay as compact cards (same height)
+    until their turn. Selected, linking and hover-target nodes still switch at once. Zooming out
+    again cancels the reveal.
+  - Building detailed nodes is also much cheaper now that they have no native controls: CPU
+    for the 50% → 70% crossing benchmark dropped from ~1.3 s to ~0.5 s (both with the stagger).
+  - **Not measured:** the stagger on its own (on vs off), and on-screen frame timings.
 
 ## 2. High impact
 

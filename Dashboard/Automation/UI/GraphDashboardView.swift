@@ -1141,12 +1141,67 @@ private var isGraphSimplifiedModeActive: Bool {
     shouldUseGraphNodePerformanceMode || interaction.isZoomedOut
 }
 
+/// While zooming back in past the compact-card threshold: the nodes allowed to show full
+/// forms so far, or nil when no reveal is in progress. Building every full form in one
+/// frame stalled ~150 ms, so they're revealed a few per frame, nearest the center first.
+@State private var detailRevealedNodeIds: Set<UUID>? = nil
+@State private var detailRevealTask: Task<Void, Never>? = nil
+private static let detailRevealBatchSize = 3
+
+private func handleZoomedOutChange(wasZoomedOut: Bool, isZoomedOut: Bool, viewportSize: CGSize) {
+    detailRevealTask?.cancel()
+    detailRevealTask = nil
+    guard wasZoomedOut, !isZoomedOut, !shouldUseGraphNodePerformanceMode else {
+        detailRevealedNodeIds = nil
+        return
+    }
+    let ordered = nodeIdsNearestViewportCenterFirst(viewportSize: viewportSize)
+    guard ordered.count > Self.detailRevealBatchSize else {
+        detailRevealedNodeIds = nil
+        return
+    }
+    detailRevealedNodeIds = Set(ordered.prefix(Self.detailRevealBatchSize))
+    detailRevealTask = Task { @MainActor in
+        var index = Self.detailRevealBatchSize
+        while index < ordered.count {
+            // One batch per frame: let the previous batch render first.
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            guard !Task.isCancelled else { return }
+            let next = ordered[index..<min(index + Self.detailRevealBatchSize, ordered.count)]
+            detailRevealedNodeIds?.formUnion(next)
+            index += Self.detailRevealBatchSize
+        }
+        try? await Task.sleep(nanoseconds: 16_000_000)
+        guard !Task.isCancelled else { return }
+        // Anything without a stored position (and any node added meanwhile) shows now.
+        detailRevealedNodeIds = nil
+        detailRevealTask = nil
+    }
+}
+
+private func nodeIdsNearestViewportCenterFirst(viewportSize: CGSize) -> [UUID] {
+    let zoom = max(0.0001, interaction.untrackedZoom)
+    let pan = interaction.untrackedPan
+    let center = CGPoint(
+        x: (viewportSize.width / 2 - pan.width) / zoom,
+        y: (viewportSize.height / 2 - pan.height) / zoom
+    )
+    let layouts = tab.graph?.tileLayouts ?? [:]
+    return layouts.keys.sorted { lhs, rhs in
+        let a = nodePosition(for: lhs), b = nodePosition(for: rhs)
+        return hypot(a.x - center.x, a.y - center.y) < hypot(b.x - center.x, b.y - center.y)
+    }
+}
+
 private var showGraphPerformanceNotice: Bool {
     shouldUseGraphNodePerformanceMode
 }
 
 private func shouldRenderDetailedGraphNode(_ nodeId: UUID) -> Bool {
-    guard isGraphSimplifiedModeActive else { return true }
+    if !isGraphSimplifiedModeActive {
+        guard let revealed = detailRevealedNodeIds else { return true }
+        if revealed.contains(nodeId) { return true }
+    }
     if selectedGraphNodeIds.contains(nodeId) { return true }
     if linkingFromNodeId == nodeId { return true }
     if hoverReceiverNodeId == nodeId || hoverInvalidReceiverNodeId == nodeId { return true }
@@ -2736,12 +2791,12 @@ private func peopleNameFormatSettingsPopover(
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Picker("", selection: normalizedFormat) {
+            GraphPicker("", selection: normalizedFormat) {
                 Text("First").tag("first")
                 Text("Last").tag("last")
                 Text("Position").tag("position")
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
         }
 
         VStack(alignment: .leading, spacing: 6) {
@@ -2749,11 +2804,11 @@ private func peopleNameFormatSettingsPopover(
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Picker("", selection: normalizedCasing) {
+            GraphPicker("", selection: normalizedCasing) {
                 Text("Title Case").tag("title")
                 Text("UPPERCASE").tag("upper")
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
         }
     }
     .padding(14)
@@ -3030,6 +3085,9 @@ private func applyGraphLifecycle<Content: View>(
     }
     .onChange(of: tab.id, initial: false) { _, _ in
         configureGraphRuntimeBindings()
+    }
+    .onChange(of: interaction.isZoomedOut, initial: false) { wasZoomedOut, isZoomedOut in
+        handleZoomedOutChange(wasZoomedOut: wasZoomedOut, isZoomedOut: isZoomedOut, viewportSize: geoSize)
     }
     .onAppear {
         NotificationCenter.default.post(
@@ -3887,7 +3945,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Picker("Device", selection: Binding<UUID?>(
+                    GraphPicker("Device", selection: Binding<UUID?>(
                         get: { cfg.wrappedValue.deviceId },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -3900,7 +3958,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(device.name).tag(Optional(device.id))
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if devices.isEmpty {
                         Text("No Shure devices with control support are configured.")
@@ -3908,7 +3966,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Picker("Command", selection: Binding(
+                    GraphPicker("Command", selection: Binding(
                         get: { cfg.wrappedValue.commandKind },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -3919,11 +3977,11 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         Text("Set Channel Name").tag(DashboardGraph.ShureSendActionConfig.CommandKind.setChannelName)
                         Text("Raw Command").tag(DashboardGraph.ShureSendActionConfig.CommandKind.rawCommand)
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
 
                     if cfg.wrappedValue.commandKind == .setChannelName {
                         if linkedSourceNames.count <= 1 {
-                            Picker("Channel", selection: Binding(
+                            GraphPicker("Channel", selection: Binding(
                                 get: { cfg.wrappedValue.channelIndex },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -3935,7 +3993,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text("CH \(idx)").tag(idx)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                         }
 
                         if let linkedSourceName {
@@ -3975,7 +4033,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                                         .font(.caption)
                                                         .lineLimit(1)
                                                     Spacer()
-                                                    Picker("", selection: shureChannelAssignmentBinding(forNodeId: nodeId, sourceName: sourceName)) {
+                                                    GraphPicker("", selection: shureChannelAssignmentBinding(forNodeId: nodeId, sourceName: sourceName)) {
                                                         Text("—").tag(Int?.none)
                                                         ForEach(1...channelCount, id: \.self) { idx in
                                                             Text("CH \(idx)").tag(Optional(idx))
@@ -4059,7 +4117,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 }
                             }
 
-                            Picker("Channel name", selection: Binding(
+                            GraphPicker("Channel name", selection: Binding(
                                 get: { cfg.wrappedValue.channelName },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4082,9 +4140,9 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text(formatted).tag(person.title)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                             } else {
-                                TextField("Channel name (max 8 chars)", text: Binding(
+                                GraphTextField("Channel name (max 8 chars)", text: Binding(
                                     get: { cfg.wrappedValue.channelName },
                                     set: { newValue in
                                         var v = cfg.wrappedValue
@@ -4133,7 +4191,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Picker("Device", selection: Binding<UUID?>(
+                    GraphPicker("Device", selection: Binding<UUID?>(
                         get: { cfg.wrappedValue.deviceId },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -4146,7 +4204,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(device.name).tag(Optional(device.id))
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if devices.isEmpty {
                         Text("No Sennheiser devices with control support are configured.")
@@ -4160,7 +4218,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Picker("Action", selection: Binding(
+                    GraphPicker("Action", selection: Binding(
                         get: { cfg.wrappedValue.commandKind },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -4172,11 +4230,11 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(option.1).tag(option.0)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if cfg.wrappedValue.commandKind == .setChannelName {
                         if linkedSourceNames.count <= 1 {
-                            Picker("Channel", selection: Binding(
+                            GraphPicker("Channel", selection: Binding(
                                 get: { cfg.wrappedValue.channelIndex },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4188,7 +4246,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text("CH \(idx)").tag(idx)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                         }
 
                         if let linkedSourceName {
@@ -4228,7 +4286,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                                         .font(.caption)
                                                         .lineLimit(1)
                                                     Spacer()
-                                                    Picker("", selection: sennheiserChannelAssignmentBinding(forNodeId: nodeId, sourceName: sourceName)) {
+                                                    GraphPicker("", selection: sennheiserChannelAssignmentBinding(forNodeId: nodeId, sourceName: sourceName)) {
                                                         Text("—").tag(Int?.none)
                                                         ForEach(1...channelCount, id: \.self) { idx in
                                                             Text("CH \(idx)").tag(Optional(idx))
@@ -4312,7 +4370,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 }
                             }
 
-                            Picker("Channel name", selection: Binding(
+                            GraphPicker("Channel name", selection: Binding(
                                 get: { cfg.wrappedValue.channelName },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4335,9 +4393,9 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text(formatted).tag(person.title)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                             } else {
-                                TextField("Channel name (max 8 chars)", text: Binding(
+                                GraphTextField("Channel name (max 8 chars)", text: Binding(
                                     get: { cfg.wrappedValue.channelName },
                                     set: { newValue in
                                         var v = cfg.wrappedValue
@@ -4350,7 +4408,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             }
                         }
                     } else if cfg.wrappedValue.commandKind == .setMute {
-                        Picker("Channel", selection: Binding(
+                        GraphPicker("Channel", selection: Binding(
                             get: { cfg.wrappedValue.channelIndex },
                             set: { newValue in
                                 var v = cfg.wrappedValue
@@ -4362,7 +4420,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 Text("CH \(idx)").tag(idx)
                             }
                         }
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
 
                         Toggle("Muted", isOn: Binding(
                             get: { cfg.wrappedValue.muteEnabled },
@@ -4373,7 +4431,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             }
                         ))
                     } else if cfg.wrappedValue.commandKind == .setGain {
-                        Picker("Channel", selection: Binding(
+                        GraphPicker("Channel", selection: Binding(
                             get: { cfg.wrappedValue.channelIndex },
                             set: { newValue in
                                 var v = cfg.wrappedValue
@@ -4385,7 +4443,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 Text("CH \(idx)").tag(idx)
                             }
                         }
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
 
                         let gainBinding = Binding<Double>(
                             get: { cfg.wrappedValue.gainDb },
@@ -4403,11 +4461,11 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 .opacity(0.8)
                                 .frame(width: 70, alignment: .leading)
 
-                            TextField("dB", value: gainBinding, format: .number)
+                            GraphTextField("dB", value: gainBinding, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
 
-                            Stepper("", value: gainBinding, in: -3...42, step: 3)
+                            GraphStepper("", value: gainBinding, in: -3...42, step: 3)
                         }
                     } else if cfg.wrappedValue.commandKind == .setRfMute {
                         Text("RF On/Off is not supported for EW-DX SSC v1. Use Advanced (Raw) if your model exposes an endpoint.")
@@ -4417,7 +4475,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
 
                     if cfg.wrappedValue.commandKind == .advanced {
                         HStack(spacing: 12) {
-                            Picker("Method", selection: Binding(
+                            GraphPicker("Method", selection: Binding(
                                 get: { cfg.wrappedValue.method },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4429,9 +4487,9 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text(method.rawValue).tag(method)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
 
-                            Picker("Scheme", selection: Binding(
+                            GraphPicker("Scheme", selection: Binding(
                                 get: { cfg.wrappedValue.scheme },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4442,7 +4500,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 Text("http").tag("http")
                                 Text("https").tag("https")
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                         }
 
                         AutomationVariableTokenField(title: "Path", text: Binding(
@@ -4522,7 +4580,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             .opacity(0.8)
                             .frame(width: 60, alignment: .leading)
 
-                        TextField("Seconds", value: Binding(
+                        GraphTextField("Seconds", value: Binding(
                             get: { cfg.wrappedValue.durationSeconds },
                             set: { newValue in
                                 var v = cfg.wrappedValue
@@ -4550,7 +4608,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Picker("Target", selection: Binding(
+                    GraphPicker("Target", selection: Binding(
                         get: { cfg.wrappedValue.targetMode },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -4562,7 +4620,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(mode.displayName).tag(mode)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if cfg.wrappedValue.targetMode == .specificPeer {
                         if availablePeers.isEmpty {
@@ -4570,7 +4628,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            Picker("Peer", selection: Binding(
+                            GraphPicker("Peer", selection: Binding(
                                 // A target saved by an older build may be the peer's name; show it
                                 // as that peer so the next selection saves the real deviceId.
                                 get: {
@@ -4588,7 +4646,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text(peer.deviceName ?? peer.endpointKey).tag(peer.deviceId)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                         }
                     }
 
@@ -4634,7 +4692,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             .opacity(0.8)
                             .frame(width: 60, alignment: .leading)
 
-                        TextField("Seconds", value: Binding(
+                        GraphTextField("Seconds", value: Binding(
                             get: { cfg.wrappedValue.durationSeconds },
                             set: { newValue in
                                 var v = cfg.wrappedValue
@@ -4659,7 +4717,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Picker("Action", selection: Binding(
+                    GraphPicker("Action", selection: Binding(
                         get: { cfg.wrappedValue.actionKind },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -4671,7 +4729,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(actionKind.displayName).tag(actionKind)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if cfg.wrappedValue.actionKind == .resyncDeviceNames {
                         NameRefreshDeviceOptionsEditor(
@@ -4770,7 +4828,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         set: { var v = cfg.wrappedValue; v.urlString = $0; cfg.wrappedValue = v }
                     ), variableValues: GraphRuntime.universalVariableValuesByName(tab: tab))
 
-                    Picker("Method", selection: Binding(
+                    GraphPicker("Method", selection: Binding(
                         get: { cfg.wrappedValue.method },
                         set: { var v = cfg.wrappedValue; v.method = $0; cfg.wrappedValue = v }
                     )) {
@@ -4778,7 +4836,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text($0.rawValue).tag($0)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
 
                     AutomationVariableTokenField(title: "Headers JSON (optional)", text: Binding(
                         get: { cfg.wrappedValue.headersJSON },
@@ -4793,7 +4851,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                     HStack {
                         Text("Timeout (s)")
                         Spacer()
-                        TextField("", value: Binding(
+                        GraphTextField("", value: Binding(
                             get: { cfg.wrappedValue.timeoutSeconds },
                             set: { var v = cfg.wrappedValue; v.timeoutSeconds = max(1, $0); cfg.wrappedValue = v }
                         ), format: .number)
@@ -4816,7 +4874,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                     .sorted { $0.1 < $1.1 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Picker("Variable", selection: Binding<UUID?>(
+                    GraphPicker("Variable", selection: Binding<UUID?>(
                         get: { cfg.wrappedValue.targetVariableNodeId },
                         set: { var v = cfg.wrappedValue; v.targetVariableNodeId = $0; cfg.wrappedValue = v }
                     )) {
@@ -4825,7 +4883,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(opt.1).tag(Optional(opt.0))
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     Text("Type: \(targetType.displayName)")
                         .font(.caption)
@@ -4845,13 +4903,13 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             set: { var v = cfg.wrappedValue; v.textValue = $0; cfg.wrappedValue = v }
                         ), variableValues: GraphRuntime.universalVariableValuesByName(tab: tab))
                     case .number:
-                        TextField("Value", value: Binding(
+                        GraphTextField("Value", value: Binding(
                             get: { Int(cfg.wrappedValue.numberValue) },
                             set: { var v = cfg.wrappedValue; v.numberValue = Double($0); cfg.wrappedValue = v }
                         ), format: .number)
                         .textFieldStyle(.roundedBorder)
                     case .float:
-                        TextField("Value", value: Binding(
+                        GraphTextField("Value", value: Binding(
                             get: { cfg.wrappedValue.numberValue },
                             set: { var v = cfg.wrappedValue; v.numberValue = $0; cfg.wrappedValue = v }
                         ), format: .number)
@@ -4861,7 +4919,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             get: { cfg.wrappedValue.booleanValue },
                             set: { var v = cfg.wrappedValue; v.booleanValue = $0; cfg.wrappedValue = v }
                         ))
-                        .toggleStyle(.switch)
+                        .toggleStyle(GraphSwitchToggleStyle())
                     }
                 }
             } else {
@@ -5125,7 +5183,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         compactFullHeight: measuredNodeSizes[nodeId]?.height,
         settings: {
             VStack(alignment: .leading, spacing: 10) {
-                    Picker("Source", selection: Binding(
+                    GraphPicker("Source", selection: Binding(
                         get: { cfg.wrappedValue.sourceKind },
                         set: {
                             var v = cfg.wrappedValue
@@ -5137,10 +5195,10 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                             Text(source.displayName).tag(source)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if cfg.wrappedValue.sourceKind == .variable {
-                        Picker("Variable", selection: Binding<UUID?>(
+                        GraphPicker("Variable", selection: Binding<UUID?>(
                             get: { cfg.wrappedValue.variableNodeId },
                             set: {
                                 var v = cfg.wrappedValue
@@ -5153,10 +5211,10 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                                 Text(option.1).tag(Optional(option.0))
                             }
                         }
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
                     }
 
-                    Picker("Operator", selection: Binding(
+                    GraphPicker("Operator", selection: Binding(
                         get: { cfg.wrappedValue.operator },
                         set: {
                             var v = cfg.wrappedValue
@@ -5168,11 +5226,11 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                             Text(op.displayName).tag(op)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if conditionOperatorNeedsText(cfg.wrappedValue.operator, sourceKind: cfg.wrappedValue.sourceKind) {
                         HStack(spacing: 6) {
-                            TextField(
+                            GraphTextField(
                                 "Comparison Text",
                                 text: conditionComparisonTextBinding(forNodeId: nodeId, config: cfg),
                                 onEditingChanged: { editing in
@@ -5202,7 +5260,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                             Text("Number")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            TextField("0", value: Binding(
+                            GraphTextField("0", value: Binding(
                                 get: { cfg.wrappedValue.comparisonNumber },
                                 set: {
                                     var v = cfg.wrappedValue
@@ -5223,7 +5281,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                                 cfg.wrappedValue = v
                             }
                         ))
-                        .toggleStyle(.switch)
+                        .toggleStyle(GraphSwitchToggleStyle())
                     }
 
                     Divider()

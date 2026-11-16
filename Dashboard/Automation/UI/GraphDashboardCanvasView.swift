@@ -456,6 +456,7 @@ struct GraphDashboardCanvasView<Content: View, Popover: View>: View {
                 ZStack {
                     content
                 }
+                .graphNodeControlStyles()
                 .frame(width: geoSize.width, height: geoSize.height, alignment: .topLeading)
                 .coordinateSpace(.named("GraphSpace"))
                 .modifier(GraphViewportTransform(store: interaction))

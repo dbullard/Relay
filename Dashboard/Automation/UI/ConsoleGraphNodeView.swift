@@ -202,7 +202,7 @@ struct ConsoleGraphNodeView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                Picker("Trigger", selection: selection) {
+                GraphPicker("Trigger", selection: selection) {
                     Text("No trigger").tag(UUID?.none)
                     ForEach(linkedTriggerNodes, id: \.id) { trigger in
                         Text("→ \(trigger.name)").tag(Optional(trigger.id))
@@ -265,7 +265,7 @@ struct ConsoleGraphNodeView: View {
                     .labelStyle(.titleAndIcon)
                     .font(.caption2)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(GraphPushButtonStyle(isProminent: true))
             .controlSize(.small)
             .opacity(buildSnapshotWorkItems().isEmpty ? 0.35 : 1.0)
             .disabled(buildSnapshotWorkItems().isEmpty)
@@ -623,11 +623,11 @@ struct ConsoleGraphNodeView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Casing").font(.caption).foregroundStyle(.secondary)
-                    Picker("", selection: casingBinding) {
+                    GraphPicker("", selection: casingBinding) {
                         Text("Title Case").tag("title")
                         Text("ALL CAPS").tag("upper")
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
                 }
 
                 Divider()
@@ -649,7 +649,7 @@ struct ConsoleGraphNodeView: View {
 
                     Spacer()
 
-                    Stepper(value: limitBinding, in: 6...32) {
+                    GraphStepper(value: limitBinding, in: 6...32) {
                         Text("\(max(6, snapshotShortenLimitSelection))")
                             .font(.caption)
                     }
@@ -720,22 +720,22 @@ struct ConsoleGraphNodeView: View {
                 // Name format
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Name Format").font(.caption).foregroundStyle(.secondary)
-                    Picker("", selection: nameFormatBinding) {
+                    GraphPicker("", selection: nameFormatBinding) {
                         Text("First Name").tag("first")
                         Text("Last Name").tag("last")
                         Text("Position").tag("position")
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
                 }
 
                 // Casing
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Casing").font(.caption).foregroundStyle(.secondary)
-                    Picker("", selection: nameCasingBinding) {
+                    GraphPicker("", selection: nameCasingBinding) {
                         Text("Title Case").tag("title")
                         Text("UPPERCASE").tag("upper")
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
                 }
 
                 Divider()
@@ -773,7 +773,7 @@ struct ConsoleGraphNodeView: View {
 
                             Spacer()
 
-                            Picker("", selection: positionDefaultBinding(for: pos)) {
+                            GraphPicker("", selection: positionDefaultBinding(for: pos)) {
                                 Text("—").tag(Int?.none)
                                 ForEach(channelOptions, id: \.channel) { opt in
                                     Text(opt.label).tag(Optional(opt.channel))
@@ -833,7 +833,7 @@ struct ConsoleGraphNodeView: View {
                 .buttonStyle(.plain)
             }
 
-            TextField("Search positions…", text: $positionSearchText)
+            GraphTextField("Search positions…", text: $positionSearchText)
                 .textFieldStyle(.roundedBorder)
 
             Divider()
@@ -1186,7 +1186,7 @@ struct ConsoleGraphNodeView: View {
                     .lineLimit(1)
                     .frame(width: 90, alignment: .trailing)
 
-                Picker("", selection: Binding<Int?>(
+                GraphPicker("", selection: Binding<Int?>(
                     get: { row.assignedChannel },
                     set: { onAssign(row.title, $0) }
                 )) {
@@ -1249,7 +1249,7 @@ struct ConsoleGraphNodeView: View {
                     .labelStyle(.titleAndIcon)
                     .font(.caption2)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(GraphPushButtonStyle(isProminent: true))
             .controlSize(.small)
             .opacity(assignedCount == 0 ? 0.35 : 1.0)
             .disabled(assignedCount == 0)
@@ -1414,7 +1414,7 @@ struct ConsoleGraphNodeView: View {
                                 .foregroundStyle(.secondary)
                                 .frame(width: 70, alignment: .leading)
 
-                                TextField("Snapshot name", text: snapshotNameBinding(seq: item.seq, fallback: item.name))
+                                GraphTextField("Snapshot name", text: snapshotNameBinding(seq: item.seq, fallback: item.name))
                                     .textFieldStyle(.roundedBorder)
                                     .font(.caption)
                             }
@@ -1674,7 +1674,7 @@ struct ConsoleGraphNodeView: View {
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Picker("", selection: actionBinding.kind) {
+                GraphPicker("", selection: actionBinding.kind) {
                     ForEach(DashboardGraph.StandardActionKind.allCases, id: \.self) { kind in
                         Text(kind.displayName).tag(kind)
                     }
@@ -1686,7 +1686,7 @@ struct ConsoleGraphNodeView: View {
 
                 Toggle("", isOn: actionBinding.isEnabled)
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(GraphSwitchToggleStyle())
                     .controlSize(.small)
 
                 Button {
@@ -1703,7 +1703,7 @@ struct ConsoleGraphNodeView: View {
             case .sceneRecall:
                 HStack {
                     Text("Scene").font(.caption2).foregroundStyle(.secondary)
-                    TextField(scenePlaceholder, text: actionBinding.sceneNumber)
+                    GraphTextField(scenePlaceholder, text: actionBinding.sceneNumber)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 100)
                 }
@@ -1711,12 +1711,12 @@ struct ConsoleGraphNodeView: View {
             case .mute:
                 HStack {
                     Text("Ch").font(.caption2).foregroundStyle(.secondary)
-                    Stepper(value: actionBinding.channelIndex, in: 1...128) {
+                    GraphStepper(value: actionBinding.channelIndex, in: 1...128) {
                         Text("\(actionBinding.wrappedValue.channelIndex)").font(.caption2)
                     }
                     .frame(maxWidth: 90)
 
-                    Picker("", selection: actionBinding.muteMode) {
+                    GraphPicker("", selection: actionBinding.muteMode) {
                         Text("On").tag(DashboardGraph.StandardMuteMode.on)
                         Text("Off").tag(DashboardGraph.StandardMuteMode.off)
                     }
@@ -1727,13 +1727,13 @@ struct ConsoleGraphNodeView: View {
             case .level:
                 HStack {
                     Text("Ch").font(.caption2).foregroundStyle(.secondary)
-                    Stepper(value: actionBinding.channelIndex, in: 1...128) {
+                    GraphStepper(value: actionBinding.channelIndex, in: 1...128) {
                         Text("\(actionBinding.wrappedValue.channelIndex)").font(.caption2)
                     }
                     .frame(maxWidth: 90)
 
                     Text("dB").font(.caption2).foregroundStyle(.secondary)
-                    TextField("0.0", value: actionBinding.levelDb, format: .number)
+                    GraphTextField("0.0", value: actionBinding.levelDb, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 70)
                 }
@@ -1741,7 +1741,7 @@ struct ConsoleGraphNodeView: View {
             case .pan:
                 HStack {
                     Text("Ch").font(.caption2).foregroundStyle(.secondary)
-                    Stepper(value: actionBinding.channelIndex, in: 1...128) {
+                    GraphStepper(value: actionBinding.channelIndex, in: 1...128) {
                         Text("\(actionBinding.wrappedValue.channelIndex)").font(.caption2)
                     }
                     .frame(maxWidth: 90)
@@ -1853,26 +1853,26 @@ struct ConsoleGraphNodeView: View {
             HStack(spacing: 8) {
                 Toggle("Enabled", isOn: actionBinding.isEnabled)
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(GraphSwitchToggleStyle())
                     .controlSize(.mini)
 
                 if actionBinding.wrappedValue.kind != .macro {
-                    Picker("Type", selection: actionBinding.channelType) {
+                    GraphPicker("Type", selection: actionBinding.channelType) {
                         ForEach(DashboardGraph.DiGiCoChannelType.allCases, id: \.self) { type in
                             Text(type.displayName).tag(type)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
                     .labelsHidden()
                     .font(.caption)
                 }
 
-                Picker("Action", selection: actionBinding.kind) {
+                GraphPicker("Action", selection: actionBinding.kind) {
                     ForEach(DashboardGraph.DiGiCoActionKind.allCases, id: \.self) { kind in
                         Text(kind.displayName).tag(kind)
                     }
                 }
-                .pickerStyle(.menu)
+                .graphPickerStyle(.menu)
                 .labelsHidden()
                 .font(.caption)
 
@@ -1895,7 +1895,7 @@ struct ConsoleGraphNodeView: View {
                     .foregroundStyle(.secondary)
 
                 if isMacro {
-                    Stepper(
+                    GraphStepper(
                         value: actionBinding.channelIndex,
                         in: 0...255
                     ) {
@@ -1907,16 +1907,16 @@ struct ConsoleGraphNodeView: View {
                 } else {
                     let options = digicoChannelOptions(for: actionBinding.wrappedValue.channelType)
                     if !options.isEmpty {
-                        Picker("Channel", selection: actionBinding.channelIndex) {
+                        GraphPicker("Channel", selection: actionBinding.channelIndex) {
                             ForEach(options, id: \.channel) { option in
                                 Text(option.label).tag(option.channel)
                             }
                         }
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
                         .labelsHidden()
                         .font(.caption)
                     } else {
-                        Stepper(
+                        GraphStepper(
                             value: actionBinding.channelIndex,
                             in: 1...256
                         ) {
@@ -1939,7 +1939,7 @@ struct ConsoleGraphNodeView: View {
                             Text("dB:")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            TextField("0.0", value: actionBinding.faderDb, format: .number)
+                            GraphTextField("0.0", value: actionBinding.faderDb, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 64)
                                 .multilineTextAlignment(.trailing)
@@ -1950,7 +1950,7 @@ struct ConsoleGraphNodeView: View {
                             actionBinding.wrappedValue.kind == .mute ? "Mute On" : "Solo On",
                             isOn: actionBinding.boolValue
                         )
-                        .toggleStyle(.switch)
+                        .toggleStyle(GraphSwitchToggleStyle())
                         .font(.caption)
                         .controlSize(.mini)
                     }
@@ -2252,7 +2252,7 @@ struct ConsoleGraphNodeView: View {
                     }
                 )
 
-                Picker("Action", selection: actionMenuBinding) {
+                GraphPicker("Action", selection: actionMenuBinding) {
                     ForEach(QuActionMenu.allCases) { kind in
                         Text(kind.displayName).tag(kind)
                     }
@@ -2261,7 +2261,7 @@ struct ConsoleGraphNodeView: View {
                 .frame(maxWidth: 220)
 
                 Toggle("Enabled", isOn: actionBinding.isEnabled)
-                    .toggleStyle(.switch)
+                    .toggleStyle(GraphSwitchToggleStyle())
 
                 Spacer()
 
@@ -2283,13 +2283,13 @@ struct ConsoleGraphNodeView: View {
                         Text("Mode")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Picker("", selection: actionBinding.sceneRecallMode) {
+                        GraphPicker("", selection: actionBinding.sceneRecallMode) {
                             ForEach(DashboardGraph.QuSceneRecallMode.allCases, id: \.self) { mode in
                                 Text(mode.displayName).tag(mode)
                             }
                         }
                         .labelsHidden()
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
                     }
 
                     if actionBinding.wrappedValue.sceneRecallMode == .custom {
@@ -2325,14 +2325,14 @@ struct ConsoleGraphNodeView: View {
                             Text("Bank")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            TextField("1", text: bankBinding)
+                            GraphTextField("1", text: bankBinding)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 90)
 
                             Text("Program")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            TextField("1", text: programBinding)
+                            GraphTextField("1", text: programBinding)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 90)
                         }
@@ -2344,7 +2344,7 @@ struct ConsoleGraphNodeView: View {
                     Text("Soft Key")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Stepper("", value: actionBinding.softKey, in: 1...16)
+                    GraphStepper("", value: actionBinding.softKey, in: 1...16)
                         .labelsHidden()
 
                     Text("#\(actionBinding.wrappedValue.softKey)")
@@ -2357,7 +2357,7 @@ struct ConsoleGraphNodeView: View {
                         Text("MSB")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Stepper("", value: actionBinding.manualMSB, in: 0...127)
+                        GraphStepper("", value: actionBinding.manualMSB, in: 0...127)
                             .labelsHidden()
 
                         Text("\(actionBinding.wrappedValue.manualMSB)")
@@ -2366,7 +2366,7 @@ struct ConsoleGraphNodeView: View {
                         Text("LSB")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Stepper("", value: actionBinding.manualLSB, in: 0...127)
+                        GraphStepper("", value: actionBinding.manualLSB, in: 0...127)
                             .labelsHidden()
 
                         Text("\(actionBinding.wrappedValue.manualLSB)")
@@ -2396,7 +2396,7 @@ struct ConsoleGraphNodeView: View {
                     }
                 } else {
                     HStack(spacing: 10) {
-                        Picker("Source", selection: actionBinding.sourceKind) {
+                        GraphPicker("Source", selection: actionBinding.sourceKind) {
                             ForEach(DashboardGraph.QuSourceKind.allCases, id: \.self) { kind in
                                 Text(kind.displayName).tag(kind)
                             }
@@ -2414,7 +2414,7 @@ struct ConsoleGraphNodeView: View {
                                     actionBinding.wrappedValue.sourceIndex = max(range.lowerBound, min(range.upperBound, newValue))
                                 }
                             )
-                            TextField("1", value: sourceIndexBinding, formatter: Self.intFormatter)
+                            GraphTextField("1", value: sourceIndexBinding, formatter: Self.intFormatter)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 48)
                         }
@@ -2422,7 +2422,7 @@ struct ConsoleGraphNodeView: View {
 
                     if action.kind != .channelMute && action.kind != .groupMute {
                         HStack(spacing: 10) {
-                            Picker("Destination", selection: actionBinding.destinationKind) {
+                            GraphPicker("Destination", selection: actionBinding.destinationKind) {
                                 ForEach(DashboardGraph.QuDestinationKind.allCases, id: \.self) { kind in
                                     Text(kind.displayName).tag(kind)
                                 }
@@ -2437,7 +2437,7 @@ struct ConsoleGraphNodeView: View {
                                         actionBinding.wrappedValue.destinationIndex = max(range.lowerBound, min(range.upperBound, newValue))
                                     }
                                 )
-                                TextField("1", value: destinationIndexBinding, formatter: Self.intFormatter)
+                                GraphTextField("1", value: destinationIndexBinding, formatter: Self.intFormatter)
                                     .textFieldStyle(.roundedBorder)
                                     .frame(width: 48)
                             }
@@ -2454,7 +2454,7 @@ struct ConsoleGraphNodeView: View {
                             get: { actionBinding.wrappedValue.value },
                             set: { actionBinding.wrappedValue.value = max(0, min(16383, $0)) }
                         )
-                        TextField("0-16383", value: rawValueBinding, formatter: Self.intFormatter)
+                        GraphTextField("0-16383", value: rawValueBinding, formatter: Self.intFormatter)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 70)
 
@@ -2467,13 +2467,13 @@ struct ConsoleGraphNodeView: View {
                         Text("Mute")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Picker("", selection: actionBinding.muteMode) {
+                        GraphPicker("", selection: actionBinding.muteMode) {
                             ForEach(DashboardGraph.QuMuteMode.allCases, id: \.self) { mode in
                                 Text(mode.displayName).tag(mode)
                             }
                         }
                         .labelsHidden()
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
                     }
                 } else if action.kind == .mixAssign {
                     Toggle("On", isOn: actionBinding.boolValue)
@@ -2487,7 +2487,7 @@ struct ConsoleGraphNodeView: View {
                         Text("Level (dB)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        TextField("-inf to 10", value: dbBinding, formatter: Self.quDbFormatter)
+                        GraphTextField("-inf to 10", value: dbBinding, formatter: Self.quDbFormatter)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 90)
 

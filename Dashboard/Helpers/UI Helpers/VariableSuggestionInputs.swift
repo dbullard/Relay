@@ -156,6 +156,10 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
     @Binding var text: String
     let variableValues: () -> [String: String]
     let multiline: Bool
+    /// Take keyboard focus as soon as the view is in a window (click-to-edit fields).
+    var activatesOnAppear = false
+    /// Called when the text view stops being first responder.
+    var onEndEditing: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, multiline: multiline)
@@ -205,12 +209,21 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
         scrollView.documentView = textView
 
         context.coordinator.textView = textView
+        context.coordinator.onEndEditing = onEndEditing
+        if activatesOnAppear {
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView, let window = textView.window else { return }
+                window.makeFirstResponder(textView)
+                textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+            }
+        }
         return scrollView
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? PlainVariableSuggestingTextView else { return }
         textView.variableValueProvider = variableValues
+        context.coordinator.onEndEditing = onEndEditing
         if textView.string != text, !context.coordinator.isSynchronizingFromSwiftUI {
             context.coordinator.isSynchronizingFromSwiftUI = true
             let selectedRange = textView.selectedRange()
@@ -224,6 +237,7 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
         @Binding var text: String
         let multiline: Bool
         weak var textView: PlainVariableSuggestingTextView?
+        var onEndEditing: (() -> Void)?
         var isSynchronizingFromSwiftUI = false
         var shouldTriggerVariableCompletionAfterChange = false
         var shouldSuppressNextVariableCompletionRefresh = false
@@ -246,6 +260,10 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
                 }
             }
             shouldTriggerVariableCompletionAfterChange = false
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            onEndEditing?()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -318,12 +336,16 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
 struct VariableSuggestingTextField: View {
     private let title: String
     @Binding private var text: String
+    private let activatesOnAppear: Bool
+    private let onEndEditing: (() -> Void)?
     @Environment(\.dashboardVariableValues) private var variableValues
     @Environment(\.dashboardVariableValuesProvider) private var variableValuesProvider
 
-    init(_ title: String, text: Binding<String>) {
+    init(_ title: String, text: Binding<String>, activatesOnAppear: Bool = false, onEndEditing: (() -> Void)? = nil) {
         self.title = title
         self._text = text
+        self.activatesOnAppear = activatesOnAppear
+        self.onEndEditing = onEndEditing
     }
 
     var body: some View {
@@ -339,7 +361,9 @@ struct VariableSuggestingTextField: View {
             VariableSuggestingPlainTextInput(
                 text: $text,
                 variableValues: variableValuesProvider ?? { [variableValues] in variableValues },
-                multiline: false
+                multiline: false,
+                activatesOnAppear: activatesOnAppear,
+                onEndEditing: onEndEditing
             )
         }
         // Fixed height: the NSScrollView inside has no intrinsic height, so with only a
@@ -384,15 +408,32 @@ struct AutomationVariableTokenField: View {
         self.multiline = multiline
     }
 
+    /// Graph nodes show the value as text and create the AppKit text view only while it
+    /// is being edited: AppKit views re-measure on every canvas zoom step (see
+    /// GraphNodeControls.swift).
+    @State private var isEditing = false
+    @Environment(\.isEnabled) private var isEnabled
+
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             Group {
+                #if os(macOS)
+                if !isEditing {
+                    display
+                } else if multiline {
+                    VariableSuggestingTextEditor(text: $text, activatesOnAppear: true) { isEditing = false }
+                        .frame(minHeight: 64)
+                } else {
+                    VariableSuggestingTextField(title, text: $text, activatesOnAppear: true) { isEditing = false }
+                }
+                #else
                 if multiline {
                     VariableSuggestingTextEditor(text: $text)
                         .frame(minHeight: 64)
                 } else {
                     VariableSuggestingTextField(title, text: $text)
                 }
+                #endif
             }
             .environment(\.dashboardVariableValuesProvider, { [variableValues] in
                 variableValues().filter { !$0.key.contains(":") }
@@ -401,6 +442,53 @@ struct AutomationVariableTokenField: View {
             AutomationVariableInsertButton(title: title, text: $text)
         }
     }
+
+    #if os(macOS)
+    /// Same size and frame as the editing views, so clicking in doesn't shift the layout.
+    private var display: some View {
+        let cornerRadius: CGFloat = multiline ? 8 : 6
+        return Group {
+            if text.isEmpty {
+                Text(title).foregroundStyle(.secondary)
+            } else {
+                Text(verbatim: text).foregroundStyle(isEnabled ? .primary : .secondary)
+            }
+        }
+        .font(.system(size: NSFont.systemFontSize))
+        .lineLimit(multiline ? nil : 1)
+        .truncationMode(.tail)
+        .padding(.horizontal, multiline ? 4 : 9)
+        .padding(.vertical, multiline ? 6 : 0)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: multiline ? 96 : 28,
+            maxHeight: multiline ? 96 : 28,
+            alignment: multiline ? .topLeading : .leading
+        )
+        .background(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(multiline ? Color.clear : Color(nsColor: .textBackgroundColor).opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(multiline ? Color.white.opacity(0.10) : Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .clipped()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard isEnabled else { return }
+            isEditing = true
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(title))
+        .accessibilityValue(Text(verbatim: text))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            guard isEnabled else { return }
+            isEditing = true
+        }
+    }
+    #endif
 }
 
 struct AutomationVariableInsertButton: View {
@@ -420,7 +508,7 @@ struct AutomationVariableInsertButton: View {
         } label: {
             Image(systemName: "number.square")
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(GraphBorderlessButtonStyle())
         .help("Insert a variable")
         .accessibilityLabel("Insert variable into \(title)")
         #else
@@ -431,11 +519,15 @@ struct AutomationVariableInsertButton: View {
 
 struct VariableSuggestingTextEditor: View {
     @Binding private var text: String
+    private let activatesOnAppear: Bool
+    private let onEndEditing: (() -> Void)?
     @Environment(\.dashboardVariableValues) private var variableValues
     @Environment(\.dashboardVariableValuesProvider) private var variableValuesProvider
 
-    init(text: Binding<String>) {
+    init(text: Binding<String>, activatesOnAppear: Bool = false, onEndEditing: (() -> Void)? = nil) {
         self._text = text
+        self.activatesOnAppear = activatesOnAppear
+        self.onEndEditing = onEndEditing
     }
 
     var body: some View {
@@ -443,7 +535,9 @@ struct VariableSuggestingTextEditor: View {
         VariableSuggestingPlainTextInput(
             text: $text,
             variableValues: variableValuesProvider ?? { [variableValues] in variableValues },
-            multiline: true
+            multiline: true,
+            activatesOnAppear: activatesOnAppear,
+            onEndEditing: onEndEditing
         )
             // Bounded for the same reason as VariableSuggestingTextField; it scrolls.
             .frame(minHeight: 96, maxHeight: 96)
