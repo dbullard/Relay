@@ -5979,6 +5979,154 @@ private func canvasBackedModuleGroupNodeView(
         }
 }
 
+/// Output nubs for graph-only nodes: per-state (toggle), per-step (sequence), per-rule
+/// (word trigger) or per-button outputs, else a single nub. Kept separate from
+/// `graphOnlyModuleGroupNodeView` so that modifier chain stays small enough for older
+/// compilers to type-check (Xcode 26.6 timed out on it).
+@ViewBuilder
+private func graphOnlyModuleGroupOutputNubs(nodeId: UUID, key: String) -> some View {
+    if isToggleNodeId(nodeId) {
+        // Two output nubs: top = On, bottom = Off
+        VStack(spacing: 14) {
+            ForEach([true, false], id: \.self) { isOn in
+                ZStack(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: 26, height: 20)
+                        .contentShape(Rectangle())
+                        .highPriorityGesture(
+                            DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
+                                .onChanged { handleToggleOutputDragChanged(nodeId: nodeId, isOn: isOn, value: $0) }
+                                .onEnded   { handleToggleOutputDragEnded(nodeId: nodeId, isOn: isOn, value: $0) }
+                        )
+                    Circle()
+                        .fill(linkingFromNodeId == nodeId && currentToggleOutputIsOn == isOn
+                              ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
+                        .frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                        .offset(x: 5)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+    } else if isSequenceNodeId(nodeId) {
+        // N output nubs (top → bottom = step 1 → step N)
+        let total = sequenceOutputLimit(for: nodeId)
+        VStack(spacing: 14) {
+            ForEach(0..<total, id: \.self) { step in
+                ZStack(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: 26, height: 20)
+                        .contentShape(Rectangle())
+                        .highPriorityGesture(
+                            DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
+                                .onChanged { handleSequenceOutputDragChanged(nodeId: nodeId, step: step, total: total, value: $0) }
+                                .onEnded   { handleSequenceOutputDragEnded(nodeId: nodeId, step: step, total: total, value: $0) }
+                        )
+                    Circle()
+                        .fill(linkingFromNodeId == nodeId && currentSequenceOutputStep == step
+                              ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
+                        .frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                        .offset(x: 5)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+    } else if isWordTriggerNodeId(nodeId) {
+        // Standalone word trigger nodes share the transcription node's config.
+        let canonicalId = isStandaloneWordTriggerNodeId(nodeId)
+            ? groupNodeId(for: "moduleGroup.transcription")
+            : nodeId
+        let rules = tab.graph?.wordTriggerConfigByNodeId[canonicalId.uuidString]?.rules ?? []
+        let total = max(1, rules.count)
+        VStack(spacing: 14) {
+            ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
+                Group {
+                    ZStack(alignment: .trailing) {
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(width: 26, height: 20)
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(
+                                DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
+                                    .onChanged { handleWordTriggerOutputDragChanged(nodeId: canonicalId, ruleId: rule.id, ruleIndex: index, total: total, value: $0) }
+                                    .onEnded   { handleWordTriggerOutputDragEnded(nodeId: canonicalId, ruleId: rule.id, value: $0) }
+                            )
+                        Circle()
+                            .fill(linkingFromNodeId == nodeId && currentWordTriggerRuleId == rule.id
+                                  ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                            .offset(x: 5)
+                            .allowsHitTesting(false)
+                    }
+                    .graphOutputPortLabel(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
+                }
+            }
+        }
+    } else if isMultiButtonNodeId(nodeId) {
+        let buttons = buttonsForButtonNode(nodeId)
+        VStack(spacing: 14) {
+            ForEach(Array(buttons.enumerated()), id: \.element.id) { index, button in
+                Group {
+                    // Label: title → icon symbol name → "Button N"
+                    let title = button.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let iconLabel: String = {
+                        switch button.icon.source {
+                        case .preset: return button.icon.preset.title
+                        case .symbol, .customSymbol:
+                            let s = button.icon.systemName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            return s.isEmpty ? "Button \(index + 1)" : s
+                        case .none: return "Button \(index + 1)"
+                        }
+                    }()
+                    ZStack(alignment: .trailing) {
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(width: 26, height: 20)
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(
+                                DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
+                                    .onChanged { handleButtonOutputDragChanged(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
+                                    .onEnded { handleButtonOutputDragEnded(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
+                            )
+                        Circle()
+                            .fill(linkingFromNodeId == nodeId && currentButtonOutputConfigId == button.id
+                                  ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                            .offset(x: 5)
+                            .allowsHitTesting(false)
+                    }
+                    .graphOutputPortLabel(title.isEmpty ? iconLabel : title)
+                }
+            }
+        }
+    } else {
+    ZStack(alignment: .trailing) {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 26, height: 26)
+            .contentShape(Rectangle())
+            .highPriorityGesture(linkDragGestureFromSenderNub(nodeId: nodeId))
+            .accessibilityLabel("Link output")
+
+        Circle()
+            .fill(
+                linkingFromNodeId == nodeId
+                ? Color.accentColor.opacity(0.95)
+                : (isGraphVariablesFeatureEnabled && key == "utility.variable" ? Color.purple.opacity(0.80) : Color.white.opacity(0.70))
+            )
+            .frame(width: 10, height: 10)
+            .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+            .offset(x: 5)
+            .allowsHitTesting(false)
+    }
+    } // end else (single nub)
+}
+
 @ViewBuilder
 private func graphOnlyModuleGroupNodeView(
     nodeId: UUID,
@@ -6039,146 +6187,7 @@ private func graphOnlyModuleGroupNodeView(
             }
         }
         .overlay(alignment: .trailing) {
-            if isToggleNodeId(nodeId) {
-                // Two output nubs: top = On, bottom = Off
-                VStack(spacing: 14) {
-                    ForEach([true, false], id: \.self) { isOn in
-                        ZStack(alignment: .trailing) {
-                            Rectangle()
-                                .fill(Color.clear)
-                                .frame(width: 26, height: 20)
-                                .contentShape(Rectangle())
-                                .highPriorityGesture(
-                                    DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
-                                        .onChanged { handleToggleOutputDragChanged(nodeId: nodeId, isOn: isOn, value: $0) }
-                                        .onEnded   { handleToggleOutputDragEnded(nodeId: nodeId, isOn: isOn, value: $0) }
-                                )
-                            Circle()
-                                .fill(linkingFromNodeId == nodeId && currentToggleOutputIsOn == isOn
-                                      ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
-                                .frame(width: 10, height: 10)
-                                .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                                .offset(x: 5)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                }
-            } else if isSequenceNodeId(nodeId) {
-                // N output nubs (top → bottom = step 1 → step N)
-                let total = sequenceOutputLimit(for: nodeId)
-                VStack(spacing: 14) {
-                    ForEach(0..<total, id: \.self) { step in
-                        ZStack(alignment: .trailing) {
-                            Rectangle()
-                                .fill(Color.clear)
-                                .frame(width: 26, height: 20)
-                                .contentShape(Rectangle())
-                                .highPriorityGesture(
-                                    DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
-                                        .onChanged { handleSequenceOutputDragChanged(nodeId: nodeId, step: step, total: total, value: $0) }
-                                        .onEnded   { handleSequenceOutputDragEnded(nodeId: nodeId, step: step, total: total, value: $0) }
-                                )
-                            Circle()
-                                .fill(linkingFromNodeId == nodeId && currentSequenceOutputStep == step
-                                      ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
-                                .frame(width: 10, height: 10)
-                                .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                                .offset(x: 5)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                }
-            } else if isWordTriggerNodeId(nodeId) {
-                // Standalone word trigger nodes share the transcription node's config.
-                let canonicalId = isStandaloneWordTriggerNodeId(nodeId)
-                    ? groupNodeId(for: "moduleGroup.transcription")
-                    : nodeId
-                let rules = tab.graph?.wordTriggerConfigByNodeId[canonicalId.uuidString]?.rules ?? []
-                let total = max(1, rules.count)
-                VStack(spacing: 14) {
-                    ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
-                        Group {
-                            ZStack(alignment: .trailing) {
-                                Rectangle()
-                                    .fill(Color.clear)
-                                    .frame(width: 26, height: 20)
-                                    .contentShape(Rectangle())
-                                    .highPriorityGesture(
-                                        DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
-                                            .onChanged { handleWordTriggerOutputDragChanged(nodeId: canonicalId, ruleId: rule.id, ruleIndex: index, total: total, value: $0) }
-                                            .onEnded   { handleWordTriggerOutputDragEnded(nodeId: canonicalId, ruleId: rule.id, value: $0) }
-                                    )
-                                Circle()
-                                    .fill(linkingFromNodeId == nodeId && currentWordTriggerRuleId == rule.id
-                                          ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
-                                    .frame(width: 10, height: 10)
-                                    .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                                    .offset(x: 5)
-                                    .allowsHitTesting(false)
-                            }
-                            .graphOutputPortLabel(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
-                        }
-                    }
-                }
-            } else if isMultiButtonNodeId(nodeId) {
-                let buttons = buttonsForButtonNode(nodeId)
-                VStack(spacing: 14) {
-                    ForEach(Array(buttons.enumerated()), id: \.element.id) { index, button in
-                        Group {
-                            // Label: title → icon symbol name → "Button N"
-                            let title = button.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let iconLabel: String = {
-                                switch button.icon.source {
-                                case .preset: return button.icon.preset.title
-                                case .symbol, .customSymbol:
-                                    let s = button.icon.systemName.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    return s.isEmpty ? "Button \(index + 1)" : s
-                                case .none: return "Button \(index + 1)"
-                                }
-                            }()
-                            ZStack(alignment: .trailing) {
-                                Rectangle()
-                                    .fill(Color.clear)
-                                    .frame(width: 26, height: 20)
-                                    .contentShape(Rectangle())
-                                    .highPriorityGesture(
-                                        DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
-                                            .onChanged { handleButtonOutputDragChanged(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
-                                            .onEnded { handleButtonOutputDragEnded(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
-                                    )
-                                Circle()
-                                    .fill(linkingFromNodeId == nodeId && currentButtonOutputConfigId == button.id
-                                          ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
-                                    .frame(width: 10, height: 10)
-                                    .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                                    .offset(x: 5)
-                                    .allowsHitTesting(false)
-                            }
-                            .graphOutputPortLabel(title.isEmpty ? iconLabel : title)
-                        }
-                    }
-                }
-            } else {
-            ZStack(alignment: .trailing) {
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-                    .highPriorityGesture(linkDragGestureFromSenderNub(nodeId: nodeId))
-                    .accessibilityLabel("Link output")
-
-                Circle()
-                    .fill(
-                        linkingFromNodeId == nodeId
-                        ? Color.accentColor.opacity(0.95)
-                        : (isGraphVariablesFeatureEnabled && key == "utility.variable" ? Color.purple.opacity(0.80) : Color.white.opacity(0.70))
-                    )
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                    .offset(x: 5)
-                    .allowsHitTesting(false)
-            }
-            } // end else (single nub)
+            graphOnlyModuleGroupOutputNubs(nodeId: nodeId, key: key)
         }
         .contentShape(Rectangle())
         .modifier(nodePositioner(nodeId))
