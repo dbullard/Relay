@@ -64,11 +64,28 @@ state lost on persist, keystroke trigger data race, compact-card size pop.
   - Left as is: `refreshPCOModulesForSelectedTab` rewrites PCO modules with an identical value
     on purpose to force PCO tiles to redraw.
 
-- [ ] **Shared-values snapshot still publishes 3–4 times a second** — S/M
-  - With wireless bindings the refresh loop runs every 0.5 s and `SharedValue.apply` treats any
-    value older than 1 s as changed, so the snapshot republishes nearly every tick. Canvas text
-    tiles that resolve tokens re-render each time. Consider excluding `lastUpdatedAt`-only
-    changes from publishing (or publishing them at a slower rate).
+- [x] **Shared-values snapshot published 3–4 times a second** — fixed
+  - `SharedValue.apply` refreshes `lastUpdatedAt` for an unchanged live value once a second, so
+    nearly every refresh tick produced a new snapshot. `SharedValueStore.publish(_:)` is now the
+    only publish point; a snapshot that differs only in `lastUpdatedAt` is published at most
+    every 5 s, while payload, status, value-list and recent OSC/trigger changes publish
+    immediately. Measured on the test dashboard (1,240 values): 74 → 24 publishes per 20 s.
+  - The remaining ~1/s publishes are the clock values (`clock_local_time`,
+    `clock_unix_timestamp`), which genuinely change every second.
+
+- [x] **Every shared-values reader re-rendered on any value change (e.g. the clock, every
+  second)** — fixed
+  - `SharedValueStore.value(named:)` returns a value through a small per-name observable cell
+    (`SharedValueCell`), updated on publish only when that name's payload or status changes.
+    `SharedValueResolver` uses it, and text-tile token resolution
+    (`GraphRuntime.resolveTextInterpolationToken`) now looks tokens up with
+    `GraphRuntime.variableValue(forKey:tab:)` instead of building the full
+    `variableValuesByName` dictionary (all ~1,240 values) for every token on every render.
+  - Still whole-snapshot readers (fine, not per-frame): the Shared Values window, token
+    autocomplete and the inspector's variable list, and the LAN export.
+  - Verified by `SharedValueObservationScopeTests`: a reader of `#clock_weekday` isn't notified
+    when the clock ticks, and is notified when the weekday changes. Not measured in the app (the
+    test dashboard has no text tiles).
 
 - [ ] **Other periodic `UserDefaults` writers re-render every `@AppStorage` view** — S each
   - Same mechanism as above. Known example: Shure live sync saves the device list every 30 s

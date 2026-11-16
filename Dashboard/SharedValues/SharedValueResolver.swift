@@ -66,8 +66,8 @@ struct SharedValueResolver {
         let segments = raw.split(separator: ".").map(String.init)
         let name = normalizeSharedValueName(segments.first ?? "")
         guard !name.isEmpty else { return nil }
-        let values = store.snapshot.values
-        guard let payload = values.first(where: { $0.name == name })?.payload
+        // Per-name lookup: observes only this value, not the whole snapshot.
+        guard let payload = store.value(named: name)?.payload
             ?? LinkedDeviceVariableStore.shared.payload(named: name)
             ?? SyncedTabVariableStore.shared.payload(named: name)
             ?? LinkedComputerPersonVariableStore.shared.value(named: name).map(SharedValuePayload.text) else { return nil }

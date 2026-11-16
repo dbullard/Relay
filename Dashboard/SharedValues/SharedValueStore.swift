@@ -418,6 +418,74 @@ final class SharedValueStore {
     @ObservationIgnored private var pendingPersistence: Task<Void, Never>?
     @ObservationIgnored private var pendingOSCSnapshotRefresh: Task<Void, Never>?
     @ObservationIgnored private var hasLoaded = false
+    @ObservationIgnored private var lastTimestampOnlyPublishAt: Date = .distantPast
+
+    /// How often a snapshot that differs only in `lastUpdatedAt` is published.
+    static let timestampOnlyPublishInterval: TimeInterval = 5
+
+    /// The single place the snapshot is published. Unchanged live values (wireless levels,
+    /// clocks) refresh `lastUpdatedAt` about every second, which made every refresh tick a new
+    /// snapshot and re-rendered every view that resolves shared values 3–4 times a second.
+    /// A snapshot whose only differences are those timestamps is published at most every
+    /// `timestampOnlyPublishInterval`; any change to a payload, status, value list or recent
+    /// OSC/trigger activity is published immediately.
+    private func publish(_ next: SharedValueSnapshot, now: Date = Date()) {
+        guard next != snapshot else { return }
+        if Self.differOnlyInTimestamps(snapshot, next) {
+            guard now.timeIntervalSince(lastTimestampOnlyPublishAt) >= Self.timestampOnlyPublishInterval else { return }
+            lastTimestampOnlyPublishAt = now
+        }
+        snapshot = next
+        updateCells(from: next)
+    }
+
+    // MARK: Per-name observation
+
+    /// One observable box per value name that something has looked up. Reading `snapshot`
+    /// subscribes a view to every value, so a text tile showing one token re-rendered whenever
+    /// any of the (often 1,000+) values changed, including the clock every second. Views that
+    /// show specific values should use `value(named:)`, which only observes that name.
+    @ObservationIgnored private var cells: [String: SharedValueCell] = [:]
+
+    /// The value with this exact name, observing only that name (its payload and status).
+    /// `lastUpdatedAt` on the returned value can lag; read `snapshot` where that matters.
+    func value(named name: String) -> SharedValue? {
+        if let cell = cells[name] { return cell.value }
+        // `_snapshot`: the macro's untracked storage, so creating a cell doesn't subscribe the
+        // caller to the whole snapshot.
+        let cell = SharedValueCell(value: _snapshot.values.first { $0.name == name })
+        cells[name] = cell
+        return cell.value
+    }
+
+    private func updateCells(from next: SharedValueSnapshot) {
+        guard !cells.isEmpty else { return }
+        var byName: [String: SharedValue] = [:]
+        byName.reserveCapacity(next.values.count)
+        for value in next.values where byName[value.name] == nil {
+            byName[value.name] = value
+        }
+        for (name, cell) in cells {
+            let newValue = byName[name]
+            // Ignore `lastUpdatedAt`-only changes; readers show payload and status.
+            guard newValue?.payload != cell.value?.payload
+                || newValue?.status != cell.value?.status
+                || (newValue == nil) != (cell.value == nil) else { continue }
+            cell.value = newValue
+        }
+    }
+
+    static func differOnlyInTimestamps(_ lhs: SharedValueSnapshot, _ rhs: SharedValueSnapshot) -> Bool {
+        guard lhs.values.count == rhs.values.count,
+              lhs.recentOSCAddresses == rhs.recentOSCAddresses,
+              lhs.recentTriggerValues == rhs.recentTriggerValues else { return false }
+        for (a, b) in zip(lhs.values, rhs.values) {
+            var a = a
+            a.lastUpdatedAt = b.lastUpdatedAt
+            if a != b { return false }
+        }
+        return true
+    }
 
     init(registry: SharedValueRegistry = SharedValueRegistry()) {
         self.registry = registry
@@ -426,7 +494,7 @@ final class SharedValueStore {
     func load() async {
         guard !hasLoaded else { return }
         await registry.load()
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         hasLoaded = true
     }
 
@@ -434,7 +502,7 @@ final class SharedValueStore {
     func create(name: String, binding: SharedValueBinding) async throws -> SharedValue {
         let value = try await registry.create(name: name, binding: binding)
         await registry.persistNow()
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         return value
     }
 
@@ -442,21 +510,21 @@ final class SharedValueStore {
     func createSuggested(baseName: String, binding: SharedValueBinding) async -> SharedValue {
         let value = await registry.createSuggested(baseName: baseName, binding: binding)
         await registry.persistNow()
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         return value
     }
 
     func delete(id: UUID) async {
         guard await registry.delete(id: id) else { return }
         await registry.persistNow()
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
     }
 
     @discardableResult
     func update(id: UUID, payload: SharedValuePayload, at date: Date = Date()) async -> Bool {
         let changed = await registry.update(id: id, payload: payload, at: date)
         guard changed else { return false }
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         schedulePersistence()
         return true
     }
@@ -465,26 +533,26 @@ final class SharedValueStore {
     func setManualValue(id: UUID, payload: SharedValuePayload) async -> Bool {
         let changed = await registry.setManualValue(id: id, payload: payload)
         guard changed else { return false }
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         await registry.persistNow()
         return true
     }
 
     func markDisconnected(binding: SharedValueBinding) async {
         guard await registry.markDisconnected(binding: binding) else { return }
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         schedulePersistence()
     }
 
     func markStale(binding: SharedValueBinding) async {
         guard await registry.markStale(binding: binding) else { return }
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         schedulePersistence()
     }
 
     func markStaleOSCValues(now: Date = Date()) async {
         guard await registry.markStaleOSCValues(now: now) else { return }
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         schedulePersistence()
     }
 
@@ -497,42 +565,41 @@ final class SharedValueStore {
         let registry = registry
         pendingOSCSnapshotRefresh = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(250))
-            let next = await registry.snapshot()
-            if next != snapshot { snapshot = next }
+            publish(await registry.snapshot())
             pendingOSCSnapshotRefresh = nil
         }
     }
 
     func observeTrigger(triggerID: UUID, field: String, payload: SharedValuePayload, at date: Date = Date()) async {
         await registry.observeTrigger(triggerID: triggerID, field: field, payload: payload, at: date)
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         schedulePersistence()
     }
 
     func syncSuggestedWirelessValues(devices: [ExternalDeviceConfig]) async {
         guard await registry.syncSuggestedWirelessValues(devices: devices) else { return }
         await registry.persistNow()
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
     }
 
     func syncCatalog(_ observations: [SharedValueCatalogObservation], at date: Date = Date()) async {
         guard await registry.syncCatalog(observations, at: date) else { return }
         await registry.recomputeComputedValues()
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         schedulePersistence()
     }
 
     func recomputeComputedValues() async {
         // Runs every refresh tick; only publish (and wake every observing view) on a change.
         guard await registry.recomputeComputedValues() else { return }
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         schedulePersistence()
     }
 
     /// Applies one wireless refresh pass with a single snapshot rebuild and publish.
     func applyWirelessUpdates(_ updates: [SharedValueWirelessUpdate], at date: Date = Date()) async {
         guard await registry.applyWirelessUpdates(updates, at: date) else { return }
-        snapshot = await registry.snapshot()
+        publish(await registry.snapshot())
         schedulePersistence()
     }
 
@@ -544,5 +611,15 @@ final class SharedValueStore {
             await registry.persistNow()
             pendingPersistence = nil
         }
+    }
+}
+
+/// Observable holder for one shared value; see `SharedValueStore.value(named:)`.
+@MainActor @Observable
+final class SharedValueCell {
+    fileprivate(set) var value: SharedValue?
+
+    init(value: SharedValue?) {
+        self.value = value
     }
 }
