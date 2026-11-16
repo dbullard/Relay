@@ -294,7 +294,7 @@ private func nodeSizeReporter(_ nodeId: UUID) -> some View {
     // preference it replaces re-ran for every node on every zoom step (the node's
     // geometry includes the viewport transform), which re-reduced preferences up the
     // whole view tree each frame.
-    Color.clear.onGeometryChange(for: CGSize.self, of: { $0.size }) { newSize in
+    GraphNodeSizeReporter(store: interaction) { newSize in
         reportNodeSize(newSize, for: nodeId)
     }
 }
@@ -1273,14 +1273,16 @@ private func graphNodeSummaryCard(
     systemImage: String,
     accent: Color,
     width: CGFloat,
-    detail: String? = nil
+    detail: String? = nil,
+    fullHeight: CGFloat? = nil
 ) -> some View {
     GraphNodeCompactSummary(
         systemImage: systemImage,
         title: title,
         subtitle: subtitle,
         detail: detail,
-        accent: accent
+        accent: accent,
+        minHeight: graphNodeCompactContentHeight(fullHeight: fullHeight, padding: 12)
     )
     .padding(12)
     .frame(width: width, alignment: .leading)
@@ -2886,10 +2888,8 @@ private func graphSceneView(
     .coordinateSpace(.named("GraphSceneSpace"))
     .overlay(alignment: .bottom) {
         if !isLiveMode {
-            ViewportPanZoomControls(
-                pan: Bindable(interaction).pan,
-                zoom: interaction.zoomBinding,
-                zoomRange: 0.25...2.5,
+            GraphViewportZoomControls(
+                store: interaction,
                 viewportSize: geoSize,
                 onActualSize: {
                     centerGraphBounds(in: geoSize, zoomLevel: 1.0)
@@ -4909,7 +4909,8 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                 systemImage: DashboardActionDescriptor.systemImage(for: key),
                 accent: category.accentColor,
                 width: senderNodeWidth,
-                detail: warningText ?? subtitle
+                detail: warningText ?? subtitle,
+                fullHeight: measuredNodeSizes[nodeId]?.height
             )
         }
     }
@@ -5049,6 +5050,7 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
             handleDelayOutputDragEnded(nodeId: nodeId, value: value)
         },
         compactDetail: showDetailed ? nil : "Waits \(max(0, cfg.wrappedValue.delayMs)) ms",
+        compactFullHeight: measuredNodeSizes[nodeId]?.height,
         settings: {
             let delayBinding = Binding<Int>(
                 get: { max(0, cfg.wrappedValue.delayMs) },
@@ -5149,6 +5151,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
             conditionMismatchErrors.removeValue(forKey: nodeId)
         } : nil,
         compactDetail: showDetailed ? nil : conditionSummaryText(cfg.wrappedValue, variableOptions: variableOptions),
+        compactFullHeight: measuredNodeSizes[nodeId]?.height,
         settings: {
             VStack(alignment: .leading, spacing: 10) {
                     Picker("Source", selection: Binding(
@@ -5383,6 +5386,7 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
             handleRepeaterOutputDragEnded(nodeId: nodeId, index: index, total: outputCount, value: value)
         },
         compactDetail: showDetailed ? nil : repeaterDetail,
+        compactFullHeight: measuredNodeSizes[nodeId]?.height,
         settings: {
             let outputBinding = Binding<Int>(
                 get: { max(1, cfg.wrappedValue.outputCount) },
@@ -5910,7 +5914,8 @@ private func canvasBackedModuleGroupNodeView(
                 systemImage: graphNodeSummaryIcon(for: group.key),
                 accent: GraphNodeCategory(nodeKey: group.key).accentColor,
                 width: senderNodeWidth,
-                detail: graphNodeSummaryDetailText(nodeId: nodeId, key: group.key, syntheticGroup: group)
+                detail: graphNodeSummaryDetailText(nodeId: nodeId, key: group.key, syntheticGroup: group),
+                fullHeight: measuredNodeSizes[nodeId]?.height
             )
         }
     }
@@ -6324,7 +6329,8 @@ private func moduleGroupNodeBaseView(
             systemImage: graphNodeSummaryIcon(for: key),
             accent: GraphNodeCategory(nodeKey: key).accentColor,
             width: senderNodeWidth,
-            detail: detailText
+            detail: detailText,
+            fullHeight: measuredNodeSizes[nodeId]?.height
         )
     }
 }
@@ -6840,7 +6846,8 @@ private func consoleNodeView(
                     (showQuActions || showDigiCoActions || showStandardActions) ? "trigger actions linked" : nil
                 ]
                 .compactMap { $0 }
-                .joined(separator: " • ")
+                .joined(separator: " • "),
+                fullHeight: measuredNodeSizes[nodeId]?.height
             )
         }
     }
@@ -7137,7 +7144,8 @@ private func vistaNodeView(nodeId: UUID, pos: CGPoint) -> some View {
                 systemImage: "light.beacon.max.fill",
                 accent: GraphNodeCategory(nodeKey: "destination.vista").accentColor,
                 width: senderNodeWidth,
-                detail: items.isEmpty ? "No linked PCO items" : "\(items.count) linked PCO item\(items.count == 1 ? "" : "s")"
+                detail: items.isEmpty ? "No linked PCO items" : "\(items.count) linked PCO item\(items.count == 1 ? "" : "s")",
+                fullHeight: measuredNodeSizes[nodeId]?.height
             )
         }
     }

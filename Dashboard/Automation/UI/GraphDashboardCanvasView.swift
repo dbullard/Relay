@@ -136,6 +136,49 @@ struct GraphInteractionAccessibility: ViewModifier {
     }
 }
 
+/// Installs the scroll/pinch handling with bindings built here, inside the modifier.
+/// SwiftUI compares a child's `Binding` inputs by reading their values, and that read happens
+/// in the parent's update. Building `$store.pan` / `store.zoomBinding` in a large body (the
+/// canvas view, the graph scene) silently subscribed that body to pan and zoom, so every zoom
+/// frame rebuilt every node. Here only this modifier subscribes; `content` is a placeholder.
+struct GraphViewportPanZoom: ViewModifier {
+    let store: GraphInteractionStore
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        @Bindable var store = store
+        content.viewportPanZoom(
+            pan: $store.pan,
+            zoom: store.zoomBinding,
+            isInteracting: $store.isInteracting,
+            isEnabled: isEnabled,
+            showsControls: false,
+            blocksOverScrollableViews: false
+        )
+    }
+}
+
+/// Zoom buttons and percentage menu for the graph, with its bindings built here for the same
+/// reason as `GraphViewportPanZoom`.
+struct GraphViewportZoomControls: View {
+    let store: GraphInteractionStore
+    let viewportSize: CGSize
+    let onActualSize: () -> Void
+    let onFitToWindow: () -> Void
+
+    var body: some View {
+        @Bindable var store = store
+        ViewportPanZoomControls(
+            pan: $store.pan,
+            zoom: store.zoomBinding,
+            zoomRange: 0.25...2.5,
+            viewportSize: viewportSize,
+            onActualSize: onActualSize,
+            onFitToWindow: onFitToWindow
+        )
+    }
+}
+
 /// Applies the viewport pan/zoom. Only this modifier re-runs on scroll/pinch; the graph
 /// content it wraps is not rebuilt.
 struct GraphViewportTransform: ViewModifier {
@@ -157,6 +200,22 @@ struct GraphNodePositioner: ViewModifier {
 
     func body(content: Content) -> some View {
         content.position(store.dragPositions[nodeId] ?? persistedPosition)
+    }
+}
+
+/// Reports a node's size, but not while the viewport is being panned or zoomed: sizes don't
+/// change then, and the geometry query otherwise re-ran for every node on every frame.
+/// Re-attaching after the gesture reports the current size once (a no-op if unchanged).
+struct GraphNodeSizeReporter: View {
+    let store: GraphInteractionStore
+    let onSizeChange: (CGSize) -> Void
+
+    var body: some View {
+        if !store.isInteracting {
+            Color.clear.onGeometryChange(for: CGSize.self, of: { $0.size }) { newSize in
+                onSizeChange(newSize)
+            }
+        }
     }
 }
 
@@ -382,8 +441,6 @@ struct GraphDashboardCanvasView<Content: View, Popover: View>: View {
     }
 
     var body: some View {
-        @Bindable var interaction = interaction
-
         ZStack {
             Color.black.opacity(0.92)
                 .ignoresSafeArea()
@@ -407,14 +464,7 @@ struct GraphDashboardCanvasView<Content: View, Popover: View>: View {
             .frame(width: geoSize.width, height: geoSize.height, alignment: .topLeading)
             .clipped()
             .allowsHitTesting(!showAddNodePopover)
-            .viewportPanZoom(
-                pan: $interaction.pan,
-                zoom: interaction.zoomBinding,
-                isInteracting: $interaction.isInteracting,
-                isEnabled: isWorkEnabled && !showAddNodePopover,
-                showsControls: false,
-                blocksOverScrollableViews: false
-            )
+            .modifier(GraphViewportPanZoom(store: interaction, isEnabled: isWorkEnabled && !showAddNodePopover))
 
             if showAddNodePopover {
                 popover()

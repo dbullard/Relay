@@ -465,6 +465,8 @@ struct RepeaterGraphNodeView<Settings: View>: View {
     /// When set, the node shows a compact summary with this detail line instead of its
     /// settings (zoomed out). Ports and link dragging stay the same.
     let compactDetail: String?
+    /// The full form's measured height, so the compact form keeps the same footprint.
+    let compactFullHeight: CGFloat?
 
     @ViewBuilder let settings: () -> Settings
 
@@ -480,6 +482,7 @@ struct RepeaterGraphNodeView<Settings: View>: View {
         onOutputDragChanged: ((Int, DragGesture.Value) -> Void)? = nil,
         onOutputDragEnded: ((Int, DragGesture.Value) -> Void)? = nil,
         compactDetail: String? = nil,
+        compactFullHeight: CGFloat? = nil,
         @ViewBuilder settings: @escaping () -> Settings
     ) {
         self.nodeId = nodeId
@@ -493,6 +496,7 @@ struct RepeaterGraphNodeView<Settings: View>: View {
         self.onOutputDragChanged = onOutputDragChanged
         self.onOutputDragEnded = onOutputDragEnded
         self.compactDetail = compactDetail
+        self.compactFullHeight = compactFullHeight
         self.settings = settings
     }
 
@@ -512,7 +516,8 @@ struct RepeaterGraphNodeView<Settings: View>: View {
                     title: "Repeater",
                     subtitle: "Utility",
                     detail: compactDetail,
-                    accent: utilityCategory.accentColor
+                    accent: utilityCategory.accentColor,
+                    minHeight: graphNodeCompactContentHeight(fullHeight: compactFullHeight, padding: 12)
                 )
             } else {
                 VStack(alignment: .leading, spacing: 10) {
@@ -654,6 +659,8 @@ struct DelayGraphNodeView<Settings: View>: View {
     /// When set, the node shows a compact summary with this detail line instead of its
     /// settings (zoomed out). Ports and link dragging stay the same.
     let compactDetail: String?
+    /// The full form's measured height, so the compact form keeps the same footprint.
+    let compactFullHeight: CGFloat?
     @ViewBuilder let settings: () -> Settings
 
     init(
@@ -666,6 +673,7 @@ struct DelayGraphNodeView<Settings: View>: View {
         onOutputDragChanged: ((DragGesture.Value) -> Void)? = nil,
         onOutputDragEnded: ((DragGesture.Value) -> Void)? = nil,
         compactDetail: String? = nil,
+        compactFullHeight: CGFloat? = nil,
         @ViewBuilder settings: @escaping () -> Settings
     ) {
         self.nodeId = nodeId
@@ -677,6 +685,7 @@ struct DelayGraphNodeView<Settings: View>: View {
         self.onOutputDragChanged = onOutputDragChanged
         self.onOutputDragEnded = onOutputDragEnded
         self.compactDetail = compactDetail
+        self.compactFullHeight = compactFullHeight
         self.settings = settings
     }
 
@@ -696,7 +705,8 @@ struct DelayGraphNodeView<Settings: View>: View {
                     title: "Delay",
                     subtitle: "Utility",
                     detail: compactDetail,
-                    accent: utilityCategory.accentColor
+                    accent: utilityCategory.accentColor,
+                    minHeight: graphNodeCompactContentHeight(fullHeight: compactFullHeight, padding: 12)
                 )
             } else {
                 VStack(alignment: .leading, spacing: 10) {
@@ -826,6 +836,8 @@ struct ConditionGraphNodeView<Settings: View>: View {
     /// When set, the node shows a compact summary with this detail line instead of its
     /// settings (zoomed out). Ports and link dragging stay the same.
     var compactDetail: String? = nil
+    /// The full form's measured height, so the compact form keeps the same footprint.
+    var compactFullHeight: CGFloat? = nil
     @ViewBuilder let settings: () -> Settings
 
     var body: some View {
@@ -845,7 +857,8 @@ struct ConditionGraphNodeView<Settings: View>: View {
                     title: "If / Else",
                     subtitle: "Utility",
                     detail: (warningText?.isEmpty == false) ? warningText : compactDetail,
-                    accent: utilityCategory.accentColor
+                    accent: utilityCategory.accentColor,
+                    minHeight: graphNodeCompactContentHeight(fullHeight: compactFullHeight, padding: 12)
                 )
             } else {
                 VStack(alignment: .leading, spacing: 10) {

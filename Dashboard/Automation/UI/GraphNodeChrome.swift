@@ -134,6 +134,9 @@ struct GraphNodeCompactSummary: View {
     let subtitle: String
     let detail: String?
     let accent: Color
+    /// Height of the content area, so a compact node can keep its full form's footprint and
+    /// switching forms at the zoom threshold doesn't make nodes jump in size.
+    var minHeight: CGFloat? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -168,7 +171,16 @@ struct GraphNodeCompactSummary: View {
                     .lineLimit(2)
             }
         }
+        // Top-aligned so the title sits where the full node's header does.
+        .frame(minHeight: minHeight, alignment: .topLeading)
     }
+}
+
+/// Content height for a compact node that should match its full form's measured height,
+/// given the compact form's vertical padding on each side.
+func graphNodeCompactContentHeight(fullHeight: CGFloat?, padding: CGFloat) -> CGFloat? {
+    guard let fullHeight, fullHeight > 1 else { return nil }
+    return max(0, fullHeight - padding * 2)
 }
 
 extension GraphNodeCategory {
