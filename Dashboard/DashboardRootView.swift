@@ -3666,7 +3666,6 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                     // Keep automation runtime provider up-to-date (avoid stale tab copies).
                     graphAutomationRuntime.setActiveTabProvider { [weak lanService] in
                         _ = lanService // keep capture list non-empty and explicit; avoids capturing `tabs`.
-                        guard layoutMode == .canvas else { return nil }
                         guard tabs.indices.contains(selectedTabIndex) else { return nil }
                         return tabs[selectedTabIndex]
                     }
@@ -4022,35 +4021,35 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                         }
                     )
                 }
-                // In Canvas mode, enable runtime + provide the selected tab (avoid stale copies).
-                graphAutomationRuntime.isEnabled = (layoutMode == .canvas)
+                // The runtime is the only automation executor, in both Canvas and Automation view
+                // (the Automation view no longer runs triggers itself), so it stays enabled.
+                graphAutomationRuntime.isEnabled = true
+                registerAutomationRuntimeGraphUpdater()
                 syncGraphAutomationRuntimeSnapshots()
                 graphAutomationRuntime.setActiveTabProvider { [weak lanService] in
                     _ = lanService
-                    guard layoutMode == .canvas else { return nil }
                     guard tabs.indices.contains(selectedTabIndex) else { return nil }
                     return tabs[selectedTabIndex]
                 }
             }
             .onChange(of: layoutMode, initial: false) { _, isEnabled in
                 dashboardViewMode = (layoutMode == .graph) ? "automation" : "canvas"
-                // Avoid double-execution: GraphDashboardView handles automation while in graph mode.
-                graphAutomationRuntime.isEnabled = (layoutMode == .canvas)
+                if layoutMode == .canvas {
+                    // The Automation view registers its own updater while it's showing.
+                    registerAutomationRuntimeGraphUpdater()
+                }
                 syncGraphAutomationRuntimeSnapshots()
                 graphAutomationRuntime.setActiveTabProvider { [weak lanService] in
                     _ = lanService
-                    guard layoutMode == .canvas else { return nil }
                     guard tabs.indices.contains(selectedTabIndex) else { return nil }
                     return tabs[selectedTabIndex]
                 }
                 updateLANPollingState()
             }
             .onChange(of: selectedTabIndex, initial: false) { _, newValue in
-                graphAutomationRuntime.isEnabled = (layoutMode == .canvas)
                 syncGraphAutomationRuntimeSnapshots()
                 graphAutomationRuntime.setActiveTabProvider { [weak lanService] in
                     _ = lanService
-                    guard layoutMode == .canvas else { return nil }
                     guard tabs.indices.contains(selectedTabIndex) else { return nil }
                     return tabs[selectedTabIndex]
                 }
@@ -4465,6 +4464,21 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
     }
 
     @MainActor
+    /// Saves graph changes made by the automation runtime (variable values, Toggle/Counter/
+    /// Sequence/Latch state) into the document. The Automation view registers its own updater
+    /// while it's showing; without this one, runtime results in Canvas mode were never saved
+    /// until the Automation view had been opened.
+    private func registerAutomationRuntimeGraphUpdater() {
+        graphAutomationRuntime.setActiveTabGraphUpdater { tabId, graph in
+            guard let index = DashboardTabIdentityMutation.index(of: tabId, in: tabs) else { return }
+            if tabs[index].automationMode == .universal {
+                if graph != universalGraph { universalGraph = graph }
+            } else if tabs[index].graph != graph {
+                tabs[index].graph = graph
+            }
+        }
+    }
+
     private func syncGraphAutomationRuntimeSnapshots() {
         let selectedTabId = tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].id : nil
         graphAutomationRuntime.setActiveTabsSnapshot(tabs, selectedTabId: selectedTabId)

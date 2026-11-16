@@ -133,7 +133,6 @@ private var marqueeCurrent: CGPoint? {
 @State private var smartLightRunningNodeIds: Set<UUID> = []
 @State private var consoleActionErrors: [UUID: String] = [:]
 @State private var consoleActionRunningNodeIds: Set<UUID> = []
-@State private var lastTriggerFireAtByNodeId: [UUID: TimeInterval] = [:]
 @State private var conditionComparisonTextDraftByNodeId: [UUID: String] = [:]
 @State private var editingConditionComparisonNodeIds: Set<UUID> = []
 @State private var showTriggerSendMigrationAlert: Bool = false
@@ -592,7 +591,6 @@ private func deleteGraphNode(nodeId: UUID, key: String) {
     conditionMismatchErrors.removeValue(forKey: nodeId)
     consoleActionErrors.removeValue(forKey: nodeId)
     consoleActionRunningNodeIds.remove(nodeId)
-    lastTriggerFireAtByNodeId.removeValue(forKey: nodeId)
     interaction.setDragPosition(nil, for: nodeId)
     measuredNodeSizes.removeValue(forKey: nodeId)
 
@@ -3065,36 +3063,9 @@ private func applyGraphLifecycle<Content: View>(
         postGraphSelectionCount()
     }
 
-    let triggerContent = lifecycleContent
-    .onReceive(NotificationCenter.default.publisher(for: TriggerNodeNotifications.fired)) { note in
-        guard isWorkEnabled else { return }
-        let ui = note.userInfo ?? [:]
-        guard let triggerId = ui[TriggerNodeUserInfoKeys.triggerNodeId] as? UUID else { return }
-        guard shouldHandleTrigger(nodeId: triggerId) else { return }
-        runActionsDownstream(of: triggerId, userInfo: ui)
-    }
-    .onReceive(NotificationCenter.default.publisher(for: .triggerNodeDidFire)) { note in
-        // Back-compat: older trigger posts may carry nodeId as String.
-        guard isWorkEnabled else { return }
-        let ui = note.userInfo ?? [:]
-        if let id = ui["nodeId"] as? UUID {
-            guard shouldHandleTrigger(nodeId: id) else { return }
-            runActionsDownstream(of: id, userInfo: ui)
-            return
-        }
-        if let s = ui["nodeId"] as? String, let id = UUID(uuidString: s) {
-            guard shouldHandleTrigger(nodeId: id) else { return }
-            runActionsDownstream(of: id, userInfo: ui)
-            return
-        }
-        if let s = ui["nodeIdString"] as? String, let id = UUID(uuidString: s) {
-            guard shouldHandleTrigger(nodeId: id) else { return }
-            runActionsDownstream(of: id, userInfo: ui)
-            return
-        }
-    }
-
-    return triggerContent
+    // Trigger execution lives only in GraphAutomationRuntime (in Canvas and Automation view).
+    // This view used to run triggers too, so actions could run twice here.
+    return lifecycleContent
     .onReceive(NotificationCenter.default.publisher(for: ActionNodeNotifications.proPresenterTriggerFailed)) { note in
         guard isWorkEnabled else { return }
         let ui = note.userInfo ?? [:]
@@ -10134,75 +10105,6 @@ private func fireSendAllToConsoles(
 }
 // MARK: - Trigger -> Action execution (executor wired)
 
-private func runActionsDownstream(of triggerNodeId: UUID, userInfo: [AnyHashable: Any]) {
-    guard var graph = tab.graph else { return }
-
-    let sourcePortId: String? = {
-        guard let configId = userInfo["buttonConfigId"] as? UUID else { return nil }
-        return GraphAutomationTraversal.buttonOutputPortId(nodeId: triggerNodeId, buttonConfigId: configId)
-    }()
-
-    let variableNodeIds = GraphAutomationTraversal.downstreamNodeIds(
-        graph: graph,
-        triggerNodeId: triggerNodeId,
-        matchingGroupKeys: ["utility.variable"],
-        sourcePortId: sourcePortId,
-        resolveNodeIdFromPortId: { nodeIdFromPortId($0) }
-    )
-
-    if !variableNodeIds.isEmpty {
-        let payloadText = userInfo[TriggerNodeUserInfoKeys.payloadText] as? String
-        let payloadNumber = userInfo[TriggerNodeUserInfoKeys.payloadNumber] as? Double
-        let payloadBoolean = userInfo[TriggerNodeUserInfoKeys.payloadBoolean] as? Bool
-        for variableNodeId in variableNodeIds {
-            GraphRuntime.updateVariableNodeValue(
-                graph: &graph,
-                nodeId: variableNodeId,
-                payloadText: payloadText,
-                payloadNumber: payloadNumber,
-                payloadBoolean: payloadBoolean,
-                sourceNodeId: triggerNodeId
-            )
-        }
-        tab.graph = graph
-    }
-
-    let downstream = GraphAutomationTraversal.downstreamActionInstances(
-        graph: graph,
-        triggerNodeId: triggerNodeId,
-        sourcePortId: sourcePortId,
-        resolveNodeIdFromPortId: { nodeIdFromPortId($0) }
-    )
-
-    for action in downstream {
-        runActionNode(nodeId: action.nodeId, key: action.key)
-    }
-
-    GraphAutomationRuntime.shared.runQuConsoleActionsFromTrigger(graph: graph, triggerNodeId: triggerNodeId)
-    GraphAutomationRuntime.shared.runDigiCoConsoleActionsFromTrigger(graph: graph, triggerNodeId: triggerNodeId)
-    GraphAutomationRuntime.shared.runStandardConsoleActionsFromTrigger(graph: graph, triggerNodeId: triggerNodeId)
-
-    let repeaterNodes = downstreamRepeaterNodeIds(graph: graph, triggerNodeId: triggerNodeId, sourcePortId: sourcePortId)
-    for repeaterNodeId in repeaterNodes {
-        runRepeaterNode(nodeId: repeaterNodeId)
-    }
-
-    let delayNodes = downstreamDelayNodeIds(graph: graph, triggerNodeId: triggerNodeId, sourcePortId: sourcePortId)
-    for delayNodeId in delayNodes {
-        runDelayNode(nodeId: delayNodeId)
-    }
-}
-
-private func shouldHandleTrigger(nodeId: UUID) -> Bool {
-    let now = Date().timeIntervalSince1970
-    let last = lastTriggerFireAtByNodeId[nodeId] ?? 0
-    if (now - last) < 0.15 {
-        return false
-    }
-    lastTriggerFireAtByNodeId[nodeId] = now
-    return true
-}
-
 private func runActionNode(nodeId: UUID, key: String) {
     guard let graph = tab.graph else { return }
 
@@ -10250,48 +10152,6 @@ private func runActionNode(nodeId: UUID, key: String) {
 
 
     GraphActionExecutor.execute(actionKey: key, nodeId: nodeId, graph: graph, context: ctx)
-}
-
-private func downstreamRepeaterNodeIds(graph: DashboardGraph, triggerNodeId: UUID, sourcePortId: String? = nil) -> [UUID] {
-    let repeaterIds = Set(graph.moduleGroupNodeInstances
-        .filter { $0.groupKey == "utility.repeater" }
-        .map { $0.id }
-    )
-
-    guard !repeaterIds.isEmpty else { return [] }
-
-    var results: [UUID] = []
-    for link in graph.links where link.isEnabled {
-        let fromId = nodeIdFromPortId(link.fromPortId) ?? link.fromTileId
-        guard fromId == triggerNodeId else { continue }
-        if let sourcePortId, link.fromPortId != sourcePortId { continue }
-        let toId = nodeIdFromPortId(link.toPortId) ?? link.toTileId
-        if repeaterIds.contains(toId) {
-            results.append(toId)
-        }
-    }
-    return results
-}
-
-private func downstreamDelayNodeIds(graph: DashboardGraph, triggerNodeId: UUID, sourcePortId: String? = nil) -> [UUID] {
-    let delayIds = Set(graph.moduleGroupNodeInstances
-        .filter { $0.groupKey == "utility.delay" }
-        .map { $0.id }
-    )
-
-    guard !delayIds.isEmpty else { return [] }
-
-    var results: [UUID] = []
-    for link in graph.links where link.isEnabled {
-        let fromId = nodeIdFromPortId(link.fromPortId) ?? link.fromTileId
-        guard fromId == triggerNodeId else { continue }
-        if let sourcePortId, link.fromPortId != sourcePortId { continue }
-        let toId = nodeIdFromPortId(link.toPortId) ?? link.toTileId
-        if delayIds.contains(toId) {
-            results.append(toId)
-        }
-    }
-    return results
 }
 
 private func actionsDownstream(ofRepeater repeaterNodeId: UUID, graph: DashboardGraph) -> [(nodeId: UUID, key: String)] {

@@ -18,23 +18,19 @@ state lost on persist, keystroke trigger data race, compact-card size pop.
 
 ## 0. Needs a decision first
 
-- [ ] **Automation view: triggers can run twice, or not at all** — M, high impact
-  - **Where:** `DashboardRootView.swift` sets `graphAutomationRuntime.isEnabled = (layoutMode == .canvas)`
-    in `onAppear`, `onChange(of: layoutMode)` and `onChange(of: selectedTabIndex)`.
-    `GraphDashboardView.activateGraphRuntime()` → `GraphDashboardRuntimeCoordinator.activate` calls
-    `runtime.setEnabled(true)`. Both `GraphAutomationRuntime.handleTriggerFired` and
-    `GraphDashboardView`'s `.onReceive(TriggerNodeNotifications.fired)` → `runActionsDownstream`
-    execute actions.
-  - **What goes wrong:** in Automation view, if the runtime ends up enabled, every trigger runs its
-    actions twice (both executors). If it ends up disabled, triggers only the runtime generates
-    (keystroke, time/wireless poll, PCO, ProPresenter, transcription, app state) never fire. Which
-    one happens depends on SwiftUI's `onChange` ordering.
-  - **Decision:** pick one executor for Automation view. Recommended: keep the runtime always
-    enabled and the only executor, and make the Graph view's `onReceive(fired)` handle UI-only
-    concerns (highlighting, run feedback) instead of executing. The alternative is keeping the
-    Graph view as executor and gating `handleTriggerFired` (not trigger generation) while it's active.
-  - **Check:** a keystroke trigger linked to a Notify action, fired in both views, produces exactly
-    one notification each time.
+- [x] **Automation view: triggers could run twice, or not at all** — fixed
+  - `GraphAutomationRuntime` is now the only executor, in Canvas and Automation view: the root
+    keeps it enabled (it used to disable it outside Canvas while the Automation view re-enabled
+    it), and the Automation view no longer runs `runActionsDownstream` on
+    `TriggerNodeNotifications.fired` / `.triggerNodeDidFire`. The runtime already de-duplicates
+    the duplicate posts trigger nodes send on both buses (shared 0.2 s window), and its flow
+    covers everything the view's executor did (variables, actions, console actions, Repeater,
+    Delay) plus Toggle/Counter/Sequence/Latch.
+  - The root's tab provider no longer returns `nil` outside Canvas, and the root now registers
+    a graph updater, so runtime results (variable values, utility node state) are saved in Canvas
+    mode even if the Automation view was never opened.
+  - **Not verified in the app:** firing a trigger in Automation view. The test dashboard's only
+    harmless trigger is a canvas button; its other triggers send OSC to real devices.
 
 ## 1. Automation view smoothness
 
