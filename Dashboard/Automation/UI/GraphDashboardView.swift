@@ -1275,38 +1275,13 @@ private func graphNodeSummaryCard(
     width: CGFloat,
     detail: String? = nil
 ) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-        HStack(alignment: .center, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: GraphNodeStyleTokens.secondaryCornerRadius, style: .continuous)
-                    .fill(accent.opacity(0.18))
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(accent)
-            }
-            .frame(width: 30, height: 30)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 0)
-        }
-
-        if let detail, !detail.isEmpty {
-            Text(detail)
-                .font(.caption2)
-                .foregroundStyle(Color.white.opacity(0.72))
-                .lineLimit(2)
-        }
-    }
+    GraphNodeCompactSummary(
+        systemImage: systemImage,
+        title: title,
+        subtitle: subtitle,
+        detail: detail,
+        accent: accent
+    )
     .padding(12)
     .frame(width: width, alignment: .leading)
     // `accent` is the full-strength category color. The tint is a little stronger than
@@ -5058,6 +5033,7 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
     let isLinkingTarget = (linkingFromNodeId != nil)
 
     let cfg = delayActionConfigBinding(forNodeId: nodeId)
+    let showDetailed = shouldRenderDetailedGraphNode(nodeId)
 
     let base = DelayGraphNodeView(
         nodeId: nodeId,
@@ -5072,6 +5048,7 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
         onOutputDragEnded: { value in
             handleDelayOutputDragEnded(nodeId: nodeId, value: value)
         },
+        compactDetail: showDetailed ? nil : "Waits \(max(0, cfg.wrappedValue.delayMs)) ms",
         settings: {
             let delayBinding = Binding<Int>(
                 get: { max(0, cfg.wrappedValue.delayMs) },
@@ -5089,7 +5066,12 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
     base
         .overlay(invalidLinkHoverOverlay(for: nodeId))
         .frame(width: 420)
-        .background(nodeSizeReporter(nodeId))
+        .background {
+            // Only measure the full form, so switching to the compact form doesn't move nodes.
+            if showDetailed {
+                nodeSizeReporter(nodeId)
+            }
+        }
         .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
         .contextMenu {
@@ -5144,6 +5126,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         .sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
 
     let connections = connectedConditionBranches(from: nodeId)
+    let showDetailed = shouldRenderDetailedGraphNode(nodeId)
 
     let base = ConditionGraphNodeView(
         nodeId: nodeId,
@@ -5165,6 +5148,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         onDismissWarning: conditionMismatchErrors[nodeId] != nil ? {
             conditionMismatchErrors.removeValue(forKey: nodeId)
         } : nil,
+        compactDetail: showDetailed ? nil : conditionSummaryText(cfg.wrappedValue, variableOptions: variableOptions),
         settings: {
             VStack(alignment: .leading, spacing: 10) {
                     Picker("Source", selection: Binding(
@@ -5299,7 +5283,12 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
     base
         .overlay(invalidLinkHoverOverlay(for: nodeId))
         .frame(width: 420)
-        .background(nodeSizeReporter(nodeId))
+        .background {
+            // Only measure the full form, so switching to the compact form doesn't move nodes.
+            if showDetailed {
+                nodeSizeReporter(nodeId)
+            }
+        }
         .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
         .contextMenu {
@@ -5340,6 +5329,30 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         }
 }
 
+/// One-line description of an If / Else node for its compact (zoomed-out) form,
+/// e.g. "Variable Score Greater Than 10".
+private func conditionSummaryText(
+    _ config: DashboardGraph.ConditionNodeConfig,
+    variableOptions: [(UUID, String)]
+) -> String {
+    var parts: [String] = []
+    if config.sourceKind == .variable {
+        let name = config.variableNodeId.flatMap { id in variableOptions.first { $0.0 == id }?.1 }
+        parts.append(name.map { "Variable \($0)" } ?? "No variable selected")
+    } else {
+        parts.append(config.sourceKind.displayName)
+    }
+    parts.append(config.operator.displayName)
+    if conditionOperatorNeedsText(config.operator, sourceKind: config.sourceKind) {
+        parts.append("\u{201C}\(config.comparisonText)\u{201D}")
+    } else if conditionOperatorNeedsNumber(config.operator, sourceKind: config.sourceKind) {
+        parts.append(config.comparisonNumber.formatted())
+    } else if conditionOperatorNeedsBoolean(config.operator, sourceKind: config.sourceKind) {
+        parts.append(config.comparisonBoolean ? "true" : "false")
+    }
+    return parts.joined(separator: " ")
+}
+
 @ViewBuilder
 private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
     let isSelected = selectedGraphNodeIds.contains(nodeId)
@@ -5350,6 +5363,9 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
 
     let outputCount = max(1, cfg.wrappedValue.outputCount)
     let connectedOutputs = min(connectedActionCount(from: nodeId), outputCount)
+    let showDetailed = shouldRenderDetailedGraphNode(nodeId)
+    let repeatCount = max(1, cfg.wrappedValue.repeatCount)
+    let repeaterDetail = "\(outputCount) output\(outputCount == 1 ? "" : "s") • \(repeatCount)× every \(max(0, cfg.wrappedValue.delayMs)) ms"
 
     let base = RepeaterGraphNodeView(
         nodeId: nodeId,
@@ -5366,6 +5382,7 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
         onOutputDragEnded: { index, value in
             handleRepeaterOutputDragEnded(nodeId: nodeId, index: index, total: outputCount, value: value)
         },
+        compactDetail: showDetailed ? nil : repeaterDetail,
         settings: {
             let outputBinding = Binding<Int>(
                 get: { max(1, cfg.wrappedValue.outputCount) },
@@ -5405,7 +5422,12 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
     base
         .overlay(invalidLinkHoverOverlay(for: nodeId))
         .frame(width: 420)
-        .background(nodeSizeReporter(nodeId))
+        .background {
+            // Only measure the full form, so switching to the compact form doesn't move nodes.
+            if showDetailed {
+                nodeSizeReporter(nodeId)
+            }
+        }
         .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
         .contextMenu {

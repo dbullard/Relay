@@ -125,3 +125,55 @@ extension View {
         modifier(GraphOutputPortLabel(text: text))
     }
 }
+
+/// Icon, title, subtitle and detail line shown for a node when the canvas is zoomed out
+/// (or in performance mode). Shared by the summary cards and the utility nodes' compact mode.
+struct GraphNodeCompactSummary: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    let detail: String?
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: GraphNodeStyleTokens.secondaryCornerRadius, style: .continuous)
+                        .fill(accent.opacity(0.18))
+                    Image(systemName: systemImage)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(accent)
+                }
+                .frame(width: 30, height: 30)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(Color.white.opacity(0.72))
+                    .lineLimit(2)
+            }
+        }
+    }
+}
+
+extension GraphNodeCategory {
+    /// Node fill when shown compact; stronger than `tintColor` so the category reads zoomed out.
+    var compactTintColor: Color { accentColor.opacity(0.18) }
+    /// Node border when shown compact.
+    var compactBorderColor: Color { accentColor.opacity(0.55) }
+}

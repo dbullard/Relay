@@ -462,6 +462,9 @@ struct RepeaterGraphNodeView<Settings: View>: View {
     let onRun: () -> Void
     let onOutputDragChanged: ((Int, DragGesture.Value) -> Void)?
     let onOutputDragEnded: ((Int, DragGesture.Value) -> Void)?
+    /// When set, the node shows a compact summary with this detail line instead of its
+    /// settings (zoomed out). Ports and link dragging stay the same.
+    let compactDetail: String?
 
     @ViewBuilder let settings: () -> Settings
 
@@ -476,6 +479,7 @@ struct RepeaterGraphNodeView<Settings: View>: View {
         onRun: @escaping () -> Void,
         onOutputDragChanged: ((Int, DragGesture.Value) -> Void)? = nil,
         onOutputDragEnded: ((Int, DragGesture.Value) -> Void)? = nil,
+        compactDetail: String? = nil,
         @ViewBuilder settings: @escaping () -> Settings
     ) {
         self.nodeId = nodeId
@@ -488,21 +492,33 @@ struct RepeaterGraphNodeView<Settings: View>: View {
         self.onRun = onRun
         self.onOutputDragChanged = onOutputDragChanged
         self.onOutputDragEnded = onOutputDragEnded
+        self.compactDetail = compactDetail
         self.settings = settings
     }
 
     var body: some View {
         GraphNodeChromeContainer(
-            tint: utilityCategory.tintColor,
-            border: utilityCategory.borderColor,
+            contentPadding: compactDetail == nil ? GraphNodeStyleTokens.contentPadding : 12,
+            tint: compactDetail == nil ? utilityCategory.tintColor : utilityCategory.compactTintColor,
+            border: compactDetail == nil ? utilityCategory.borderColor : utilityCategory.compactBorderColor,
             isSelected: isSelected,
             isHoverReceiver: isHoverReceiver,
             leadingOverlay: AnyView(receiverNub),
             trailingOverlay: AnyView(outputNubs.overlay(outputHitTargets))
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                headerRow
-                settings()
+            if let compactDetail {
+                GraphNodeCompactSummary(
+                    systemImage: "repeat",
+                    title: "Repeater",
+                    subtitle: "Utility",
+                    detail: compactDetail,
+                    accent: utilityCategory.accentColor
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    headerRow
+                    settings()
+                }
             }
         }
         .simultaneousGesture(
@@ -635,6 +651,9 @@ struct DelayGraphNodeView<Settings: View>: View {
     let onRun: () -> Void
     let onOutputDragChanged: ((DragGesture.Value) -> Void)?
     let onOutputDragEnded: ((DragGesture.Value) -> Void)?
+    /// When set, the node shows a compact summary with this detail line instead of its
+    /// settings (zoomed out). Ports and link dragging stay the same.
+    let compactDetail: String?
     @ViewBuilder let settings: () -> Settings
 
     init(
@@ -646,6 +665,7 @@ struct DelayGraphNodeView<Settings: View>: View {
         onRun: @escaping () -> Void,
         onOutputDragChanged: ((DragGesture.Value) -> Void)? = nil,
         onOutputDragEnded: ((DragGesture.Value) -> Void)? = nil,
+        compactDetail: String? = nil,
         @ViewBuilder settings: @escaping () -> Settings
     ) {
         self.nodeId = nodeId
@@ -656,21 +676,33 @@ struct DelayGraphNodeView<Settings: View>: View {
         self.onRun = onRun
         self.onOutputDragChanged = onOutputDragChanged
         self.onOutputDragEnded = onOutputDragEnded
+        self.compactDetail = compactDetail
         self.settings = settings
     }
 
     var body: some View {
         GraphNodeChromeContainer(
-            tint: utilityCategory.tintColor,
-            border: utilityCategory.borderColor,
+            contentPadding: compactDetail == nil ? GraphNodeStyleTokens.contentPadding : 12,
+            tint: compactDetail == nil ? utilityCategory.tintColor : utilityCategory.compactTintColor,
+            border: compactDetail == nil ? utilityCategory.borderColor : utilityCategory.compactBorderColor,
             isSelected: isSelected,
             isHoverReceiver: isHoverReceiver,
             leadingOverlay: AnyView(receiverNub),
             trailingOverlay: AnyView(outputNub.overlay(outputHitTarget))
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                headerRow
-                settings()
+            if let compactDetail {
+                GraphNodeCompactSummary(
+                    systemImage: "clock.arrow.circlepath",
+                    title: "Delay",
+                    subtitle: "Utility",
+                    detail: compactDetail,
+                    accent: utilityCategory.accentColor
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    headerRow
+                    settings()
+                }
             }
         }
         .simultaneousGesture(
@@ -791,26 +823,40 @@ struct ConditionGraphNodeView<Settings: View>: View {
     let warningText: String?
     let warningStyle: ActionNodeWarningStyle
     let onDismissWarning: (() -> Void)?
+    /// When set, the node shows a compact summary with this detail line instead of its
+    /// settings (zoomed out). Ports and link dragging stay the same.
+    var compactDetail: String? = nil
     @ViewBuilder let settings: () -> Settings
 
     var body: some View {
         GraphNodeChromeContainer(
-            tint: utilityCategory.tintColor,
-            border: utilityCategory.borderColor,
+            contentPadding: compactDetail == nil ? GraphNodeStyleTokens.contentPadding : 12,
+            tint: compactDetail == nil ? utilityCategory.tintColor : utilityCategory.compactTintColor,
+            border: compactDetail == nil ? utilityCategory.borderColor : utilityCategory.compactBorderColor,
             isSelected: isSelected,
             isHoverReceiver: isHoverReceiver,
             showsError: warningStyle == .error && warningText != nil,
             leadingOverlay: AnyView(receiverNub),
             trailingOverlay: AnyView(outputNubs.overlay(outputHitTargets))
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                headerRow
+            if let compactDetail {
+                GraphNodeCompactSummary(
+                    systemImage: "arrow.triangle.branch",
+                    title: "If / Else",
+                    subtitle: "Utility",
+                    detail: (warningText?.isEmpty == false) ? warningText : compactDetail,
+                    accent: utilityCategory.accentColor
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    headerRow
 
-                if let warningText, !warningText.isEmpty {
-                    warningPill(text: warningText)
+                    if let warningText, !warningText.isEmpty {
+                        warningPill(text: warningText)
+                    }
+
+                    settings()
                 }
-
-                settings()
             }
         }
         .simultaneousGesture(
