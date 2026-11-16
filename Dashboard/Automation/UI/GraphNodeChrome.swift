@@ -92,3 +92,36 @@ struct GraphNodeChromeContainer<Content: View>: View {
             .contentShape(Rectangle())
     }
 }
+
+/// Name label for an output port nub. Drawn just outside the node's trailing edge, above
+/// the link line, so node content can't cover it — AppKit-backed text fields always draw
+/// above SwiftUI, and warnings/controls run right up to the node edge.
+struct GraphOutputPortLabel: ViewModifier {
+    let text: String
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .trailing) {
+            Text(text)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.8))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1.5)
+                .background(Capsule().fill(Color.black.opacity(0.75)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.5))
+                .frame(width: 120, alignment: .leading)
+                // Leading edge sits 9pt right of the node edge (the nub reaches +5pt).
+                .alignmentGuide(.trailing) { _ in -9 }
+                .offset(y: -11)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+extension View {
+    func graphOutputPortLabel(_ text: String) -> some View {
+        modifier(GraphOutputPortLabel(text: text))
+    }
+}

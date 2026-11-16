@@ -19,6 +19,12 @@ final class SpectrogramController: ObservableObject {
 
     private var fftTask: Task<Void, Never>?
     private var fftSubscriptionID: UUID?
+    /// False while the canvas is hidden (e.g. behind the Automation view). Rows keep
+    /// accumulating so history is preserved, but the per-frame image render is skipped:
+    /// it ran ~23 times a second on the main thread and competed with the visible view
+    /// (it was up to ~48% of main-thread time while zooming the Automation graph).
+    private var isVisible: Bool = true
+
     // Pre-allocated pixel buffer reused across renderImage calls to avoid 512 KB
     // malloc/free at 23 Hz.
     private var pixelBuffer: [UInt32] = []
@@ -61,6 +67,14 @@ final class SpectrogramController: ObservableObject {
 
     func setLiveMode(_ isLive: Bool) {
         if isLive && settings.isEnabled { restartSubscription() } else { stopSubscription() }
+    }
+
+    func setVisible(_ visible: Bool) {
+        guard visible != isVisible else { return }
+        isVisible = visible
+        if visible, !rawRows.isEmpty {
+            image = renderImage(rawRows: rawRows, width: outputWidth)
+        }
     }
 
     func setTileActive(_ isActive: Bool) {
@@ -157,6 +171,7 @@ final class SpectrogramController: ObservableObject {
 
         if rawRows.count >= maxRows { rawRows.removeFirst() }
         rawRows.append(row)
+        guard isVisible else { return }
         image = renderImage(rawRows: rawRows, width: outputWidth)
     }
 

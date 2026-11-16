@@ -143,12 +143,6 @@ private var marqueeCurrent: CGPoint? {
 /// allocation on every buildGroups call. Same pattern as stableUUIDByKey.
 @State private var rundownItemCache: [String: VistaPCORundownItem?] = [:]
 
-private struct GraphNodeSizePreferenceKey: PreferenceKey {
-    static var defaultValue: [UUID: CGSize] = [:]
-    static func reduce(value: inout [UUID: CGSize], nextValue: () -> [UUID: CGSize]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
 
 private struct AddNodeHelpContent: Equatable {
     let title: String
@@ -291,9 +285,76 @@ private func focusGraphSurface() {
 
 @ViewBuilder
 private func nodeSizeReporter(_ nodeId: UUID) -> some View {
-    GeometryReader { proxy in
-        Color.clear.preference(key: GraphNodeSizePreferenceKey.self, value: [nodeId: proxy.size])
+    // onGeometryChange fires only when the node's size changes. The GeometryReader +
+    // preference it replaces re-ran for every node on every zoom step (the node's
+    // geometry includes the viewport transform), which re-reduced preferences up the
+    // whole view tree each frame.
+    Color.clear.onGeometryChange(for: CGSize.self, of: { $0.size }) { newSize in
+        reportNodeSize(newSize, for: nodeId)
     }
+}
+
+/// Merges measured node sizes and resolves collisions when a node materially grows.
+/// Ignores sub-point jitter.
+private func applyReportedNodeSizes(_ newSizes: [UUID: CGSize]) {
+    let startedAt = CFAbsoluteTimeGetCurrent()
+    var changed: [UUID] = []
+    var collisionCandidates: [UUID] = []
+
+    for (id, sz) in newSizes {
+        let prev = measuredNodeSizes[id]
+        guard !graphCGSizeApproximatelyEqual(prev, sz) else { continue }
+        changed.append(id)
+        if graphNodeSizeGrowthRequiresCollisionResolution(previous: prev, current: sz) {
+            collisionCandidates.append(id)
+        }
+        measuredNodeSizes[id] = sz
+    }
+
+    guard !changed.isEmpty else { return }
+
+    var moved = 0
+    // Only resolve collisions when a previously measured node materially grows.
+    for id in collisionCandidates {
+        let current = nodePosition(for: id)
+        let adjusted = resolveCollisionsForMovedNode(id, startingAt: current)
+        if !graphCGPointApproximatelyEqual(adjusted, current) {
+            // Apply immediately so nodes can't overlap when their content grows.
+            interaction.setDragPosition(adjusted, for: id)
+            moved += 1
+
+            // Persist into the graph layout model using TileGraphLayout.position.
+            if var layout = tab.graph?.tileLayouts[id] {
+                layout.position = CGPointCodable(adjusted)
+                tab.graph?.tileLayouts[id] = layout
+            } else {
+                tab.graph?.tileLayouts[id] = TileGraphLayout(position: adjusted)
+            }
+        }
+    }
+
+    let duration = CFAbsoluteTimeGetCurrent() - startedAt
+    let details = "reported=\(newSizes.count) changed=\(changed.count) candidates=\(collisionCandidates.count) moved=\(moved)"
+    recordGraphPerfMetric(
+        "graph.nodeSizePreference.apply",
+        duration: duration,
+        details: details,
+        slowThreshold: 0.008
+    )
+    incrementGraphCounter("graph.nodeSizePreference.changedNodes", by: changed.count)
+}
+
+private func reportNodeSize(_ size: CGSize, for nodeId: UUID) {
+    interaction.pendingNodeSizes[nodeId] = size
+    // Coalesce bursts (e.g. many nodes measured on first layout) into one apply.
+    nodeSizePreferenceWorkItem?.cancel()
+    let workItem = DispatchWorkItem {
+        let newSizes = interaction.pendingNodeSizes
+        interaction.pendingNodeSizes.removeAll()
+        applyReportedNodeSizes(newSizes)
+    }
+    nodeSizePreferenceWorkItem = workItem
+    DispatchQueue.main.async(execute: workItem)
 }
 
 // MARK: - Graph selection + delete
@@ -1045,7 +1106,7 @@ private var pan: CGSize {
 }
 private var zoom: CGFloat {
     get { interaction.untrackedZoom }
-    nonmutating set { interaction.zoom = newValue }
+    nonmutating set { interaction.setZoom(newValue) }
 }
 
 // Node width constants for consistent layout and link offsets
@@ -1072,7 +1133,9 @@ private var shouldUseGraphNodePerformanceMode: Bool {
 }
 
 private var isGraphSimplifiedModeActive: Bool {
-    shouldUseGraphNodePerformanceMode
+    // Zoomed out: show summary cards (see GraphInteractionStore.isZoomedOut). This read
+    // is tracked, but the flag only changes when the zoom threshold is crossed.
+    shouldUseGraphNodePerformanceMode || interaction.isZoomedOut
 }
 
 private var showGraphPerformanceNotice: Bool {
@@ -1241,13 +1304,20 @@ private func graphNodeSummaryCard(
     }
     .padding(12)
     .frame(width: width, alignment: .leading)
+    // `accent` is the full-strength category color. The tint is a little stronger than
+    // the full node chrome so the category stays readable when the canvas is zoomed out.
     .background(
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.white.opacity(0.07))
+        ZStack {
+            RoundedRectangle(cornerRadius: GraphNodeStyleTokens.cornerRadius, style: .continuous)
+                .fill(Color.white.opacity(GraphNodeStyleTokens.baseFillOpacity))
+            RoundedRectangle(cornerRadius: GraphNodeStyleTokens.cornerRadius, style: .continuous)
+                .fill(accent.opacity(0.18))
+                .blendMode(.screen)
+        }
     )
     .overlay(
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .stroke(accent.opacity(0.22), lineWidth: 1)
+        RoundedRectangle(cornerRadius: GraphNodeStyleTokens.cornerRadius, style: .continuous)
+            .stroke(accent.opacity(0.55), lineWidth: 1.5)
     )
 }
 
@@ -2838,7 +2908,7 @@ private func graphSceneView(
         if !isLiveMode {
             ViewportPanZoomControls(
                 pan: Bindable(interaction).pan,
-                zoom: Bindable(interaction).zoom,
+                zoom: interaction.zoomBinding,
                 zoomRange: 0.25...2.5,
                 viewportSize: geoSize,
                 onActualSize: {
@@ -2979,60 +3049,6 @@ private func applyGraphLifecycle<Content: View>(
         cachedPeopleTeamOptionsFromTab = recomputePCOTeamOptionsFromTab()
         ensureGraphInitialized(canvasSize: geoSize)
         pruneGraphStateForRemovedCanvasNodes(currentGroups: builtGroups)
-    }
-    .onPreferenceChange(GraphNodeSizePreferenceKey.self) { newSizes in
-        // Merge size updates and resolve collisions when a node grows/shrinks.
-        // Ignore sub-point jitter and coalesce bursts to avoid layout feedback loops.
-        nodeSizePreferenceWorkItem?.cancel()
-        let workItem = DispatchWorkItem {
-            let startedAt = CFAbsoluteTimeGetCurrent()
-            var changed: [UUID] = []
-            var collisionCandidates: [UUID] = []
-
-            for (id, sz) in newSizes {
-                let prev = measuredNodeSizes[id]
-                guard !graphCGSizeApproximatelyEqual(prev, sz) else { continue }
-                changed.append(id)
-                if graphNodeSizeGrowthRequiresCollisionResolution(previous: prev, current: sz) {
-                    collisionCandidates.append(id)
-                }
-                measuredNodeSizes[id] = sz
-            }
-
-            guard !changed.isEmpty else { return }
-
-            var moved = 0
-            // Only resolve collisions when a previously measured node materially grows.
-            for id in collisionCandidates {
-                let current = nodePosition(for: id)
-                let adjusted = resolveCollisionsForMovedNode(id, startingAt: current)
-                if !graphCGPointApproximatelyEqual(adjusted, current) {
-                    // Apply immediately so nodes can't overlap when their content grows.
-                    interaction.setDragPosition(adjusted, for: id)
-                    moved += 1
-
-                    // Persist into the graph layout model using TileGraphLayout.position.
-                    if var layout = tab.graph?.tileLayouts[id] {
-                        layout.position = CGPointCodable(adjusted)
-                        tab.graph?.tileLayouts[id] = layout
-                    } else {
-                        tab.graph?.tileLayouts[id] = TileGraphLayout(position: adjusted)
-                    }
-                }
-            }
-
-            let duration = CFAbsoluteTimeGetCurrent() - startedAt
-            let details = "reported=\(newSizes.count) changed=\(changed.count) candidates=\(collisionCandidates.count) moved=\(moved)"
-            recordGraphPerfMetric(
-                "graph.nodeSizePreference.apply",
-                duration: duration,
-                details: details,
-                slowThreshold: 0.008
-            )
-            incrementGraphCounter("graph.nodeSizePreference.changedNodes", by: changed.count)
-        }
-        nodeSizePreferenceWorkItem = workItem
-        DispatchQueue.main.async(execute: workItem)
     }
     .onChange(of: tab.id, initial: false) { _, _ in
         configureGraphRuntimeBindings()
@@ -4911,7 +4927,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                 title: title,
                 subtitle: graphNodeSummarySubtitle(for: key),
                 systemImage: DashboardActionDescriptor.systemImage(for: key),
-                accent: nodeTintColor,
+                accent: category.accentColor,
                 width: senderNodeWidth,
                 detail: warningText ?? subtitle
             )
@@ -5823,27 +5839,49 @@ private func canvasBackedModuleGroupNodeView(
     group: ModuleGroup,
     peopleTeamOptions: [String]
 ) -> some View {
-    let base = ModuleGroupNodeView(
-        nodeId: nodeId,
-        group: group,
-        tab: tab,
-        consoleDevices: availableAudioConsoleDevices,
-        shureDevices: availableShureDevices,
-        sennheiserDevices: availableSennheiserDevices,
-        peopleTeamOptions: (group.key == "moduleGroup.person" ? peopleTeamOptions : []),
-        selectedPeopleTeams: (group.key == "moduleGroup.person"
-                              ? peopleTeamSelectionBinding(forNodeId: nodeId)
-                              : Binding.constant(Set<String>())),
-        customPeople: Binding.constant([]),
-        isSelected: selectedGraphNodeIds.contains(nodeId),
-        peopleSourceMode: Binding.constant("pco"),
-        graph: $tab.graph,
-        performGraphEdit: performGraphEdit
-    )
+    // Canvas-backed nodes (Time, dB Threshold, Word Trigger, Planning Center, People, ...)
+    // also collapse to a summary card when zoomed out or in performance mode.
+    let showDetailed = shouldRenderDetailedGraphNode(nodeId)
+    let base = Group {
+        if showDetailed {
+            ModuleGroupNodeView(
+                nodeId: nodeId,
+                group: group,
+                tab: tab,
+                consoleDevices: availableAudioConsoleDevices,
+                shureDevices: availableShureDevices,
+                sennheiserDevices: availableSennheiserDevices,
+                peopleTeamOptions: (group.key == "moduleGroup.person" ? peopleTeamOptions : []),
+                selectedPeopleTeams: (group.key == "moduleGroup.person"
+                                      ? peopleTeamSelectionBinding(forNodeId: nodeId)
+                                      : Binding.constant(Set<String>())),
+                customPeople: Binding.constant([]),
+                isSelected: selectedGraphNodeIds.contains(nodeId),
+                peopleSourceMode: Binding.constant("pco"),
+                graph: $tab.graph,
+                performGraphEdit: performGraphEdit
+            )
+        } else {
+            graphNodeSummaryCard(
+                title: group.title,
+                subtitle: graphNodeSummarySubtitle(for: group.key),
+                systemImage: graphNodeSummaryIcon(for: group.key),
+                accent: GraphNodeCategory(nodeKey: group.key).accentColor,
+                width: senderNodeWidth,
+                detail: graphNodeSummaryDetailText(nodeId: nodeId, key: group.key, syntheticGroup: group)
+            )
+        }
+    }
 
     base
         .frame(width: 420)
-        .background(nodeSizeReporter(nodeId))
+        .background {
+            // Only measure the full form; card sizes must not overwrite it, or switching
+            // back to the full form would trigger collision resolution and move nodes.
+            if showDetailed {
+                nodeSizeReporter(nodeId)
+            }
+        }
         .overlay(invalidLinkHoverOverlay(for: nodeId))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
@@ -5861,13 +5899,7 @@ private func canvasBackedModuleGroupNodeView(
                 // Per-rule output nubs — one per word trigger rule
                 VStack(spacing: 14) {
                     ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
-                        HStack(spacing: 4) {
-                            Text(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: 70, alignment: .trailing)
+                        Group {
                             ZStack(alignment: .trailing) {
                                 Rectangle()
                                     .fill(Color.clear)
@@ -5886,6 +5918,7 @@ private func canvasBackedModuleGroupNodeView(
                                     .offset(x: 5)
                                     .allowsHitTesting(false)
                             }
+                            .graphOutputPortLabel(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
                         }
                     }
                 }
@@ -6064,13 +6097,7 @@ private func graphOnlyModuleGroupNodeView(
                 let total = max(1, rules.count)
                 VStack(spacing: 14) {
                     ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
-                        HStack(spacing: 4) {
-                            Text(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: 70, alignment: .trailing)
+                        Group {
                             ZStack(alignment: .trailing) {
                                 Rectangle()
                                     .fill(Color.clear)
@@ -6089,6 +6116,7 @@ private func graphOnlyModuleGroupNodeView(
                                     .offset(x: 5)
                                     .allowsHitTesting(false)
                             }
+                            .graphOutputPortLabel(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
                         }
                     }
                 }
@@ -6096,7 +6124,7 @@ private func graphOnlyModuleGroupNodeView(
                 let buttons = buttonsForButtonNode(nodeId)
                 VStack(spacing: 14) {
                     ForEach(Array(buttons.enumerated()), id: \.element.id) { index, button in
-                        HStack(spacing: 4) {
+                        Group {
                             // Label: title → icon symbol name → "Button N"
                             let title = button.title.trimmingCharacters(in: .whitespacesAndNewlines)
                             let iconLabel: String = {
@@ -6108,13 +6136,6 @@ private func graphOnlyModuleGroupNodeView(
                                 case .none: return "Button \(index + 1)"
                                 }
                             }()
-                            Text(title.isEmpty ? iconLabel : title)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: 70, alignment: .trailing)
-
                             ZStack(alignment: .trailing) {
                                 Rectangle()
                                     .fill(Color.clear)
@@ -6133,6 +6154,7 @@ private func graphOnlyModuleGroupNodeView(
                                     .offset(x: 5)
                                     .allowsHitTesting(false)
                             }
+                            .graphOutputPortLabel(title.isEmpty ? iconLabel : title)
                         }
                     }
                 }
@@ -6249,7 +6271,7 @@ private func moduleGroupNodeBaseView(
             title: syntheticGroup.title,
             subtitle: graphNodeSummarySubtitle(for: key),
             systemImage: graphNodeSummaryIcon(for: key),
-            accent: GraphNodeCategory(nodeKey: key).tintColor,
+            accent: GraphNodeCategory(nodeKey: key).accentColor,
             width: senderNodeWidth,
             detail: detailText
         )
@@ -6759,7 +6781,7 @@ private func consoleNodeView(
                 title: device.name,
                 subtitle: "Console Destination",
                 systemImage: "hifispeaker.fill",
-                accent: GraphNodeCategory(nodeKey: "destination.console").tintColor,
+                accent: GraphNodeCategory(nodeKey: "destination.console").accentColor,
                 width: consoleNodeWidth,
                 detail: [
                     showAssignments ? "\(people.count) assignments" : nil,
@@ -7062,7 +7084,7 @@ private func vistaNodeView(nodeId: UUID, pos: CGPoint) -> some View {
                 title: device?.name ?? "Vista",
                 subtitle: "Vista Destination",
                 systemImage: "light.beacon.max.fill",
-                accent: GraphNodeCategory(nodeKey: "destination.vista").tintColor,
+                accent: GraphNodeCategory(nodeKey: "destination.vista").accentColor,
                 width: senderNodeWidth,
                 detail: items.isEmpty ? "No linked PCO items" : "\(items.count) linked PCO item\(items.count == 1 ? "" : "s")"
             )

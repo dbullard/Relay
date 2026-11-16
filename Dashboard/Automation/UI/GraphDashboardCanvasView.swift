@@ -18,7 +18,21 @@ import Observation
 @Observable
 final class GraphInteractionStore {
     var pan: CGSize = .zero
-    var zoom: CGFloat = 1.0
+    /// Set through `setZoom(_:)` so `isZoomedOut` stays in sync.
+    private(set) var zoom: CGFloat = 1.0
+
+    /// Below this zoom, nodes render as compact summary cards (their form text is too small
+    /// to read, and full forms make every zoom step expensive). Hysteresis keeps it from
+    /// flipping back and forth around the threshold. Changes only when the threshold is
+    /// crossed, so the graph view can read it without re-rendering on every zoom step.
+    private(set) var isZoomedOut: Bool = false
+    static let zoomedOutEnterBelow: CGFloat = 0.55
+    static let zoomedOutExitAbove: CGFloat = 0.65
+    /// True while a pan/zoom gesture is in progress (debounced by the viewport monitor).
+    var isInteracting: Bool = false
+
+    /// Node sizes reported since the last apply. Bookkeeping only, never rendered.
+    @ObservationIgnored var pendingNodeSizes: [UUID: CGSize] = [:]
 
     /// Graph-space positions of nodes being dragged (or nudged by collision resolution)
     /// before they are committed to `tab.graph`.
@@ -42,6 +56,20 @@ final class GraphInteractionStore {
 
     func untrackedDragPosition(for nodeId: UUID) -> CGPoint? {
         _dragPositions[nodeId]
+    }
+
+    func setZoom(_ newZoom: CGFloat) {
+        guard newZoom != _zoom else { return }
+        zoom = newZoom
+        let zoomedOut = _isZoomedOut
+            ? newZoom < Self.zoomedOutExitAbove
+            : newZoom < Self.zoomedOutEnterBelow
+        if zoomedOut != _isZoomedOut { isZoomedOut = zoomedOut }
+    }
+
+    /// Binding for gesture/controls code; writes go through `setZoom(_:)`.
+    var zoomBinding: Binding<CGFloat> {
+        Binding(get: { self.zoom }, set: { self.setZoom($0) })
     }
 
     /// Observation notifies on every write, even for an equal value, so skip no-ops.
@@ -94,6 +122,19 @@ final class GraphInteractionStore {
 }
 
 // MARK: - Store-reading modifiers
+
+/// Hides the graph from accessibility while the viewport is being panned or zoomed.
+/// When any accessibility client is attached (VoiceOver, window managers, automation
+/// tools), SwiftUI recomputes accessibility attachments for every gesture on every node
+/// each frame the nodes move, which was about a third of main-thread time during zoom.
+/// The tree is restored ~0.15s after the gesture ends.
+struct GraphInteractionAccessibility: ViewModifier {
+    let store: GraphInteractionStore
+
+    func body(content: Content) -> some View {
+        content.accessibilityHidden(store.isInteracting)
+    }
+}
 
 /// Applies the viewport pan/zoom. Only this modifier re-runs on scroll/pinch; the graph
 /// content it wraps is not rebuilt.
@@ -239,36 +280,62 @@ struct GraphLinksCanvasView: View, Equatable {
         let linkingFromPoint = store.linkingFromPoint
         let linkingCurrentPoint = store.linkingCurrentPoint
 
-        Canvas { context, _ in
-            func center(_ nodeId: UUID) -> CGPoint {
-                dragPositions[nodeId] ?? persistedPositions[nodeId] ?? .zero
-            }
-            func shifted(_ p: CGPoint) -> CGPoint {
-                CGPoint(x: p.x + pad, y: p.y + pad)
-            }
-            func point(_ nodeId: UUID, _ offset: CGPoint) -> CGPoint {
-                let c = center(nodeId)
-                return shifted(CGPoint(x: c.x + offset.x, y: c.y + offset.y))
-            }
+        // Resolve every curve in graph space up front, then draw them into a canvas sized
+        // to just their bounds. The layout frame stays the original oversized area (an
+        // invisible Color.clear, which costs nothing to draw) so placement is unchanged,
+        // but the rendered layer is only as big as the links. A canvas thousands of points
+        // wide was re-rasterized at every zoom step, which made zoom stutter while pan
+        // (a plain translation) stayed smooth.
+        func center(_ nodeId: UUID) -> CGPoint {
+            dragPositions[nodeId] ?? persistedPositions[nodeId] ?? .zero
+        }
+        func point(_ nodeId: UUID, _ offset: CGPoint) -> CGPoint {
+            let c = center(nodeId)
+            return CGPoint(x: c.x + offset.x, y: c.y + offset.y)
+        }
+        var curves: [(CGPoint, CGPoint, Color)] = links.map {
+            (point($0.fromNodeId, $0.fromOffset), point($0.toNodeId, $0.toOffset), Color.white.opacity(0.45))
+        }
+        if let pendingLink, let current = linkingCurrentPoint {
+            let start = linkingFromPoint ?? point(pendingLink.fromNodeId, pendingLink.fallbackFromOffset)
+            curves.append((start, current, pendingLink.color))
+        }
+        let bounds = Self.bounds(of: curves.map { ($0.0, $0.1) })
 
-            for link in links {
-                let path = Self.bezierPath(
-                    from: point(link.fromNodeId, link.fromOffset),
-                    to: point(link.toNodeId, link.toOffset)
-                )
-                context.stroke(path, with: .color(.white.opacity(0.45)), lineWidth: 2.0)
+        return Color.clear
+            .frame(width: size.width + pad * 2, height: size.height + pad * 2)
+            .overlay(alignment: .topLeading) {
+                if let bounds {
+                    Canvas { context, _ in
+                        func local(_ p: CGPoint) -> CGPoint {
+                            CGPoint(x: p.x - bounds.minX, y: p.y - bounds.minY)
+                        }
+                        for (from, to, color) in curves {
+                            let path = Self.bezierPath(from: local(from), to: local(to))
+                            context.stroke(path, with: .color(color), lineWidth: 2.0)
+                        }
+                    }
+                    .frame(width: bounds.width, height: bounds.height)
+                    // Overlay space: graph point p sits at p + pad (the frame is offset by -pad).
+                    .offset(x: bounds.minX + pad, y: bounds.minY + pad)
+                }
             }
+            .offset(x: -pad, y: -pad)
+            .allowsHitTesting(false)
+    }
 
-            if let pendingLink, let current = linkingCurrentPoint {
-                let start = linkingFromPoint.map(shifted)
-                    ?? point(pendingLink.fromNodeId, pendingLink.fallbackFromOffset)
-                let path = Self.bezierPath(from: start, to: shifted(current))
-                context.stroke(path, with: .color(pendingLink.color), lineWidth: 2.0)
+    /// Bounding box of the bezier curves (their endpoints plus control points, which
+    /// contain the curve), padded for the stroke width. Nil when there's nothing to draw.
+    static func bounds(of curves: [(CGPoint, CGPoint)]) -> CGRect? {
+        var rect: CGRect?
+        for (p0, p3) in curves {
+            let dx = max(80, abs((p3.x - p0.x) * 0.45))
+            for p in [p0, p3, CGPoint(x: p0.x + dx, y: p0.y), CGPoint(x: p3.x - dx, y: p3.y)] {
+                let r = CGRect(origin: p, size: .zero)
+                rect = rect?.union(r) ?? r
             }
         }
-        .frame(width: size.width + pad * 2, height: size.height + pad * 2)
-        .offset(x: -pad, y: -pad)
-        .allowsHitTesting(false)
+        return rect?.insetBy(dx: -4, dy: -4)
     }
 
     static func bezierPath(from p0: CGPoint, to p3: CGPoint) -> Path {
@@ -335,13 +402,15 @@ struct GraphDashboardCanvasView<Content: View, Popover: View>: View {
                 .frame(width: geoSize.width, height: geoSize.height, alignment: .topLeading)
                 .coordinateSpace(.named("GraphSpace"))
                 .modifier(GraphViewportTransform(store: interaction))
+                .modifier(GraphInteractionAccessibility(store: interaction))
             }
             .frame(width: geoSize.width, height: geoSize.height, alignment: .topLeading)
             .clipped()
             .allowsHitTesting(!showAddNodePopover)
             .viewportPanZoom(
                 pan: $interaction.pan,
-                zoom: $interaction.zoom,
+                zoom: interaction.zoomBinding,
+                isInteracting: $interaction.isInteracting,
                 isEnabled: isWorkEnabled && !showAddNodePopover,
                 showsControls: false,
                 blocksOverScrollableViews: false
