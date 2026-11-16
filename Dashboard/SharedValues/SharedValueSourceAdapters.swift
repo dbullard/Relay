@@ -25,6 +25,9 @@ final class SharedValueWirelessAdapter {
     }
 
     func refresh(now: Date = Date()) async {
+        // Collect every wireless reading first and apply them in one batch: per-value store
+        // writes each re-sorted and re-published the whole snapshot (many times per tick).
+        var updates: [SharedValueWirelessUpdate] = []
         for value in store.snapshot.values {
             let snapshot: SharedValueWirelessSnapshot?
             let field: WirelessSharedValueField
@@ -40,11 +43,11 @@ final class SharedValueWirelessAdapter {
             }
 
             guard let snapshot else {
-                await store.markDisconnected(binding: value.binding)
+                updates.append(.disconnected(id: value.id))
                 continue
             }
             if !snapshot.connected && field != .connected {
-                await store.markDisconnected(binding: value.binding)
+                updates.append(.disconnected(id: value.id))
                 continue
             }
             let payload: SharedValuePayload?
@@ -55,11 +58,13 @@ final class SharedValueWirelessAdapter {
             case .connected: payload = .boolean(snapshot.connected)
             }
             if let payload {
-                _ = await store.update(id: value.id, payload: payload, at: now)
+                updates.append(.value(id: value.id, payload: payload))
             } else if field != .connected {
-                await store.markStale(binding: value.binding)
+                updates.append(.stale(id: value.id))
             }
         }
+        guard !updates.isEmpty else { return }
+        await store.applyWirelessUpdates(updates, at: now)
     }
 }
 

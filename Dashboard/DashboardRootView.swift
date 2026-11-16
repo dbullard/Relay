@@ -644,6 +644,7 @@ var body: some View {
                 guard let index = tabs.firstIndex(where: { $0.syncGroupID == groupID }) else { return }
                 stopSyncingTab(at: index)
             })
+            .environment(\.tutorialAnchorsEnabled, tutorialController.isPresented)
             .coordinateSpace(.named("tutorialRoot"))
             .allowsHitTesting(!tutorialController.isPresented)
             .overlayPreferenceValue(TutorialAnchorPreferenceKey.self) { anchors in
@@ -3816,16 +3817,19 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
             }
             .onReceive(NotificationCenter.default.publisher(for: .dashboardAutomationViewRequested)) { _ in
                 guard layoutMode != .graph else { return }
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    layoutMode = .graph
-                    dashboardViewMode = "automation"
+                afterPrewarmingAutomationView {
+                    guard layoutMode != .graph else { return }
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        layoutMode = .graph
+                        dashboardViewMode = "automation"
 
-                    // Stop LAN mirror polling while in Graph/Automation view.
-                    lanMirrorRefreshTask?.cancel()
-                    lanMirrorRefreshTask = nil
+                        // Stop LAN mirror polling while in Graph/Automation view.
+                        lanMirrorRefreshTask?.cancel()
+                        lanMirrorRefreshTask = nil
 
-                    // Match toolbar behavior when switching modes.
-                    clearSelectionForViewSwitch()
+                        // Match toolbar behavior when switching modes.
+                        clearSelectionForViewSwitch()
+                    }
                 }
 
                 if !automationTutorialSeen {
@@ -6251,18 +6255,34 @@ private func syncedPresenceColor(for deviceID: String) -> Color {
 }
 
 private func handleToggleGraphCanvas() {
-    withAnimation(.easeInOut(duration: 0.25)) {
-        layoutMode = (layoutMode == .canvas) ? .graph : .canvas
-        if layoutMode == .graph {
-            lanMirrorRefreshTask?.cancel()
-            lanMirrorRefreshTask = nil
-        } else {
-            if selectedLANShareId != nil {
-                startLANMirrorRefreshLoop()
+    let flip = {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            layoutMode = (layoutMode == .canvas) ? .graph : .canvas
+            if layoutMode == .graph {
+                lanMirrorRefreshTask?.cancel()
+                lanMirrorRefreshTask = nil
+            } else {
+                if selectedLANShareId != nil {
+                    startLANMirrorRefreshLoop()
+                }
             }
+            clearSelectionForViewSwitch()
         }
-        clearSelectionForViewSwitch()
     }
+    if layoutMode == .canvas {
+        afterPrewarmingAutomationView(flip)
+    } else {
+        flip()
+    }
+}
+
+/// Builds the hidden Automation graph first, then runs `flip` once that work has been
+/// committed. Building every node takes a few hundred milliseconds on the main thread; doing
+/// it before the flip keeps the 3D flip animation smooth instead of freezing partway through.
+private func afterPrewarmingAutomationView(_ flip: @escaping () -> Void) {
+    NotificationCenter.default.post(name: .relayPrewarmAutomationView, object: nil)
+    // The build runs in this run loop turn's SwiftUI update; the delay lands after it.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: flip)
 }
 
 /// Triggers GraphDashboardView to compute console order + post `.prodlinkGraphSendAllToConsoles`.

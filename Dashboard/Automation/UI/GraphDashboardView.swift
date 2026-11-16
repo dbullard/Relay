@@ -53,6 +53,11 @@ var onGraphChanged: (() -> Void)? = nil
 #else
 private let isWorkEnabled: Bool = true
 #endif
+/// True when the graph was built ahead of a flip to Automation (`.relayPrewarmAutomationView`),
+/// so the ~300 ms build happens before the flip animation instead of during it. Cleared when
+/// the graph is hidden again, which unmounts it: a hidden mounted graph keeps re-rendering on
+/// every document change.
+@State private var hasMountedGraphContent: Bool = false
 @Environment(\.undoManager) private var undoManager
     
 // Drag state
@@ -5463,9 +5468,14 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
 }
 
 var body: some View {
-    // Keep Graph mounted for flip animation/state, but skip heavy work when not visible.
-    if !isWorkEnabled {
+    // Only build the graph while it's showing (or about to be: see `hasMountedGraphContent`).
+    if !isWorkEnabled && !hasMountedGraphContent {
         Color.clear
+            #if os(macOS)
+            .onReceive(NotificationCenter.default.publisher(for: .relayPrewarmAutomationView)) { _ in
+                hasMountedGraphContent = true
+            }
+            #endif
     } else {
         GeometryReader { geo in
             let groups = computedModuleGroups()
@@ -5503,9 +5513,12 @@ var body: some View {
             #endif
         }
         .onAppear {
+            _ = installSendAllListenerIfNeeded()
+            // A prewarmed (hidden) graph must not take over the runtime from Canvas mode;
+            // activation happens in `onChange(of: isWorkEnabled)` when it's shown.
+            guard isWorkEnabled else { return }
             // Graph view must explicitly point the always-on runtime at the live bound tab.
             activateGraphRuntime()
-            _ = installSendAllListenerIfNeeded()
             #if os(macOS)
             dismissGraphTextInput()
             #endif
@@ -5531,9 +5544,16 @@ var body: some View {
         }
         .animation(.none, value: liveModeFromStorage)
         .onChange(of: isWorkEnabled, initial: false) { _, enabled in
+            guard enabled else {
+                // Unmount once hidden; `onDisappear` does the interaction cleanup.
+                hasMountedGraphContent = false
+                return
+            }
             // Never disable automations from the Graph view; only re-enable when graph becomes active.
-            guard enabled else { return }
             activateGraphRuntime()
+            #if os(macOS)
+            dismissGraphTextInput()
+            #endif
         }
         .onChange(of: tab.graph?.links, initial: false) { _, _ in
             refreshSendAllListenerForGraphChange()

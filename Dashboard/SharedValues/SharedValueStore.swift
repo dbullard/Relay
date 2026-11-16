@@ -27,6 +27,13 @@ enum SharedValueValidationError: Error, Equatable {
     case missingValue(UUID)
 }
 
+/// One reading from a wireless refresh pass, applied in a batch by `SharedValueStore`.
+enum SharedValueWirelessUpdate: Sendable {
+    case value(id: UUID, payload: SharedValuePayload)
+    case disconnected(id: UUID)
+    case stale(id: UUID)
+}
+
 struct SharedValueSnapshot: Sendable, Equatable {
     var values: [SharedValue]
     var recentOSCAddresses: [OSCAddressObservation] = []
@@ -70,9 +77,14 @@ actor SharedValueRegistry {
     func syncCatalog(_ observations: [SharedValueCatalogObservation], at date: Date = Date()) -> Bool {
         var changed = false
         let keys = Set(observations.map(\.key))
+        // Index system values by key once instead of scanning every value per observation.
+        var systemIDByKey: [String: UUID] = [:]
+        for (id, value) in valuesByID {
+            if case let .system(key) = value.binding { systemIDByKey[key] = id }
+        }
         for observation in observations {
             let binding = SharedValueBinding.system(key: observation.key)
-            let existing = valuesByID.values.first { $0.binding == binding }
+            let existing = systemIDByKey[observation.key].flatMap { valuesByID[$0] }
             let value = existing ?? createSuggested(baseName: observation.name, binding: binding)
             var updated = value
             updated.origin = .suggested
@@ -98,7 +110,17 @@ actor SharedValueRegistry {
         return changed
     }
 
-    func recomputeComputedValues() {
+    /// Re-evaluates computed values. Returns whether any value changed.
+    @discardableResult
+    func recomputeComputedValues() -> Bool {
+        let computedIDs = valuesByID.compactMap { id, value -> UUID? in
+            if case .computed = value.binding { return id }
+            return nil
+        }
+        guard !computedIDs.isEmpty else { return false }
+        var idByName: [String: UUID] = [:]
+        for (id, value) in valuesByID { idByName[value.name] = id }
+        var changed = false
         var visiting: Set<UUID> = []
         var completed: Set<UUID> = []
         func evaluate(_ id: UUID) -> SharedValuePayload? {
@@ -107,20 +129,20 @@ actor SharedValueRegistry {
             if completed.contains(id) { return value.payload }
             guard visiting.insert(id).inserted else { return nil }
             let payload = SharedValueExpression.evaluate(expression, type: type) { name in
-                guard let dependency = valuesByID.values.first(where: { $0.name == normalizeSharedValueName(name) }) else { return nil }
-                return evaluate(dependency.id)
+                guard let dependencyID = idByName[normalizeSharedValueName(name)] else { return nil }
+                return evaluate(dependencyID)
             }
             visiting.remove(id)
             completed.insert(id)
             var updated = value
             if let payload { _ = updated.apply(payload: payload, at: Date()) }
             else { updated.payload = nil; updated.status = .neverReceived }
+            if updated != value { changed = true }
             valuesByID[id] = updated
             return payload
         }
-        for (id, value) in valuesByID {
-            if case .computed = value.binding { _ = evaluate(id) }
-        }
+        for id in computedIDs { _ = evaluate(id) }
+        return changed
     }
 
     func createSuggested(baseName: String, binding: SharedValueBinding) -> SharedValue {
@@ -201,6 +223,30 @@ actor SharedValueRegistry {
             value.markDisconnected()
             valuesByID[id] = value
             changed = true
+        }
+        return changed
+    }
+
+    /// Applies one wireless refresh pass. Returns whether any value changed.
+    func applyWirelessUpdates(_ updates: [SharedValueWirelessUpdate], at date: Date) -> Bool {
+        var changed = false
+        for update in updates {
+            switch update {
+            case let .value(id, payload):
+                changed = self.update(id: id, payload: payload, at: date) || changed
+            case let .disconnected(id):
+                // By id: the binding-based variants scan every value per call.
+                guard var value = valuesByID[id],
+                      value.status != .disconnected && value.status != .neverReceived else { continue }
+                value.markDisconnected()
+                valuesByID[id] = value
+                changed = true
+            case let .stale(id):
+                guard var value = valuesByID[id], value.status == .live else { continue }
+                value.markStale()
+                valuesByID[id] = value
+                changed = true
+            }
         }
         return changed
     }
@@ -405,7 +451,15 @@ final class SharedValueStore {
     }
 
     func recomputeComputedValues() async {
-        await registry.recomputeComputedValues()
+        // Runs every refresh tick; only publish (and wake every observing view) on a change.
+        guard await registry.recomputeComputedValues() else { return }
+        snapshot = await registry.snapshot()
+        schedulePersistence()
+    }
+
+    /// Applies one wireless refresh pass with a single snapshot rebuild and publish.
+    func applyWirelessUpdates(_ updates: [SharedValueWirelessUpdate], at date: Date = Date()) async {
+        guard await registry.applyWirelessUpdates(updates, at: date) else { return }
         snapshot = await registry.snapshot()
         schedulePersistence()
     }
