@@ -146,3 +146,62 @@ final class SharedValueStoreTests: XCTestCase {
         XCTAssertEqual(store.snapshot.values.first?.payload, .text("Opening"))
     }
 }
+
+final class FileSharedValueStorageTests: XCTestCase {
+    private var directory: URL!
+    private var defaults: UserDefaults!
+    private var suiteName: String!
+
+    override func setUp() {
+        super.setUp()
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FileSharedValueStorageTests-\(UUID().uuidString)", isDirectory: true)
+        suiteName = "FileSharedValueStorageTests-\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: directory)
+        defaults.removePersistentDomain(forName: suiteName)
+        super.tearDown()
+    }
+
+    private var fileURL: URL { directory.appendingPathComponent("SharedValues.json") }
+
+    func testSaveThenLoadRoundTrips() async {
+        let storage = FileSharedValueStorage(fileURL: fileURL, defaults: defaults)
+        await storage.save(Data("one".utf8))
+        let reloaded = FileSharedValueStorage(fileURL: fileURL, defaults: defaults)
+        let loaded = await reloaded.load()
+        XCTAssertEqual(loaded, Data("one".utf8))
+    }
+
+    func testLegacyDefaultsValueIsMovedIntoTheFile() async {
+        defaults.set(Data("legacy".utf8), forKey: FileSharedValueStorage.legacyDefaultsKey)
+        let storage = FileSharedValueStorage(fileURL: fileURL, defaults: defaults)
+
+        let loaded = await storage.load()
+
+        XCTAssertEqual(loaded, Data("legacy".utf8))
+        XCTAssertNil(defaults.data(forKey: FileSharedValueStorage.legacyDefaultsKey))
+        XCTAssertEqual(try? Data(contentsOf: fileURL), Data("legacy".utf8))
+    }
+
+    func testLegacyDefaultsValueWinsOverAnExistingFile() async {
+        // An import from the previous Relay writes the legacy key even after the file exists.
+        let storage = FileSharedValueStorage(fileURL: fileURL, defaults: defaults)
+        await storage.save(Data("file".utf8))
+        defaults.set(Data("imported".utf8), forKey: FileSharedValueStorage.legacyDefaultsKey)
+
+        let loaded = await FileSharedValueStorage(fileURL: fileURL, defaults: defaults).load()
+
+        XCTAssertEqual(loaded, Data("imported".utf8))
+        XCTAssertEqual(try? Data(contentsOf: fileURL), Data("imported".utf8))
+    }
+
+    func testSavingDoesNotWriteUserDefaults() async {
+        let storage = FileSharedValueStorage(fileURL: fileURL, defaults: defaults)
+        await storage.save(Data("value".utf8))
+        XCTAssertNil(defaults.data(forKey: FileSharedValueStorage.legacyDefaultsKey))
+    }
+}

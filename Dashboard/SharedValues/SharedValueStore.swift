@@ -13,11 +13,69 @@ actor InMemorySharedValueStorage: SharedValueStorage {
     func save(_ data: Data) { self.data = data }
 }
 
-actor UserDefaultsSharedValueStorage: SharedValueStorage {
-    private let key = "relay_shared_values_v1"
+/// Stores shared values in a JSON file in Application Support.
+///
+/// They used to live in `UserDefaults`. Live values (wireless battery/RF/audio, clocks) change
+/// constantly, so the store persisted every ~5 s, and every `UserDefaults` write notifies every
+/// `@AppStorage` in the app: views that use `@AppStorage`, including the whole Automation graph,
+/// re-rendered every 5 s for nothing.
+actor FileSharedValueStorage: SharedValueStorage {
+    /// The previous `UserDefaults` key. Also what `PreviousRelayImporter` writes on import.
+    static let legacyDefaultsKey = "relay_shared_values_v1"
 
-    func load() -> Data? { UserDefaults.standard.data(forKey: key) }
-    func save(_ data: Data) { UserDefaults.standard.set(data, forKey: key) }
+    private let fileURL: URL?
+    private let defaults: UserDefaults
+    private var lastSaved: Data?
+
+    init(fileURL: URL? = FileSharedValueStorage.defaultFileURL(), defaults: UserDefaults = .standard) {
+        self.fileURL = fileURL
+        self.defaults = defaults
+    }
+
+    static func defaultFileURL() -> URL? {
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return support.appendingPathComponent("Relay", isDirectory: true)
+            .appendingPathComponent("SharedValues.json")
+    }
+
+    func load() -> Data? {
+        // Values in the legacy key (an older build, or an import from the previous Relay applied
+        // at launch) take precedence: move them into the file and clear the key, so a later
+        // import is picked up again.
+        if let legacy = defaults.data(forKey: Self.legacyDefaultsKey) {
+            if write(legacy) {
+                defaults.removeObject(forKey: Self.legacyDefaultsKey)
+            }
+            return legacy
+        }
+        guard let fileURL, let data = try? Data(contentsOf: fileURL) else { return nil }
+        lastSaved = data
+        return data
+    }
+
+    func save(_ data: Data) {
+        guard data != lastSaved else { return }
+        _ = write(data)
+    }
+
+    @discardableResult
+    private func write(_ data: Data) -> Bool {
+        guard let fileURL else { return false }
+        do {
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: fileURL, options: .atomic)
+            lastSaved = data
+            return true
+        } catch {
+            print("[SharedValues] Failed to save \(fileURL.path): \(error)")
+            return false
+        }
+    }
 }
 
 enum SharedValueValidationError: Error, Equatable {
@@ -48,7 +106,7 @@ actor SharedValueRegistry {
     private var recentOSCAddresses: [OSCAddressObservation] = []
     private var recentTriggerValues: [TriggerValueObservation] = []
 
-    init(storage: any SharedValueStorage = UserDefaultsSharedValueStorage()) {
+    init(storage: any SharedValueStorage = FileSharedValueStorage()) {
         self.storage = storage
     }
 
@@ -354,9 +412,12 @@ final class SharedValueStore {
 
     private let registry: SharedValueRegistry
     private(set) var snapshot: SharedValueSnapshot = .empty
-    private var pendingPersistence: Task<Void, Never>?
-    private var pendingOSCSnapshotRefresh: Task<Void, Never>?
-    private var hasLoaded = false
+    // Bookkeeping, never rendered: excluded from observation. As tracked properties, the
+    // 5 s persistence timer setting `pendingPersistence` re-rendered every observer, which
+    // included the whole Automation graph (a full ~100–150 ms re-render every ~5 s).
+    @ObservationIgnored private var pendingPersistence: Task<Void, Never>?
+    @ObservationIgnored private var pendingOSCSnapshotRefresh: Task<Void, Never>?
+    @ObservationIgnored private var hasLoaded = false
 
     init(registry: SharedValueRegistry = SharedValueRegistry()) {
         self.registry = registry

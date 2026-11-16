@@ -50,27 +50,33 @@ state lost on persist, keystroke trigger data race, compact-card size pop.
   - Tried and dropped (no measurable gain): culling off-screen nodes; an equatable wrapper
     around `GraphDashboardView`.
 
-- [ ] **The whole graph re-renders every few seconds with nothing changed** — M, investigated
-  - **What's known:** `GraphDashboardView` re-runs its body about every 2–8 s at idle and 3–4
-    times per gesture (~100–150 ms each, the remaining mid-gesture spikes), reported as
-    `_tab changed` with the tab's value unchanged.
-  - **Ruled out:** document writes. Logging every `tabs` write showed none during these
-    re-renders (25 s of idle Automation, no writes).
-  - **Cause:** `DashboardRootView.resolvedGraphTabBinding` builds a new `Binding(get:set:)`
-    every time the root's body closure re-runs (which happens for many unrelated state
-    changes). A new binding instance counts as a changed input, so the graph re-renders. An
-    `Equatable` wrapper around the graph doesn't help: SwiftUI updates a stored `Binding`
-    (a `DynamicProperty`) on its own, bypassing `==`.
-  - **Fix options:** give the graph a stable binding (cache one per tab id in a reference held
-    by the root) or a small `@Observable` tab model instead of a binding. Either needs care so
-    the graph still updates when the tab changes elsewhere (canvas edits that add Button trigger
-    nodes, PCO snapshots, runtime variable updates); verify those after the change.
-  - **Done:** `scheduleTabsSaveDebounced` re-assigned every tab on each edit while reconciling
-    Button trigger nodes; it now assigns only when a tab changed.
-  - **Left as is:** `refreshPCOModulesForSelectedTab` rewrites PCO modules with an identical
-    value on purpose ("bump the kind to itself to ensure SwiftUI sees a change") so PCO tiles
-    redraw. It only runs on PCO events; replacing that with an explicit refresh signal is a
-    separate change.
+- [x] **The whole graph re-rendered every ~5 s with nothing changed** — fixed
+  - **Cause:** `SharedValueStore` persisted all shared values into `UserDefaults` every ~5 s
+    (live wireless and clock values change constantly). Every `UserDefaults` write notifies
+    every `@AppStorage` in the app, and `GraphDashboardView` has three, so the whole graph
+    (~100–150 ms) and every other `@AppStorage` view re-rendered on each save.
+  - **Fix:** shared values are stored in `Application Support/Relay/SharedValues.json`
+    (`FileSharedValueStorage`), with identical saves skipped. The legacy `relay_shared_values_v1`
+    key, whether from an older build or a `PreviousRelayImporter` import, is moved into the file
+    on load and removed. Measured: 0 graph re-renders in 30 s of idle Automation, was one every
+    ~5.3 s.
+  - **Ruled out on the way:** document (`tabs`) writes, the per-render tab `Binding`
+    (`_printChanges` reports a custom binding as changed on any update), the persistence task
+    property itself.
+  - Also done: `scheduleTabsSaveDebounced` now writes `tabs` only when Button trigger
+    reconciling changed something.
+  - Left as is: `refreshPCOModulesForSelectedTab` rewrites PCO modules with an identical value
+    on purpose to force PCO tiles to redraw.
+
+- [ ] **Shared-values snapshot still publishes 3–4 times a second** — S/M
+  - With wireless bindings the refresh loop runs every 0.5 s and `SharedValue.apply` treats any
+    value older than 1 s as changed, so the snapshot republishes nearly every tick. Canvas text
+    tiles that resolve tokens re-render each time. Consider excluding `lastUpdatedAt`-only
+    changes from publishing (or publishing them at a slower rate).
+
+- [ ] **Other periodic `UserDefaults` writers re-render every `@AppStorage` view** — S each
+  - Same mechanism as above. Known example: Shure live sync saves the device list every 30 s
+    (`recordLiveSyncIfNeeded`). Audit for other timers that write `UserDefaults`.
 
 - [ ] **Remaining per-frame cost: native controls and accessibility** — L
   - With rebuilds gone, frame time is mostly native-control geometry (text fields, segmented
