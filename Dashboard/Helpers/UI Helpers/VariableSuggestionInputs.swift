@@ -63,6 +63,20 @@ private func plainVariableTokenCompletionContext(in text: String, selection: NSR
 
 private final class PlainVariableSuggestingTextView: NSTextView {
     var variableValueProvider: (() -> [String: String])?
+    /// Become first responder once the view is in a window (click-to-edit fields create
+    /// the view in response to the click, before it has a window).
+    var focusWhenAddedToWindow = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard focusWhenAddedToWindow, window != nil else { return }
+        focusWhenAddedToWindow = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window else { return }
+            window.makeFirstResponder(self)
+            self.setSelectedRange(NSRange(location: self.string.utf16.count, length: 0))
+        }
+    }
     fileprivate private(set) var currentVariableCompletionContext: PlainVariableTokenCompletionContext?
     private var activeCompletionMenuContext: PlainVariableTokenCompletionContext?
 
@@ -181,7 +195,9 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
         textView.font = .systemFont(ofSize: NSFont.systemFontSize)
         textView.textColor = .labelColor
         textView.insertionPointColor = .labelColor
-        textView.textContainerInset = NSSize(width: 4, height: multiline ? 6 : 4)
+        textView.textContainerInset = multiline
+            ? NSSize(width: 4, height: 6)
+            : VariableSuggestingTextField.singleLineInset(for: textView.font ?? .systemFont(ofSize: NSFont.systemFontSize))
         textView.textContainer?.lineFragmentPadding = 0
         textView.isVerticallyResizable = multiline
         textView.isHorizontallyResizable = false
@@ -210,13 +226,7 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
 
         context.coordinator.textView = textView
         context.coordinator.onEndEditing = onEndEditing
-        if activatesOnAppear {
-            DispatchQueue.main.async { [weak textView] in
-                guard let textView, let window = textView.window else { return }
-                window.makeFirstResponder(textView)
-                textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
-            }
-        }
+        textView.focusWhenAddedToWindow = activatesOnAppear
         return scrollView
     }
 
@@ -334,6 +344,19 @@ private struct VariableSuggestingPlainTextInput: NSViewRepresentable {
 #endif
 
 struct VariableSuggestingTextField: View {
+    /// Fixed height of the single-line field; the text is centered vertically in it.
+    static let height: CGFloat = 28
+    /// Leading inset of the text. The placeholder and the graph's resting display
+    /// (`AutomationVariableTokenField`) use the same value so the text doesn't move.
+    static let horizontalInset: CGFloat = 8
+
+    #if os(macOS)
+    static func singleLineInset(for font: NSFont) -> NSSize {
+        let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
+        return NSSize(width: horizontalInset, height: max(0, (height - lineHeight) / 2))
+    }
+    #endif
+
     private let title: String
     @Binding private var text: String
     private let activatesOnAppear: Bool
@@ -354,7 +377,7 @@ struct VariableSuggestingTextField: View {
             if text.isEmpty {
                 Text(title)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, Self.horizontalInset)
                     .allowsHitTesting(false)
             }
 
@@ -369,7 +392,7 @@ struct VariableSuggestingTextField: View {
         // Fixed height: the NSScrollView inside has no intrinsic height, so with only a
         // minimum it grew to fill whatever height it was offered (e.g. a whole graph
         // node placed with .position, which offers the full canvas height).
-        .frame(height: 28)
+        .frame(height: Self.height)
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
@@ -412,7 +435,16 @@ struct AutomationVariableTokenField: View {
     /// is being edited: AppKit views re-measure on every canvas zoom step (see
     /// GraphNodeControls.swift).
     @State private var isEditing = false
+    @State private var editingStartedAt = Date.distantPast
     @Environment(\.isEnabled) private var isEnabled
+
+    /// Ends editing when the text view loses focus, except during the click that started
+    /// editing (another view may briefly take focus then; the text view is still there to
+    /// click into).
+    private func endEditing() {
+        guard Date().timeIntervalSince(editingStartedAt) >= 0.4 else { return }
+        isEditing = false
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -421,10 +453,10 @@ struct AutomationVariableTokenField: View {
                 if !isEditing {
                     display
                 } else if multiline {
-                    VariableSuggestingTextEditor(text: $text, activatesOnAppear: true) { isEditing = false }
+                    VariableSuggestingTextEditor(text: $text, activatesOnAppear: true) { endEditing() }
                         .frame(minHeight: 64)
                 } else {
-                    VariableSuggestingTextField(title, text: $text, activatesOnAppear: true) { isEditing = false }
+                    VariableSuggestingTextField(title, text: $text, activatesOnAppear: true) { endEditing() }
                 }
                 #else
                 if multiline {
@@ -457,12 +489,12 @@ struct AutomationVariableTokenField: View {
         .font(.system(size: NSFont.systemFontSize))
         .lineLimit(multiline ? nil : 1)
         .truncationMode(.tail)
-        .padding(.horizontal, multiline ? 4 : 9)
+        .padding(.horizontal, multiline ? 4 : VariableSuggestingTextField.horizontalInset)
         .padding(.vertical, multiline ? 6 : 0)
         .frame(
             maxWidth: .infinity,
-            minHeight: multiline ? 96 : 28,
-            maxHeight: multiline ? 96 : 28,
+            minHeight: multiline ? 96 : VariableSuggestingTextField.height,
+            maxHeight: multiline ? 96 : VariableSuggestingTextField.height,
             alignment: multiline ? .topLeading : .leading
         )
         .background(
@@ -477,6 +509,8 @@ struct AutomationVariableTokenField: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard isEnabled else { return }
+            GraphTextEditingClaim.claim()
+            editingStartedAt = Date()
             isEditing = true
         }
         .accessibilityElement(children: .ignore)
@@ -485,6 +519,7 @@ struct AutomationVariableTokenField: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
             guard isEnabled else { return }
+            GraphTextEditingClaim.claim()
             isEditing = true
         }
     }

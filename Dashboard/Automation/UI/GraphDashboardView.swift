@@ -279,6 +279,11 @@ private func focusGraphSurface() {
     if currentClickLandedInTextInput() {
         return
     }
+    // The click started editing a SwiftUI-drawn field (GraphTextField and friends), which
+    // has no AppKit text view under the mouse yet.
+    if GraphTextEditingClaim.isRecent {
+        return
+    }
     dismissGraphTextInput()
     graphIsFocused = true
     DispatchQueue.main.async {

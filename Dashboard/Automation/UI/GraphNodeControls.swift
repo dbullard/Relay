@@ -41,6 +41,19 @@ enum GraphControlMetrics {
 
 // MARK: - Text field
 
+/// Records that a click just started editing a graph text field. Node and background taps
+/// move keyboard focus to the graph surface (`focusGraphSurface`), and they fire for the same
+/// click; without this they took focus back from the field the click had just created.
+@MainActor
+enum GraphTextEditingClaim {
+    private static var lastClaim = Date.distantPast
+
+    static func claim() { lastClaim = Date() }
+
+    /// True for a short while after a field claimed a click.
+    static var isRecent: Bool { Date().timeIntervalSince(lastClaim) < 0.5 }
+}
+
 /// A text field that shows its value as text until clicked, then edits with a real
 /// `TextField`. Modifiers applied to it (`.textFieldStyle`, `.font`, `.onSubmit`,
 /// `.multilineTextAlignment`, `.lineLimit`, `.disabled`) reach the real field too.
@@ -55,6 +68,7 @@ struct GraphTextField<Field: View>: View {
     @Environment(\.font) private var font
     @Environment(\.multilineTextAlignment) private var textAlignment
     @State private var isEditing = false
+    @State private var editingStartedAt = Date.distantPast
     @FocusState private var isFocused: Bool
 
     fileprivate init(
@@ -74,11 +88,19 @@ struct GraphTextField<Field: View>: View {
             makeField()
                 .focused($isFocused)
                 .onAppear {
+                    editingStartedAt = Date()
                     // Focus once the field is in the window.
                     DispatchQueue.main.async { isFocused = true }
                 }
                 .onChange(of: isFocused) { _, focused in
-                    if !focused { isEditing = false }
+                    guard !focused else { return }
+                    // Something else grabbed focus during the click that started editing
+                    // (e.g. a gesture on the node): take it back instead of closing.
+                    if Date().timeIntervalSince(editingStartedAt) < 0.4 {
+                        DispatchQueue.main.async { isFocused = true }
+                    } else {
+                        isEditing = false
+                    }
                 }
         } else {
             display
@@ -115,6 +137,7 @@ struct GraphTextField<Field: View>: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard isEnabled else { return }
+            GraphTextEditingClaim.claim()
             isEditing = true
         }
         .accessibilityElement(children: .ignore)
@@ -123,6 +146,7 @@ struct GraphTextField<Field: View>: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
             guard isEnabled else { return }
+            GraphTextEditingClaim.claim()
             isEditing = true
         }
     }
