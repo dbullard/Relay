@@ -8800,9 +8800,15 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         // Reconcile auto-mirrored Button trigger nodes when tile/module composition changes.
         // Position-only edits like drag/resize should skip this synchronous work.
         if reconcileGraphNodes {
-            for i in tabs.indices {
-                tabs[i].reconcileButtonTriggerNodes()
+            // Reconcile on a copy and assign only if something changed: writing through
+            // `tabs[i]` invalidates every view reading `tabs` (including the whole Automation
+            // graph via its tab binding) even when nothing changed, on every edit.
+            var reconciled = tabs
+            var changed = false
+            for i in reconciled.indices {
+                if reconciled[i].reconcileButtonTriggerNodes() { changed = true }
             }
+            if changed { tabs = reconciled }
         }
 
         // Cancel any pending save so we only persist the latest state.

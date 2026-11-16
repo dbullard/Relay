@@ -50,15 +50,27 @@ state lost on persist, keystroke trigger data race, compact-card size pop.
   - Tried and dropped (no measurable gain): culling off-screen nodes; an equatable wrapper
     around `GraphDashboardView`.
 
-- [ ] **Equal-value `tabs` writes still re-render the whole graph every few seconds** — M
-  - **What's known:** `GraphDashboardView` reports `_tab changed` about every 2 s at idle and
-    3–4 times per gesture while the tab's value is unchanged (`onChange(of: tab)` never fires).
-    Some root code writes `tabs` with an identical value, which invalidates everything reading
-    the tab binding: a ~100–150 ms full graph re-render, the remaining mid-gesture spikes.
-  - **Likely culprit:** `scheduleTabsSaveDebounced` writes `tabs[i].reconcileButtonTriggerNodes()`
-    for every tab regardless of its result (see section 3), or another periodic root write.
-  - **Fix:** find the writer (log in a `tabs` wrapper or audit every `tabs[...] =` site) and
-    assign only on change.
+- [ ] **The whole graph re-renders every few seconds with nothing changed** — M, investigated
+  - **What's known:** `GraphDashboardView` re-runs its body about every 2–8 s at idle and 3–4
+    times per gesture (~100–150 ms each, the remaining mid-gesture spikes), reported as
+    `_tab changed` with the tab's value unchanged.
+  - **Ruled out:** document writes. Logging every `tabs` write showed none during these
+    re-renders (25 s of idle Automation, no writes).
+  - **Cause:** `DashboardRootView.resolvedGraphTabBinding` builds a new `Binding(get:set:)`
+    every time the root's body closure re-runs (which happens for many unrelated state
+    changes). A new binding instance counts as a changed input, so the graph re-renders. An
+    `Equatable` wrapper around the graph doesn't help: SwiftUI updates a stored `Binding`
+    (a `DynamicProperty`) on its own, bypassing `==`.
+  - **Fix options:** give the graph a stable binding (cache one per tab id in a reference held
+    by the root) or a small `@Observable` tab model instead of a binding. Either needs care so
+    the graph still updates when the tab changes elsewhere (canvas edits that add Button trigger
+    nodes, PCO snapshots, runtime variable updates); verify those after the change.
+  - **Done:** `scheduleTabsSaveDebounced` re-assigned every tab on each edit while reconciling
+    Button trigger nodes; it now assigns only when a tab changed.
+  - **Left as is:** `refreshPCOModulesForSelectedTab` rewrites PCO modules with an identical
+    value on purpose ("bump the kind to itself to ensure SwiftUI sees a change") so PCO tiles
+    redraw. It only runs on PCO events; replacing that with an explicit refresh signal is a
+    separate change.
 
 - [ ] **Remaining per-frame cost: native controls and accessibility** — L
   - With rebuilds gone, frame time is mostly native-control geometry (text fields, segmented
@@ -136,6 +148,7 @@ state lost on persist, keystroke trigger data race, compact-card size pop.
     overlay; commit `selectedTileIDs` on drag end (same pattern as `GraphInteractionStore`).
 
 - [ ] **Every edit pays for redundant `tabs` writes and four `onChange(of: tabs)` handlers** — M
+  (the reconcile write is now change-only; the handlers are not yet merged or debounced)
   - **Where:** `DashboardRootView.swift`: `scheduleTabsSaveDebounced` (~8797) writes
     `tabs[i].reconcileButtonTriggerNodes()` for every tab regardless of its result; handlers
     run diagnostics, roster sync, OSC config refresh, PCO coordinator setup per edit.
