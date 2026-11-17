@@ -281,6 +281,12 @@ final class ShureOverviewHub: ObservableObject {
     /// the fast single-tile-equivalent rate.
     private var baseThrottleInterval: TimeInterval = 0.3
     private var previousDroppedCounts: [UUID: Int] = [:]
+    /// Per-device: how long the strain check has failed without a break. One check covers
+    /// about two seconds, and a receiver's startup data burst or a tile opening can push a
+    /// single check over the drop threshold (seen live: 357/s for one check, then ~30/s).
+    private var sustainedStrain = ShureOverviewSustainedCondition()
+    /// How long a device must stay strained before the banner shows (and latches).
+    static let strainSustainSeconds: TimeInterval = 6
     private var previousStrainCheckAt: Date?
     /// Minimum span between drop-rate strain evaluations, independent of
     /// how often recompute() itself runs. recompute() is throttled to
@@ -424,6 +430,7 @@ final class ShureOverviewHub: ObservableObject {
         // updatePerformanceStrain for why it otherwise never auto-clears.
         isPerformanceStrained = false
         previousDroppedCounts.removeAll()
+        sustainedStrain = ShureOverviewSustainedCondition()
         previousStrainCheckAt = nil
         for service in services.values {
             service.setLiveModeEnabled(live)
@@ -491,6 +498,7 @@ final class ShureOverviewHub: ObservableObject {
             services.removeValue(forKey: removed)
             deviceSnapshots.removeValue(forKey: removed)
             previousDroppedCounts.removeValue(forKey: removed)
+            _ = sustainedStrain.isSustained(id: removed.uuidString, active: false, now: Date(), for: Self.strainSustainSeconds)
         }
 
         for device in eligibleDevices where services[device.id] == nil {
@@ -593,12 +601,13 @@ final class ShureOverviewHub: ObservableObject {
             // the very first recompute. The busy-time check still runs
             // normally on this first pass.
             let previousDropped = previousDroppedCounts[device.id] ?? diagnostics.droppedCoalescedUpdateCount
-            if !isWithinStrainWarmup, ShureOverviewPerformanceStrainEvaluator.isStrained(
+            let failsCheck = !isWithinStrainWarmup && ShureOverviewPerformanceStrainEvaluator.isStrained(
                 diagnostics: diagnostics,
                 pollingIntervalSeconds: currentThrottleInterval,
                 previousDroppedCount: previousDropped,
                 elapsedSeconds: elapsedSeconds
-            ) {
+            )
+            if sustainedStrain.isSustained(id: device.id.uuidString, active: failsCheck, now: now, for: Self.strainSustainSeconds) {
                 strained = true
             }
             previousDroppedCounts[device.id] = diagnostics.droppedCoalescedUpdateCount

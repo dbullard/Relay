@@ -226,18 +226,29 @@ audio meters) that stays smooth across many receivers. Judge wireless items by t
     instead of at once. Battery critical is unchanged.
   - **Not checked live:** the power-off case (from reading the code; not reproduced on screen).
 
-- [ ] **Shared values keep every Shure receiver live** — needs a decision
-  - `SharedValueSourceAdapters.reconcileWirelessServices` puts every receiver that has a Shure
-    shared value into Live mode as a polling consumer, and suggested battery/RF/audio/connected
-    values are created for every receiver, so Live mode connects all of them (~18 here) whatever
-    the dashboard shows. Options: keep it (every receiver's values stay live for tokens,
-    automation and the Shared Values window), or connect only receivers whose values something
-    actually reads.
+- [x] **Shared values keep every Shure receiver live** — fixed (`f921936`)
+  - **Cause:** suggested battery/RF/audio/connected values exist for every receiver, and
+    `reconcileWirelessServices` put every receiver with a Shure value into Live mode as a polling
+    consumer, so Live mode connected all of them (~18 here) whatever the dashboard showed.
+  - **Fix (user's choice: only used receivers):** a wireless value counts as used when it is
+    custom, or its name appears in the tabs (tiles, per-tab automations), the universal automation
+    graph, or a computed value's expression (`SharedValueWirelessUsage`). The document is rescanned
+    only when it changes. Receivers that stop being used are released unless a tile still uses
+    them. Unused suggested values stay listed and show disconnected. Unit-tested (8 tests).
+  - **Live:** with the Shure test copy (no tokens), Live mode connected 6 receivers, exactly the
+    ones the Overview and tiles show (was ~18). With the window off-screen, 0.
+  - **Known gap:** a linked computer reading a suggested value over LAN does not keep that
+    receiver live on its own.
 
-- [ ] **Overview "Meter mode may be affecting performance" banner** — S, needs a look
-  - Shows in meter mode on the baseline build too. The strain check counts coalesced snapshot
-    requests, and every mirror update schedules one, so the count may say more about traffic than
-    about strain.
+- [x] **Overview "Meter mode may be affecting performance" banner** — fixed
+  - **Cause (measured):** per-device numbers sat far under both thresholds (busy 2–4 ms against a
+    315 ms budget; 7–78 coalesced drops/s against 150), but one ~2 s check on MIC3.101 read
+    357 drops/s during a receiver's startup data burst, and the banner latches for the session on
+    a single failing check. Coalesced updates are folded together, not lost.
+  - **Fix:** a device must fail the check continuously for 6 s (`strainSustainSeconds`, about three
+    checks) before the banner shows. Thresholds unchanged. Unit-tested.
+  - **Live:** no banner after more than a minute in meter mode; the previous build latched within
+    about 40 s on the same copy.
 
 - [x] **Shure battery blanked between receiver bursts** — fixed (`9971d77`)
   - **Cause:** receivers report transmitter data in bursts and reset it to unknown in between,

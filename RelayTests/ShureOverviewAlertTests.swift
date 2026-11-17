@@ -44,6 +44,34 @@ final class ShureOverviewAlertTests: XCTestCase {
         XCTAssertFalse(condition.isSustained(id: "ch1", active: true, now: start.addingTimeInterval(12), for: 12))
     }
 
+    /// Seen live: one strain check (about 2 s) at 357 drops/s from a receiver's startup
+    /// burst, then ~30/s. A single failing check must not latch the meter-mode banner.
+    func testOneStrainSpikeDoesNotLatchTheBanner() {
+        var strain = ShureOverviewSustainedCondition()
+        let start = Date()
+        let hold = ShureOverviewHub.strainSustainSeconds
+        let checks: [Bool] = [false, true, false, false, true, false]
+
+        let latched = checks.enumerated().contains { index, failed in
+            strain.isSustained(id: "MIC3.101", active: failed, now: start.addingTimeInterval(Double(index) * 2), for: hold)
+        }
+
+        XCTAssertFalse(latched)
+    }
+
+    func testStrainThatLastsLatchesTheBanner() {
+        var strain = ShureOverviewSustainedCondition()
+        let start = Date()
+        let hold = ShureOverviewHub.strainSustainSeconds
+
+        let results = (0...4).map { index in
+            strain.isSustained(id: "MIC3.101", active: true, now: start.addingTimeInterval(Double(index) * 2), for: hold)
+        }
+
+        XCTAssertEqual(results.last, true)
+        XCTAssertEqual(results.first, false)
+    }
+
     func testRfAlertsWaitOutTheTransmitterPresenceHold() {
         XCTAssertGreaterThanOrEqual(
             ShureOverviewViewModel.rfAlertSustainSeconds,
