@@ -7,6 +7,8 @@ struct SpectrogramTileView: View {
     var isLiveMode: Bool
 
     @StateObject private var controller: SpectrogramController
+    /// False while this side of the flip container is hidden (Automation view showing).
+    @Environment(\.prodLinkIsWorkEnabled) private var isWorkEnabled
 
     /// Cursor position within the waterfall image area, set while hovering/dragging.
     @State private var cursorLocation: CGPoint?
@@ -72,8 +74,12 @@ struct SpectrogramTileView: View {
             .onAppear {
                 controller.updateDisplaySize(CGSize(width: geo.size.width, height: imageH))
                 controller.updateSettings(model)
+                controller.setVisible(isWorkEnabled)
                 controller.setLiveMode(isLiveMode && model.isEnabled)
             }
+        }
+        .onChange(of: isWorkEnabled) { _, enabled in
+            controller.setVisible(enabled)
         }
         .opacity(model.isEnabled ? 1 : 0.45)
         .onChange(of: module) { _, newValue in

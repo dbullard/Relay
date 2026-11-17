@@ -762,13 +762,13 @@ private struct WindowTitleSetter: ViewModifier {
                 if let rectString = defaults.string(forKey: Self.windowFrameDefaultsKey),
                    let rect = Self.sanitizedWindowFrame(NSRectFromString(rectString), screen: screen) {
                     let sanitizedFrameString = NSStringFromRect(rect)
-                    defaults.set(sanitizedFrameString, forKey: Self.windowFrameDefaultsKey)
+                    defaults.setIfChanged(sanitizedFrameString, forKey: Self.windowFrameDefaultsKey)
                     Self.lastPersistedFrameString = sanitizedFrameString
                 } else if defaults.string(forKey: Self.windowFrameDefaultsKey) == nil {
                     Self.saveFrame(for: window)
                 } else {
                     let visibleFrameString = NSStringFromRect(screen.visibleFrame)
-                    defaults.set(visibleFrameString, forKey: Self.windowFrameDefaultsKey)
+                    defaults.setIfChanged(visibleFrameString, forKey: Self.windowFrameDefaultsKey)
                     Self.lastPersistedFrameString = visibleFrameString
                 }
             }

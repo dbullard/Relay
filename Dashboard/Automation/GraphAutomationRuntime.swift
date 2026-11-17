@@ -32,7 +32,11 @@ final class GraphAutomationRuntime: ObservableObject {
     // Provide access to the currently-active tab graphs.
     // You can inject from DashboardRootView (recommended),
     // or fetch via some shared store if you have one.
-    @Published var activeTabs: [DashboardTab] = []
+    ///
+    /// Deliberately not `@Published`: no view reads this, but the Automation view and
+    /// DashboardRootView both observe the runtime, so publishing re-rendered the whole
+    /// app on every graph edit, key press (keystroke trigger path) and runtime writeback.
+    var activeTabs: [DashboardTab] = []
     /// When false, the runtime will not synthesize OSC->trigger fires or execute downstream actions.
     @Published var isEnabled: Bool = true
 
@@ -222,6 +226,33 @@ final class GraphAutomationRuntime: ObservableObject {
             mergedConfig.lastEvaluationResult = runtimeConfig.lastEvaluationResult
             mergedConfig.lastEvaluatedAt = runtimeConfig.lastEvaluatedAt
             mergedGraph.conditionNodeConfigByNodeId[nodeId] = mergedConfig
+        }
+
+        // Runtime-owned state of stateful utility nodes. Without these, each persist reset the
+        // nodes to the editor's copy: a Toggle always took the same branch, a Counter never
+        // reached its threshold, a Sequence stayed on step 1 and a Latch never stayed off.
+        // Editor-owned settings (threshold, step count, reset flags, latch triggers) are kept.
+        // Nodes deleted in the editor while a flow ran are skipped, not resurrected.
+        let liveNodeIds = Set(mergedGraph.moduleGroupNodeInstances.map(\.id.uuidString))
+        for (nodeId, runtimeConfig) in runtimeGraph.toggleNodeConfigByNodeId where liveNodeIds.contains(nodeId) {
+            var mergedConfig = mergedGraph.toggleNodeConfigByNodeId[nodeId] ?? runtimeConfig
+            mergedConfig.currentState = runtimeConfig.currentState
+            mergedGraph.toggleNodeConfigByNodeId[nodeId] = mergedConfig
+        }
+        for (nodeId, runtimeConfig) in runtimeGraph.counterNodeConfigByNodeId where liveNodeIds.contains(nodeId) {
+            var mergedConfig = mergedGraph.counterNodeConfigByNodeId[nodeId] ?? runtimeConfig
+            mergedConfig.currentCount = runtimeConfig.currentCount
+            mergedGraph.counterNodeConfigByNodeId[nodeId] = mergedConfig
+        }
+        for (nodeId, runtimeConfig) in runtimeGraph.sequenceNodeConfigByNodeId where liveNodeIds.contains(nodeId) {
+            var mergedConfig = mergedGraph.sequenceNodeConfigByNodeId[nodeId] ?? runtimeConfig
+            mergedConfig.currentStep = runtimeConfig.currentStep
+            mergedGraph.sequenceNodeConfigByNodeId[nodeId] = mergedConfig
+        }
+        for (nodeId, runtimeConfig) in runtimeGraph.latchNodeConfigByNodeId where liveNodeIds.contains(nodeId) {
+            var mergedConfig = mergedGraph.latchNodeConfigByNodeId[nodeId] ?? runtimeConfig
+            mergedConfig.isEnabled = runtimeConfig.isEnabled
+            mergedGraph.latchNodeConfigByNodeId[nodeId] = mergedConfig
         }
 
         return mergedGraph
@@ -505,7 +536,12 @@ final class GraphAutomationRuntime: ObservableObject {
 
         center.publisher(for: .relayLiveModeDidChange)
             .receive(on: queue)
-            .sink { [weak self] note in self?.handleAppStateEvent(.enterLiveMode, note: note) }
+            .sink { [weak self] note in
+                // One notification covers both directions; route it to the matching trigger
+                // kind (always passing .enterLiveMode meant Exit Live Mode triggers never fired).
+                let isLive = (note.userInfo?["isLiveMode"] as? Bool) ?? false
+                self?.handleAppStateEvent(isLive ? .enterLiveMode : .exitLiveMode, note: note)
+            }
             .store(in: &cancellables)
 
         center.publisher(for: .relayTabDidChange)
@@ -571,28 +607,41 @@ final class GraphAutomationRuntime: ObservableObject {
         let tabs = tabsToProcess()
         guard !tabs.isEmpty else { return }
 
+        // Match against the NSEvent here on the main thread, then do the cooldown bookkeeping on
+        // `queue`: `lastSynthesizedFireByTriggerId` is also written there by the OSC/MIDI/PCO
+        // handlers, and mutating the dictionary from two threads at once can crash.
+        var matches: [(nodeId: UUID, cfg: DashboardGraph.KeystrokeTriggerConfig)] = []
         for tab in tabs {
             guard let graph = effectiveGraph(for: tab) else { continue }
             for (nodeKey, cfg) in graph.keystrokeTriggerConfigByNodeId {
                 guard keystrokeConfigMatches(cfg, event: event) else { continue }
                 guard let nodeId = UUID(uuidString: nodeKey) else { continue }
-                let now = Date()
-                let last = lastSynthesizedFireByTriggerId[nodeId] ?? 0
-                guard now.timeIntervalSince1970 - last >= max(synthFireMinInterval, cfg.cooldownSeconds) else { continue }
-                lastSynthesizedFireByTriggerId[nodeId] = now.timeIntervalSince1970
+                matches.append((nodeId, cfg))
+            }
+        }
+        guard !matches.isEmpty else { return }
 
-                NotificationCenter.default.post(
-                    name: TriggerNodeNotifications.fired,
-                    object: nil,
-                    userInfo: [
-                        TriggerNodeUserInfoKeys.triggerNodeId: nodeId,
-                        TriggerNodeUserInfoKeys.payloadText: formattedShortcutLabel(cfg),
-                        TriggerNodeUserInfoKeys.payloadBoolean: true,
-                        "source": "runtime.keystroke",
-                        "timestamp": now,
-                        "eventKind": "keystroke.trigger"
-                    ]
-                )
+        queue.async { [weak self] in
+            guard let self else { return }
+            for (nodeId, cfg) in matches {
+                let now = Date()
+                let last = self.lastSynthesizedFireByTriggerId[nodeId] ?? 0
+                guard now.timeIntervalSince1970 - last >= max(self.synthFireMinInterval, cfg.cooldownSeconds) else { continue }
+                self.lastSynthesizedFireByTriggerId[nodeId] = now.timeIntervalSince1970
+
+                let userInfo: [AnyHashable: Any] = [
+                    TriggerNodeUserInfoKeys.triggerNodeId: nodeId,
+                    TriggerNodeUserInfoKeys.payloadText: self.formattedShortcutLabel(cfg),
+                    TriggerNodeUserInfoKeys.payloadBoolean: true,
+                    "source": "runtime.keystroke",
+                    "timestamp": now,
+                    "eventKind": "keystroke.trigger"
+                ]
+                // Keystroke triggers have always been posted on the main thread; keep that for
+                // the SwiftUI listeners.
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: TriggerNodeNotifications.fired, object: nil, userInfo: userInfo)
+                }
             }
         }
     }
@@ -928,8 +977,13 @@ final class GraphAutomationRuntime: ObservableObject {
         guard isEnabled else { return }
         guard let ui = note.userInfo,
               let tileId = ui["tileId"] as? UUID,
-              let payload = ui["payload"] as? TranscriptOutputPayload,
-              let latest = payload.latestEntry else { return }
+              let payload = ui["payload"] as? TranscriptOutputPayload else { return }
+        // Evaluate the entries this publish actually added or updated. `latestEntry` is the
+        // newest by timestamp, which with several sources is often not the line that just
+        // finalized, so its triggers were silently skipped. Re-filter/trim publishes carry no
+        // changed entries and never re-fire triggers.
+        let changedEntries = payload.changedEntries
+        guard !changedEntries.isEmpty else { return }
 
         let tabs = tabsToProcess()
         guard !tabs.isEmpty else { return }
@@ -956,21 +1010,24 @@ final class GraphAutomationRuntime: ObservableObject {
             if let transcriptionNodeId { sourceNodeIds.append(transcriptionNodeId) }
 
             let isUniversal = (tab.automationMode == .universal)
-            // Per-entry phrase dedup: prevents two configs with the same phrase (e.g. a
-            // standalone word trigger node + the canvas transcription node both having "hello")
-            // from firing the same action twice for a single transcript entry.
-            var firedPhrases: Set<String> = []
-            for nodeId in candidateNodeIds {
-                if nodeId != transcriptionNodeId && !isUniversal {
-                    // Per-tab graphs keep the explicit tile-link requirement.
-                    guard isLinked(fromNodeIds: sourceNodeIds, toNodeId: nodeId, graph: graph) else { continue }
-                }
-                let cfg = graph.wordTriggerConfigByNodeId[nodeId.uuidString] ?? DashboardGraph.WordTriggerConfig()
-                for rule in cfg.rules {
-                    guard shouldFireWordRule(rule, entry: latest) else { continue }
-                    let phraseKey = rule.phrase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                    guard firedPhrases.insert(phraseKey).inserted else { continue }
-                    postWordTrigger(nodeId: nodeId, rule: rule, entry: latest)
+            let eligibleNodeIds = candidateNodeIds.filter { nodeId in
+                // Per-tab graphs keep the explicit tile-link requirement.
+                nodeId == transcriptionNodeId || isUniversal
+                    || isLinked(fromNodeIds: sourceNodeIds, toNodeId: nodeId, graph: graph)
+            }
+            for entry in changedEntries {
+                // Per-entry phrase dedup: prevents two configs with the same phrase (e.g. a
+                // standalone word trigger node + the canvas transcription node both having "hello")
+                // from firing the same action twice for a single transcript entry.
+                var firedPhrases: Set<String> = []
+                for nodeId in eligibleNodeIds {
+                    let cfg = graph.wordTriggerConfigByNodeId[nodeId.uuidString] ?? DashboardGraph.WordTriggerConfig()
+                    for rule in cfg.rules {
+                        guard shouldFireWordRule(rule, entry: entry) else { continue }
+                        let phraseKey = rule.phrase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        guard firedPhrases.insert(phraseKey).inserted else { continue }
+                        postWordTrigger(nodeId: nodeId, rule: rule, entry: entry)
+                    }
                 }
             }
         }
@@ -1276,19 +1333,23 @@ final class GraphAutomationRuntime: ObservableObject {
             if let lastMatch = lastWordTriggerMatchByRuleId[rule.id], (now - lastMatch) < debounce { return false }
         }
 
-        let haystack = entry.rawText
+        // Not trimmed: in contains mode, padding a phrase with spaces is a deliberate boundary.
         let needle = rule.phrase.lowercased()
-        let text = haystack.lowercased()
         guard !needle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        _ = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let matchCount: Int
-        switch rule.matchMode {
-        case .contains:
-            matchCount = countOccurrences(of: needle, in: text)
-        case .wholeWord:
-            matchCount = matchWholeWordCount(needle: needle, in: text, ruleId: rule.id)
+        // Match both what was heard and what is displayed: raw text keeps triggers on words the
+        // profanity filter masks, and display text lets triggers use word-filter corrections
+        // ("rely" → "Relay"), matching what the tile underlines.
+        func count(in text: String) -> Int {
+            let lowered = text.lowercased()
+            switch rule.matchMode {
+            case .contains:
+                return countOccurrences(of: needle, in: lowered)
+            case .wholeWord:
+                return matchWholeWordCount(needle: needle, in: lowered, ruleId: rule.id)
+            }
         }
+        let matchCount = max(count(in: entry.rawText), count(in: entry.displayText))
 
         guard matchCount > 0 else { return false }
 
@@ -1317,8 +1378,7 @@ final class GraphAutomationRuntime: ObservableObject {
     }
 
     private func matchWholeWordCount(needle: String, in text: String, ruleId: UUID) -> Int {
-        let pattern = "\\b" + NSRegularExpression.escapedPattern(for: needle) + "\\b"
-        return matchRegexCount(pattern: pattern, in: text, ruleId: ruleId)
+        matchRegexCount(pattern: TranscriptPhraseMatcher.wholeWordPattern(for: needle), in: text, ruleId: ruleId)
     }
 
     private func matchRegexCount(pattern: String, in text: String, ruleId: UUID) -> Int {
@@ -1478,7 +1538,9 @@ final class GraphAutomationRuntime: ObservableObject {
             for (key, cfg) in graph.currentTimeSourceConfigByNodeId {
                 guard UUID(uuidString: key) != nil else { continue }
                 let value = currentTimeValue(format: cfg.format, date: now)
-                if var varCfg = graph.variableNodeConfigByNodeId[key] {
+                // Most formats only change once a minute; writing back an unchanged value
+                // every second re-rendered the app and scheduled an autosave each tick.
+                if var varCfg = graph.variableNodeConfigByNodeId[key], varCfg.currentTextValue != value {
                     varCfg.currentTextValue = value
                     graph.variableNodeConfigByNodeId[key] = varCfg
                     timeMutated = true

@@ -485,8 +485,8 @@ struct DashboardRootView: View {
 
     private static func clearLegacyDashboardRestorationState() {
         let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: storageKey)
-        defaults.removeObject(forKey: workingDocumentBookmarkKey)
+        defaults.removeIfPresent(forKey: storageKey)
+        defaults.removeIfPresent(forKey: workingDocumentBookmarkKey)
     }
 
     private struct RosterMigrationResult {
@@ -644,6 +644,7 @@ var body: some View {
                 guard let index = tabs.firstIndex(where: { $0.syncGroupID == groupID }) else { return }
                 stopSyncingTab(at: index)
             })
+            .environment(\.tutorialAnchorsEnabled, tutorialController.isPresented)
             .coordinateSpace(.named("tutorialRoot"))
             .allowsHitTesting(!tutorialController.isPresented)
             .overlayPreferenceValue(TutorialAnchorPreferenceKey.self) { anchors in
@@ -1449,6 +1450,7 @@ var body: some View {
             }
             .onChange(of: universalGraph, initial: false) { _, newGraph in
                 graphAutomationRuntime.setUniversalGraph(newGraph)
+                SharedValueSourceCoordinator.shared.updateUniversalGraph(newGraph)
             }
             .onReceive(SharedSecondTicker.shared.publisher) { _ in
                 SharedValueSourceCoordinator.shared.updateTabs(
@@ -1458,6 +1460,7 @@ var body: some View {
                 evaluateTabSchedule()
             }
             .onAppear {
+                SharedValueSourceCoordinator.shared.updateUniversalGraph(universalGraph)
                 configurePCOAutoAdvanceCoordinator()
                 evaluateTabSchedule()
             }
@@ -3665,7 +3668,6 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                     // Keep automation runtime provider up-to-date (avoid stale tab copies).
                     graphAutomationRuntime.setActiveTabProvider { [weak lanService] in
                         _ = lanService // keep capture list non-empty and explicit; avoids capturing `tabs`.
-                        guard layoutMode == .canvas else { return nil }
                         guard tabs.indices.contains(selectedTabIndex) else { return nil }
                         return tabs[selectedTabIndex]
                     }
@@ -3816,16 +3818,19 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
             }
             .onReceive(NotificationCenter.default.publisher(for: .dashboardAutomationViewRequested)) { _ in
                 guard layoutMode != .graph else { return }
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    layoutMode = .graph
-                    dashboardViewMode = "automation"
+                afterPrewarmingAutomationView {
+                    guard layoutMode != .graph else { return }
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        layoutMode = .graph
+                        dashboardViewMode = "automation"
 
-                    // Stop LAN mirror polling while in Graph/Automation view.
-                    lanMirrorRefreshTask?.cancel()
-                    lanMirrorRefreshTask = nil
+                        // Stop LAN mirror polling while in Graph/Automation view.
+                        lanMirrorRefreshTask?.cancel()
+                        lanMirrorRefreshTask = nil
 
-                    // Match toolbar behavior when switching modes.
-                    clearSelectionForViewSwitch()
+                        // Match toolbar behavior when switching modes.
+                        clearSelectionForViewSwitch()
+                    }
                 }
 
                 if !automationTutorialSeen {
@@ -4018,35 +4023,35 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                         }
                     )
                 }
-                // In Canvas mode, enable runtime + provide the selected tab (avoid stale copies).
-                graphAutomationRuntime.isEnabled = (layoutMode == .canvas)
+                // The runtime is the only automation executor, in both Canvas and Automation view
+                // (the Automation view no longer runs triggers itself), so it stays enabled.
+                graphAutomationRuntime.isEnabled = true
+                registerAutomationRuntimeGraphUpdater()
                 syncGraphAutomationRuntimeSnapshots()
                 graphAutomationRuntime.setActiveTabProvider { [weak lanService] in
                     _ = lanService
-                    guard layoutMode == .canvas else { return nil }
                     guard tabs.indices.contains(selectedTabIndex) else { return nil }
                     return tabs[selectedTabIndex]
                 }
             }
             .onChange(of: layoutMode, initial: false) { _, isEnabled in
                 dashboardViewMode = (layoutMode == .graph) ? "automation" : "canvas"
-                // Avoid double-execution: GraphDashboardView handles automation while in graph mode.
-                graphAutomationRuntime.isEnabled = (layoutMode == .canvas)
+                if layoutMode == .canvas {
+                    // The Automation view registers its own updater while it's showing.
+                    registerAutomationRuntimeGraphUpdater()
+                }
                 syncGraphAutomationRuntimeSnapshots()
                 graphAutomationRuntime.setActiveTabProvider { [weak lanService] in
                     _ = lanService
-                    guard layoutMode == .canvas else { return nil }
                     guard tabs.indices.contains(selectedTabIndex) else { return nil }
                     return tabs[selectedTabIndex]
                 }
                 updateLANPollingState()
             }
             .onChange(of: selectedTabIndex, initial: false) { _, newValue in
-                graphAutomationRuntime.isEnabled = (layoutMode == .canvas)
                 syncGraphAutomationRuntimeSnapshots()
                 graphAutomationRuntime.setActiveTabProvider { [weak lanService] in
                     _ = lanService
-                    guard layoutMode == .canvas else { return nil }
                     guard tabs.indices.contains(selectedTabIndex) else { return nil }
                     return tabs[selectedTabIndex]
                 }
@@ -4339,32 +4344,32 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
     private func applySettingsSnapshot(_ snapshot: DashboardSettingsSnapshot) {
         let defaults = UserDefaults.standard
 
-        defaults.set(snapshot.oscEnabled, forKey: "osc.global.enabled")
-        defaults.set(snapshot.oscPort, forKey: "osc.global.port")
+        defaults.setIfChanged(snapshot.oscEnabled, forKey: "osc.global.enabled")
+        defaults.setIfChanged(snapshot.oscPort, forKey: "osc.global.port")
 
-        defaults.set(snapshot.midiEnabled, forKey: "midi.global.enabled")
-        defaults.set(snapshot.midiSourceId, forKey: "midi.global.sourceId")
+        defaults.setIfChanged(snapshot.midiEnabled, forKey: "midi.global.enabled")
+        defaults.setIfChanged(snapshot.midiSourceId, forKey: "midi.global.sourceId")
 
-        defaults.set(snapshot.proPresenterHost, forKey: "propresenter_host")
-        defaults.set(snapshot.proPresenterPort, forKey: "propresenter_port")
+        defaults.setIfChanged(snapshot.proPresenterHost, forKey: "propresenter_host")
+        defaults.setIfChanged(snapshot.proPresenterPort, forKey: "propresenter_port")
         if ProPresenterPasswordPolicy.shouldApplyImported(snapshot.proPresenterPassword) { ProPresenterKeychainStore.shared.password = snapshot.proPresenterPassword }
-        defaults.set(snapshot.proPresenterTransport, forKey: "propresenter_transport")
-        defaults.set(snapshot.proPresenterPollInterval, forKey: "propresenter_pollInterval")
+        defaults.setIfChanged(snapshot.proPresenterTransport, forKey: "propresenter_transport")
+        defaults.setIfChanged(snapshot.proPresenterPollInterval, forKey: "propresenter_pollInterval")
         if let data = snapshot.proPresenterProfilesData {
-            defaults.set(data, forKey: "propresenter_profiles")
+            defaults.setIfChanged(data, forKey: "propresenter_profiles")
         } else {
-            defaults.removeObject(forKey: "propresenter_profiles")
+            defaults.removeIfPresent(forKey: "propresenter_profiles")
         }
         if let active = snapshot.proPresenterActiveProfileID {
-            defaults.set(active, forKey: "propresenter_activeProfileID")
+            defaults.setIfChanged(active, forKey: "propresenter_activeProfileID")
         } else {
-            defaults.removeObject(forKey: "propresenter_activeProfileID")
+            defaults.removeIfPresent(forKey: "propresenter_activeProfileID")
         }
 
         if let data = snapshot.resolumeProfilesData {
-            defaults.set(data, forKey: "Relay.ResolumeProfilesStore.v1")
+            defaults.setIfChanged(data, forKey: "Relay.ResolumeProfilesStore.v1")
         } else {
-            defaults.removeObject(forKey: "Relay.ResolumeProfilesStore.v1")
+            defaults.removeIfPresent(forKey: "Relay.ResolumeProfilesStore.v1")
         }
 
         NDIPreferencesStore.save(
@@ -4385,22 +4390,22 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                 let syncTimestampKey = "prodlink.x32sync.ts.\(device.id.uuidString)"
                 let showSendModeKey = "prodlink.x32show.sendmode.\(device.id.uuidString)"
 
-                if let map = settings.syncMap, let data = try? JSONEncoder().encode(map) {
-                    defaults.set(data, forKey: syncMapKey)
+                if let map = settings.syncMap, let data = try? JSONEncoder.stableKeyOrder().encode(map) {
+                    defaults.setIfChanged(data, forKey: syncMapKey)
                 } else {
-                    defaults.removeObject(forKey: syncMapKey)
+                    defaults.removeIfPresent(forKey: syncMapKey)
                 }
 
                 if let ts = settings.syncTimestamp {
-                    defaults.set(ts, forKey: syncTimestampKey)
+                    defaults.setIfChanged(ts, forKey: syncTimestampKey)
                 } else {
-                    defaults.removeObject(forKey: syncTimestampKey)
+                    defaults.removeIfPresent(forKey: syncTimestampKey)
                 }
 
                 if let mode = settings.showSendMode {
-                    defaults.set(mode, forKey: showSendModeKey)
+                    defaults.setIfChanged(mode, forKey: showSendModeKey)
                 } else {
-                    defaults.removeObject(forKey: showSendModeKey)
+                    defaults.removeIfPresent(forKey: showSendModeKey)
                 }
             }
         }
@@ -4461,6 +4466,21 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
     }
 
     @MainActor
+    /// Saves graph changes made by the automation runtime (variable values, Toggle/Counter/
+    /// Sequence/Latch state) into the document. The Automation view registers its own updater
+    /// while it's showing; without this one, runtime results in Canvas mode were never saved
+    /// until the Automation view had been opened.
+    private func registerAutomationRuntimeGraphUpdater() {
+        graphAutomationRuntime.setActiveTabGraphUpdater { tabId, graph in
+            guard let index = DashboardTabIdentityMutation.index(of: tabId, in: tabs) else { return }
+            if tabs[index].automationMode == .universal {
+                if graph != universalGraph { universalGraph = graph }
+            } else if tabs[index].graph != graph {
+                tabs[index].graph = graph
+            }
+        }
+    }
+
     private func syncGraphAutomationRuntimeSnapshots() {
         let selectedTabId = tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].id : nil
         graphAutomationRuntime.setActiveTabsSnapshot(tabs, selectedTabId: selectedTabId)
@@ -5995,12 +6015,20 @@ private func updateLANSharedTabs(_ currentTabs: [DashboardTab]? = nil) {
                     }
                     // Unchanged routing: universal edits go to `universalGraph`, and the
                     // tab's own `graph` is preserved so no universal copy is persisted.
+                    //
+                    // Skip no-op writes. The Automation view writes through this binding
+                    // from node onAppear handlers and other idempotent "ensure" helpers;
+                    // each write re-renders this whole view and schedules an autosave.
+                    // The comparisons are cheap: unchanged arrays/dictionaries share
+                    // storage with the current value, so Swift's == short-circuits.
                     if self.tabs[index].automationMode == .universal {
-                        if let editedGraph = newValue.graph { self.universalGraph = editedGraph }
+                        if let editedGraph = newValue.graph, editedGraph != self.universalGraph {
+                            self.universalGraph = editedGraph
+                        }
                         var t = newValue
                         t.graph = self.tabs[index].graph
-                        self.tabs[index] = t
-                    } else {
+                        if t != self.tabs[index] { self.tabs[index] = t }
+                    } else if newValue != self.tabs[index] {
                         self.tabs[index] = newValue
                     }
                 }
@@ -6243,18 +6271,34 @@ private func syncedPresenceColor(for deviceID: String) -> Color {
 }
 
 private func handleToggleGraphCanvas() {
-    withAnimation(.easeInOut(duration: 0.25)) {
-        layoutMode = (layoutMode == .canvas) ? .graph : .canvas
-        if layoutMode == .graph {
-            lanMirrorRefreshTask?.cancel()
-            lanMirrorRefreshTask = nil
-        } else {
-            if selectedLANShareId != nil {
-                startLANMirrorRefreshLoop()
+    let flip = {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            layoutMode = (layoutMode == .canvas) ? .graph : .canvas
+            if layoutMode == .graph {
+                lanMirrorRefreshTask?.cancel()
+                lanMirrorRefreshTask = nil
+            } else {
+                if selectedLANShareId != nil {
+                    startLANMirrorRefreshLoop()
+                }
             }
+            clearSelectionForViewSwitch()
         }
-        clearSelectionForViewSwitch()
     }
+    if layoutMode == .canvas {
+        afterPrewarmingAutomationView(flip)
+    } else {
+        flip()
+    }
+}
+
+/// Builds the hidden Automation graph first, then runs `flip` once that work has been
+/// committed. Building every node takes a few hundred milliseconds on the main thread; doing
+/// it before the flip keeps the 3D flip animation smooth instead of freezing partway through.
+private func afterPrewarmingAutomationView(_ flip: @escaping () -> Void) {
+    NotificationCenter.default.post(name: .relayPrewarmAutomationView, object: nil)
+    // The build runs in this run loop turn's SwiftUI update; the delay lands after it.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: flip)
 }
 
 /// Triggers GraphDashboardView to compute console order + post `.prodlinkGraphSendAllToConsoles`.
@@ -7166,7 +7210,7 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
             // that fires on the caller's thread and causes 500–1200 ms main-thread hangs.
             let hasHidden = currentTabHasHiddenTiles()
             DispatchQueue.global(qos: .utility).async {
-                UserDefaults.standard.set(hasHidden, forKey: "dashboard_has_hidden_tiles")
+                UserDefaults.standard.setIfChanged(hasHidden, forKey: "dashboard_has_hidden_tiles")
             }
         }
 
@@ -8025,6 +8069,11 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         }
     }
 
+    /// Serial queue for document saves and autosaves. On the concurrent global queue two
+    /// overlapping writes could finish out of order, leaving the older one on disk while the UI
+    /// showed the document as saved.
+    private static let documentWriteQueue = DispatchQueue(label: "app.relay.documentWrite", qos: .userInitiated)
+
     private var shouldAutoSaveWithoutPrompt: Bool {
         fileAutosaveEnabled && lastSavedURL != nil
     }
@@ -8043,7 +8092,7 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         let payloadToWrite = payload ?? currentDashboardPayload()
         let generationToComplete = expectedEditGeneration ?? autosaveEditGeneration
 
-        DispatchQueue.global(qos: .utility).async {
+        Self.documentWriteQueue.async {
             let scoped = url.startAccessingSecurityScopedResource()
             defer {
                 if scoped {
@@ -8401,7 +8450,7 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         completion: @escaping (Bool) -> Void
     ) {
         saveState.isSaving = true
-        DispatchQueue.global(qos: .userInitiated).async {
+        Self.documentWriteQueue.async {
             let scoped = url.startAccessingSecurityScopedResource()
             defer {
                 if scoped {
@@ -8623,9 +8672,24 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         }
         canvasActions.onSetTab = { newValue in
             guard newValue.id == tabBinding.wrappedValue.id else { return }
+            // Every write to `tabs` re-renders everything that reads it (including the
+            // Automation graph, which stays mounted), even when the value is identical.
+            guard newValue != tabBinding.wrappedValue else { return }
             tabBinding.wrappedValue = newValue
         }
+        canvasActions.onGetTab = { tabID in
+            guard let index = DashboardTabIdentityMutation.index(of: tabID, in: tabs) else { return nil }
+            return tabs[index]
+        }
         canvasActions.onSetTile = { tabID, tileID, newValue in
+            // Passing `&tabs` writes the @State back even when nothing changed, which
+            // re-rendered every view reading `tabs` (the whole Automation graph included)
+            // on each idempotent tile write from the canvas. Skip unchanged tiles.
+            if let tabIndex = DashboardTabIdentityMutation.index(of: tabID, in: tabs),
+               let current = tabs[tabIndex].tiles.first(where: { $0.id == tileID }),
+               current == newValue {
+                return
+            }
             guard DashboardTabIdentityMutation.replaceTile(newValue, tabID: tabID, tileID: tileID, in: &tabs) else {
                 // The target tab or tile disappeared between render and write (reorder,
                 // delete, or a stale inspector binding). Dropping the write is correct,
@@ -8752,9 +8816,15 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         // Reconcile auto-mirrored Button trigger nodes when tile/module composition changes.
         // Position-only edits like drag/resize should skip this synchronous work.
         if reconcileGraphNodes {
-            for i in tabs.indices {
-                tabs[i].reconcileButtonTriggerNodes()
+            // Reconcile on a copy and assign only if something changed: writing through
+            // `tabs[i]` invalidates every view reading `tabs` (including the whole Automation
+            // graph via its tab binding) even when nothing changed, on every edit.
+            var reconciled = tabs
+            var changed = false
+            for i in reconciled.indices {
+                if reconciled[i].reconcileButtonTriggerNodes() { changed = true }
             }
+            if changed { tabs = reconciled }
         }
 
         // Cancel any pending save so we only persist the latest state.

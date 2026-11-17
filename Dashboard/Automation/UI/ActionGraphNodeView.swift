@@ -220,12 +220,12 @@ struct NameRefreshDeviceOptionsEditor: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            Picker("Refresh Scope", selection: $options.targetScope) {
+            GraphPicker("Refresh Scope", selection: $options.targetScope) {
                 ForEach(AppControlRefreshDeviceOptions.TargetScope.allCases, id: \.self) { scope in
                     Text(scope.displayName).tag(scope)
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             if options.targetScope == .selectedDevices {
                 if availableDevices.isEmpty {
@@ -249,7 +249,7 @@ struct NameRefreshDeviceOptionsEditor: View {
                                 )
                             )
 #if os(macOS)
-                            .toggleStyle(.checkbox)
+                            .toggleStyle(GraphCheckboxToggleStyle())
 #endif
                         }
                     }
@@ -462,6 +462,11 @@ struct RepeaterGraphNodeView<Settings: View>: View {
     let onRun: () -> Void
     let onOutputDragChanged: ((Int, DragGesture.Value) -> Void)?
     let onOutputDragEnded: ((Int, DragGesture.Value) -> Void)?
+    /// When set, the node shows a compact summary with this detail line instead of its
+    /// settings (zoomed out). Ports and link dragging stay the same.
+    let compactDetail: String?
+    /// The full form's measured height, so the compact form keeps the same footprint.
+    let compactFullHeight: CGFloat?
 
     @ViewBuilder let settings: () -> Settings
 
@@ -476,6 +481,8 @@ struct RepeaterGraphNodeView<Settings: View>: View {
         onRun: @escaping () -> Void,
         onOutputDragChanged: ((Int, DragGesture.Value) -> Void)? = nil,
         onOutputDragEnded: ((Int, DragGesture.Value) -> Void)? = nil,
+        compactDetail: String? = nil,
+        compactFullHeight: CGFloat? = nil,
         @ViewBuilder settings: @escaping () -> Settings
     ) {
         self.nodeId = nodeId
@@ -488,21 +495,35 @@ struct RepeaterGraphNodeView<Settings: View>: View {
         self.onRun = onRun
         self.onOutputDragChanged = onOutputDragChanged
         self.onOutputDragEnded = onOutputDragEnded
+        self.compactDetail = compactDetail
+        self.compactFullHeight = compactFullHeight
         self.settings = settings
     }
 
     var body: some View {
         GraphNodeChromeContainer(
-            tint: utilityCategory.tintColor,
-            border: utilityCategory.borderColor,
+            contentPadding: compactDetail == nil ? GraphNodeStyleTokens.contentPadding : 12,
+            tint: compactDetail == nil ? utilityCategory.tintColor : utilityCategory.compactTintColor,
+            border: compactDetail == nil ? utilityCategory.borderColor : utilityCategory.compactBorderColor,
             isSelected: isSelected,
             isHoverReceiver: isHoverReceiver,
             leadingOverlay: AnyView(receiverNub),
             trailingOverlay: AnyView(outputNubs.overlay(outputHitTargets))
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                headerRow
-                settings()
+            if let compactDetail {
+                GraphNodeCompactSummary(
+                    systemImage: "repeat",
+                    title: "Repeater",
+                    subtitle: "Utility",
+                    detail: compactDetail,
+                    accent: utilityCategory.accentColor,
+                    minHeight: graphNodeCompactContentHeight(fullHeight: compactFullHeight, padding: 12)
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    headerRow
+                    settings()
+                }
             }
         }
         .simultaneousGesture(
@@ -635,6 +656,11 @@ struct DelayGraphNodeView<Settings: View>: View {
     let onRun: () -> Void
     let onOutputDragChanged: ((DragGesture.Value) -> Void)?
     let onOutputDragEnded: ((DragGesture.Value) -> Void)?
+    /// When set, the node shows a compact summary with this detail line instead of its
+    /// settings (zoomed out). Ports and link dragging stay the same.
+    let compactDetail: String?
+    /// The full form's measured height, so the compact form keeps the same footprint.
+    let compactFullHeight: CGFloat?
     @ViewBuilder let settings: () -> Settings
 
     init(
@@ -646,6 +672,8 @@ struct DelayGraphNodeView<Settings: View>: View {
         onRun: @escaping () -> Void,
         onOutputDragChanged: ((DragGesture.Value) -> Void)? = nil,
         onOutputDragEnded: ((DragGesture.Value) -> Void)? = nil,
+        compactDetail: String? = nil,
+        compactFullHeight: CGFloat? = nil,
         @ViewBuilder settings: @escaping () -> Settings
     ) {
         self.nodeId = nodeId
@@ -656,21 +684,35 @@ struct DelayGraphNodeView<Settings: View>: View {
         self.onRun = onRun
         self.onOutputDragChanged = onOutputDragChanged
         self.onOutputDragEnded = onOutputDragEnded
+        self.compactDetail = compactDetail
+        self.compactFullHeight = compactFullHeight
         self.settings = settings
     }
 
     var body: some View {
         GraphNodeChromeContainer(
-            tint: utilityCategory.tintColor,
-            border: utilityCategory.borderColor,
+            contentPadding: compactDetail == nil ? GraphNodeStyleTokens.contentPadding : 12,
+            tint: compactDetail == nil ? utilityCategory.tintColor : utilityCategory.compactTintColor,
+            border: compactDetail == nil ? utilityCategory.borderColor : utilityCategory.compactBorderColor,
             isSelected: isSelected,
             isHoverReceiver: isHoverReceiver,
             leadingOverlay: AnyView(receiverNub),
             trailingOverlay: AnyView(outputNub.overlay(outputHitTarget))
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                headerRow
-                settings()
+            if let compactDetail {
+                GraphNodeCompactSummary(
+                    systemImage: "clock.arrow.circlepath",
+                    title: "Delay",
+                    subtitle: "Utility",
+                    detail: compactDetail,
+                    accent: utilityCategory.accentColor,
+                    minHeight: graphNodeCompactContentHeight(fullHeight: compactFullHeight, padding: 12)
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    headerRow
+                    settings()
+                }
             }
         }
         .simultaneousGesture(
@@ -791,26 +833,43 @@ struct ConditionGraphNodeView<Settings: View>: View {
     let warningText: String?
     let warningStyle: ActionNodeWarningStyle
     let onDismissWarning: (() -> Void)?
+    /// When set, the node shows a compact summary with this detail line instead of its
+    /// settings (zoomed out). Ports and link dragging stay the same.
+    var compactDetail: String? = nil
+    /// The full form's measured height, so the compact form keeps the same footprint.
+    var compactFullHeight: CGFloat? = nil
     @ViewBuilder let settings: () -> Settings
 
     var body: some View {
         GraphNodeChromeContainer(
-            tint: utilityCategory.tintColor,
-            border: utilityCategory.borderColor,
+            contentPadding: compactDetail == nil ? GraphNodeStyleTokens.contentPadding : 12,
+            tint: compactDetail == nil ? utilityCategory.tintColor : utilityCategory.compactTintColor,
+            border: compactDetail == nil ? utilityCategory.borderColor : utilityCategory.compactBorderColor,
             isSelected: isSelected,
             isHoverReceiver: isHoverReceiver,
             showsError: warningStyle == .error && warningText != nil,
             leadingOverlay: AnyView(receiverNub),
             trailingOverlay: AnyView(outputNubs.overlay(outputHitTargets))
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                headerRow
+            if let compactDetail {
+                GraphNodeCompactSummary(
+                    systemImage: "arrow.triangle.branch",
+                    title: "If / Else",
+                    subtitle: "Utility",
+                    detail: (warningText?.isEmpty == false) ? warningText : compactDetail,
+                    accent: utilityCategory.accentColor,
+                    minHeight: graphNodeCompactContentHeight(fullHeight: compactFullHeight, padding: 12)
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    headerRow
 
-                if let warningText, !warningText.isEmpty {
-                    warningPill(text: warningText)
+                    if let warningText, !warningText.isEmpty {
+                        warningPill(text: warningText)
+                    }
+
+                    settings()
                 }
-
-                settings()
             }
         }
         .simultaneousGesture(
@@ -1192,7 +1251,7 @@ struct StableGraphTextField: View {
     }
 
     var body: some View {
-        TextField(
+        GraphTextField(
             titleKey,
             text: Binding(
                 get: { draftText },
@@ -1229,7 +1288,7 @@ struct DelayActionSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 70, alignment: .leading)
 
-                Stepper(value: $delayMs, in: 0...10000, step: 50) {
+                GraphStepper(value: $delayMs, in: 0...10000, step: 50) {
                     EmptyView()
                 }
                 .labelsHidden()
@@ -1254,7 +1313,7 @@ struct RepeaterActionSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 70, alignment: .leading)
 
-                Stepper(value: $outputCount, in: 1...8, step: 1) {
+                GraphStepper(value: $outputCount, in: 1...8, step: 1) {
                     EmptyView()
                 }
                 .labelsHidden()
@@ -1269,7 +1328,7 @@ struct RepeaterActionSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 70, alignment: .leading)
 
-                Stepper(value: $repeatCount, in: 1...50, step: 1) {
+                GraphStepper(value: $repeatCount, in: 1...50, step: 1) {
                     EmptyView()
                 }
                 .labelsHidden()
@@ -1284,7 +1343,7 @@ struct RepeaterActionSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 70, alignment: .leading)
 
-                Stepper(value: $delayMs, in: 0...5000, step: 50) {
+                GraphStepper(value: $delayMs, in: 0...5000, step: 50) {
                     EmptyView()
                 }
                 .labelsHidden()
@@ -1308,10 +1367,10 @@ struct SendAllActionSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle("Include assignments", isOn: $includeAssignments)
-                .toggleStyle(.switch)
+                .toggleStyle(GraphSwitchToggleStyle())
 
             Toggle("Include snapshots", isOn: $includeSnapshots)
-                .toggleStyle(.switch)
+                .toggleStyle(GraphSwitchToggleStyle())
 
             HStack {
                 Text("Stagger")
@@ -1320,7 +1379,7 @@ struct SendAllActionSettingsView: View {
 
                 Spacer()
 
-                Stepper(value: $staggerMs, in: 0...2000, step: 20) {
+                GraphStepper(value: $staggerMs, in: 0...2000, step: 20) {
                     EmptyView()
                 }
                 .labelsHidden()
@@ -1410,7 +1469,7 @@ struct OSCSendActionSettingsView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                TextField("192.168.1.100", text: Binding(
+                GraphTextField("192.168.1.100", text: Binding(
                     get: { targetIP },
                     set: { targetIP = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 ))
@@ -1425,7 +1484,7 @@ struct OSCSendActionSettingsView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                TextField("8000", text: Binding(
+                GraphTextField("8000", text: Binding(
                     get: { targetPort == 0 ? "" : String(targetPort) },
                     set: { newValue in
                         let filtered = newValue.filter { $0.isNumber }
@@ -1448,7 +1507,7 @@ struct OSCSendActionSettingsView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                TextField("/path", text: Binding(
+                GraphTextField("/path", text: Binding(
                     get: { address },
                     set: { newValue in
                         address = OSCSendValidation.normalizedAddress(newValue)
@@ -1473,7 +1532,7 @@ struct OSCSendActionSettingsView: View {
                 } label: {
                     Label("Add Argument", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(GraphBorderlessButtonStyle())
                 .font(.caption)
             }
         }
@@ -1482,7 +1541,7 @@ struct OSCSendActionSettingsView: View {
     @ViewBuilder
     private func argumentRow(at index: Int) -> some View {
         HStack(spacing: 6) {
-            Picker("Argument type", selection: Binding(
+            GraphPicker("Argument type", selection: Binding(
                 get: { ArgumentKind(value: arguments[index].value) },
                 set: { arguments[index].value = $0.defaultValue }
             )) {
@@ -1500,7 +1559,7 @@ struct OSCSendActionSettingsView: View {
             } label: {
                 Image(systemName: "arrow.up")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(GraphBorderlessButtonStyle())
             .disabled(index == arguments.startIndex)
 
             Button {
@@ -1508,7 +1567,7 @@ struct OSCSendActionSettingsView: View {
             } label: {
                 Image(systemName: "arrow.down")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(GraphBorderlessButtonStyle())
             .disabled(index == arguments.index(before: arguments.endIndex))
 
             Button(role: .destructive) {
@@ -1516,7 +1575,7 @@ struct OSCSendActionSettingsView: View {
             } label: {
                 Image(systemName: "trash")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(GraphBorderlessButtonStyle())
         }
     }
 
@@ -1524,31 +1583,31 @@ struct OSCSendActionSettingsView: View {
     private func argumentValueEditor(at index: Int) -> some View {
         switch arguments[index].value {
         case .int32(let value):
-            TextField("Value", text: Binding(
+            GraphTextField("Value", text: Binding(
                 get: { String(value) },
                 set: { if let parsed = Int32($0) { arguments[index].value = .int32(parsed) } }
             ))
             .textFieldStyle(.roundedBorder)
         case .float32(let value):
-            TextField("Value", text: Binding(
+            GraphTextField("Value", text: Binding(
                 get: { String(value) },
                 set: { if let parsed = Float($0) { arguments[index].value = .float32(parsed) } }
             ))
             .textFieldStyle(.roundedBorder)
         case .string(let value):
-            TextField("Value", text: Binding(
+            GraphTextField("Value", text: Binding(
                 get: { value },
                 set: { arguments[index].value = .string($0) }
             ))
             .textFieldStyle(.roundedBorder)
         case .blobBase64(let value):
-            TextField("Base64", text: Binding(
+            GraphTextField("Base64", text: Binding(
                 get: { value },
                 set: { arguments[index].value = .blobBase64($0) }
             ))
             .textFieldStyle(.roundedBorder)
         case .timetag(let value):
-            TextField("Timetag", text: Binding(
+            GraphTextField("Timetag", text: Binding(
                 get: { String(value) },
                 set: { if let parsed = UInt64($0) { arguments[index].value = .timetag(parsed) } }
             ))
@@ -1625,7 +1684,7 @@ struct ProPresenterTriggerActionSettingsView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                Picker("Profile", selection: $profileId) {
+                GraphPicker("Profile", selection: $profileId) {
                     Text("Active / Global").tag(UUID?.none)
                     ForEach(profiles) { profile in
                         Text(profile.name).tag(Optional(profile.id))
@@ -1641,7 +1700,7 @@ struct ProPresenterTriggerActionSettingsView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                Picker("Trigger", selection: selectedAction) {
+                GraphPicker("Trigger", selection: selectedAction) {
                     ForEach(ProPresenterTriggerAction.allCases) { action in
                         Text(action.title).tag(action)
                     }
@@ -1692,7 +1751,7 @@ struct MIDISendActionSettingsView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                Picker("MIDI Destination", selection: $destinationUniqueID) {
+                GraphPicker("MIDI Destination", selection: $destinationUniqueID) {
                     Text("Default").tag(Int32?.none)
                     ForEach(destinations) { option in
                         Text(option.name).tag(Optional(option.id))
@@ -1704,7 +1763,7 @@ struct MIDISendActionSettingsView: View {
                 Button("Refresh") {
                     refreshDestinationsList()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(GraphPushButtonStyle())
                 .controlSize(.small)
             }
 
@@ -1714,7 +1773,7 @@ struct MIDISendActionSettingsView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                Picker("Message Type", selection: $messageKind) {
+                GraphPicker("Message Type", selection: $messageKind) {
                     Text("Note On").tag(MIDIMessageKind.noteOn)
                     Text("Note Off").tag(MIDIMessageKind.noteOff)
                     Text("Program Change").tag(MIDIMessageKind.programChange)
@@ -1731,7 +1790,7 @@ struct MIDISendActionSettingsView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                Menu {
+                GraphMenu {
                     ForEach(1...16, id: \.self) { value in
                         Button("Ch \(value)") {
                             channel = value
@@ -1753,7 +1812,7 @@ struct MIDISendActionSettingsView: View {
                         .opacity(0.8)
                         .frame(width: 60, alignment: .leading)
 
-                    TextField("60", value: $note, format: .number)
+                    GraphTextField("60", value: $note, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)
 
@@ -1761,7 +1820,7 @@ struct MIDISendActionSettingsView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("100", value: $velocity, format: .number)
+                    GraphTextField("100", value: $velocity, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)
 
@@ -1776,7 +1835,7 @@ struct MIDISendActionSettingsView: View {
                         .opacity(0.8)
                         .frame(width: 60, alignment: .leading)
 
-                    TextField("0", value: $program, format: .number)
+                    GraphTextField("0", value: $program, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
 
@@ -1791,7 +1850,7 @@ struct MIDISendActionSettingsView: View {
                         .opacity(0.8)
                         .frame(width: 60, alignment: .leading)
 
-                    TextField("1", value: $control, format: .number)
+                    GraphTextField("1", value: $control, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)
 
@@ -1799,7 +1858,7 @@ struct MIDISendActionSettingsView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("0", value: $value, format: .number)
+                    GraphTextField("0", value: $value, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)
 
@@ -1814,7 +1873,7 @@ struct MIDISendActionSettingsView: View {
                         .opacity(0.8)
                         .frame(width: 60, alignment: .leading)
 
-                    TextField("F0 7E 7F 09 01 F7", text: $sysexHex)
+                    GraphTextField("F0 7E 7F 09 01 F7", text: $sysexHex)
                         .textFieldStyle(.roundedBorder)
 
                     Spacer(minLength: 0)

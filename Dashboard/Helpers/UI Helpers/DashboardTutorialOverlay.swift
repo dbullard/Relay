@@ -17,18 +17,37 @@ import Combine
 /// Use a stable id string (e.g. "toolbar.graphToggle", "left.tabs", "inspector", etc.)
 struct TutorialAnchor: ViewModifier {
     let id: String
+    @Environment(\.tutorialAnchorsEnabled) private var isEnabled
 
     func body(content: Content) -> some View {
         content
-            .background(
-                GeometryReader { proxy in
-                    Color.clear
-                        .preference(
-                            key: TutorialAnchorPreferenceKey.self,
-                            value: [id: proxy.frame(in: .named("tutorialRoot"))]
-                        )
+            .background {
+                // Only measure while a tutorial is showing. Otherwise every anchor frame change
+                // (each frame of the Canvas/Automation flip, canvas pans and zooms) re-merges the
+                // preference and re-renders the hidden tutorial overlay.
+                if isEnabled {
+                    GeometryReader { proxy in
+                        Color.clear
+                            .preference(
+                                key: TutorialAnchorPreferenceKey.self,
+                                value: [id: proxy.frame(in: .named("tutorialRoot"))]
+                            )
+                    }
                 }
-            )
+            }
+    }
+}
+
+private struct TutorialAnchorsEnabledKey: EnvironmentKey {
+    static let defaultValue: Bool = true
+}
+
+extension EnvironmentValues {
+    /// Whether `.tutorialAnchor(_:)` reports frames. The dashboard root turns this on only while
+    /// the tutorial overlay is presented.
+    var tutorialAnchorsEnabled: Bool {
+        get { self[TutorialAnchorsEnabledKey.self] }
+        set { self[TutorialAnchorsEnabledKey.self] = newValue }
     }
 }
 

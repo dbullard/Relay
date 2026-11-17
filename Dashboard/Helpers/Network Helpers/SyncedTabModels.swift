@@ -92,7 +92,7 @@ public struct SyncedTabsResponse: Codable {
 
 /// Lightweight presence payload: which tiles the serving device is editing or has selected,
 /// grouped by synced-tab group ID so the polling device can highlight matching tiles.
-public struct SyncedPresencePayload: Codable {
+public struct SyncedPresencePayload: Codable, Equatable {
     public let deviceID: String
     public let deviceName: String
     /// groupID → [tileID strings] for tiles the device has open in its inspector.

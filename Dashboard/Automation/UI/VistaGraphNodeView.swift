@@ -117,14 +117,14 @@ struct VistaGraphNodeView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
-                TextField("900", text: $config.cuelistID)
+                GraphTextField("900", text: $config.cuelistID)
                     .textFieldStyle(.roundedBorder)
 
                 Text("Cuelist Label")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
-                TextField(VistaCSVBuilder.defaultCuelistLabel(from: linkedItems), text: $config.cuelistLabel)
+                GraphTextField(VistaCSVBuilder.defaultCuelistLabel(from: linkedItems), text: $config.cuelistLabel)
                     .textFieldStyle(.roundedBorder)
             }
 
@@ -140,7 +140,7 @@ struct VistaGraphNodeView: View {
                         Button("Run") {
                             runCurrentCommand()
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(GraphPushButtonStyle(isProminent: true))
                         .controlSize(.small)
                         .disabled(device == nil)
                     }
@@ -156,12 +156,12 @@ struct VistaGraphNodeView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Picker("Command", selection: $config.commandKind) {
+                    GraphPicker("Command", selection: $config.commandKind) {
                         ForEach(DashboardGraph.VistaNodeConfig.CommandKind.allCases, id: \.self) { kind in
                             Text(kind.displayName).tag(kind)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
 
                     if config.commandKind == .gmFader {
                         VStack(alignment: .leading, spacing: 6) {
@@ -198,7 +198,7 @@ struct VistaGraphNodeView: View {
             Button("Export CSV") {
                 exportCSV()
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(GraphPushButtonStyle(isProminent: true))
             .disabled(linkedItems.isEmpty)
 
             if let exportErrorMessage, !exportErrorMessage.isEmpty {
@@ -337,7 +337,7 @@ private struct VistaImportInstructionsSheet: View {
 
             Toggle("Do not show this again", isOn: $doNotShowAgain)
 #if os(macOS)
-                .toggleStyle(.checkbox)
+                .toggleStyle(GraphCheckboxToggleStyle())
 #endif
 
             HStack {

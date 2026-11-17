@@ -1585,27 +1585,68 @@ private enum DAWTransportConstants {
 }
 
 final class DAWTransportViewModel: ObservableObject {
-    @Published private(set) var displayedTimecode: String = DAWTimecode.placeholder
-    @Published private(set) var displayPlaceholder: String = DAWTimecode.placeholder
-    @Published private(set) var connectionLabel: DAWTransportConnectionLabel = DAWTransportConnectionLabelResolver.resolve(
+    // Not `@Published`: the status snapshot rebuilds every value at 5 Hz and on every MIDI
+    // message, and a `@Published` write notifies even when the value is unchanged, which
+    // redrew the tile on every pass. These notify only on a real change.
+    private(set) var displayedTimecode: String = DAWTimecode.placeholder {
+        willSet { if newValue != displayedTimecode { objectWillChange.send() } }
+    }
+    private(set) var displayPlaceholder: String = DAWTimecode.placeholder {
+        willSet { if newValue != displayPlaceholder { objectWillChange.send() } }
+    }
+    private(set) var connectionLabel: DAWTransportConnectionLabel = DAWTransportConnectionLabelResolver.resolve(
         configuration: .default()
-    )
-    @Published private(set) var connectionState: DAWTransportConnectionState = .disconnected
-    @Published private(set) var connectionStatusText: String = DAWTransportConnectionState.disconnected.title
-    @Published private(set) var inputStatusText: String = "Input: Automatic"
-    @Published private(set) var outputStatusText: String = "Output: Automatic"
-    @Published private(set) var mtcStatusText: String = "Waiting for MTC"
-    @Published private(set) var lastReceivedAgeText: String = "Last: -"
-    @Published private(set) var frameRateText: String = "Rate: Auto"
-    @Published private(set) var transportProtocolText: String = "Transport: MMC"
-    @Published private(set) var warningText: String? = nil
-    @Published private(set) var isReceivingMTC: Bool = false
-    @Published private(set) var isMTCStale: Bool = false
-    @Published private(set) var isInputConnected: Bool = false
-    @Published private(set) var isOutputConnected: Bool = false
-    @Published private(set) var isRecordEnabled: Bool = false
-    @Published private(set) var isRecordFlashVisible: Bool = false
-    @Published private(set) var isPlaying: Bool = false
+    ) {
+        willSet { if newValue != connectionLabel { objectWillChange.send() } }
+    }
+    private(set) var connectionState: DAWTransportConnectionState = .disconnected {
+        willSet { if newValue != connectionState { objectWillChange.send() } }
+    }
+    private(set) var connectionStatusText: String = DAWTransportConnectionState.disconnected.title {
+        willSet { if newValue != connectionStatusText { objectWillChange.send() } }
+    }
+    private(set) var inputStatusText: String = "Input: Automatic" {
+        willSet { if newValue != inputStatusText { objectWillChange.send() } }
+    }
+    private(set) var outputStatusText: String = "Output: Automatic" {
+        willSet { if newValue != outputStatusText { objectWillChange.send() } }
+    }
+    private(set) var mtcStatusText: String = "Waiting for MTC" {
+        willSet { if newValue != mtcStatusText { objectWillChange.send() } }
+    }
+    private(set) var lastReceivedAgeText: String = "Last: -" {
+        willSet { if newValue != lastReceivedAgeText { objectWillChange.send() } }
+    }
+    private(set) var frameRateText: String = "Rate: Auto" {
+        willSet { if newValue != frameRateText { objectWillChange.send() } }
+    }
+    private(set) var transportProtocolText: String = "Transport: MMC" {
+        willSet { if newValue != transportProtocolText { objectWillChange.send() } }
+    }
+    private(set) var warningText: String? = nil {
+        willSet { if newValue != warningText { objectWillChange.send() } }
+    }
+    private(set) var isReceivingMTC: Bool = false {
+        willSet { if newValue != isReceivingMTC { objectWillChange.send() } }
+    }
+    private(set) var isMTCStale: Bool = false {
+        willSet { if newValue != isMTCStale { objectWillChange.send() } }
+    }
+    private(set) var isInputConnected: Bool = false {
+        willSet { if newValue != isInputConnected { objectWillChange.send() } }
+    }
+    private(set) var isOutputConnected: Bool = false {
+        willSet { if newValue != isOutputConnected { objectWillChange.send() } }
+    }
+    private(set) var isRecordEnabled: Bool = false {
+        willSet { if newValue != isRecordEnabled { objectWillChange.send() } }
+    }
+    private(set) var isRecordFlashVisible: Bool = false {
+        willSet { if newValue != isRecordFlashVisible { objectWillChange.send() } }
+    }
+    private(set) var isPlaying: Bool = false {
+        willSet { if newValue != isPlaying { objectWillChange.send() } }
+    }
 
     private var configuration: DAWTransportModuleConfiguration
     private let mtcParser = DAWMTCParser()
@@ -1617,6 +1658,13 @@ final class DAWTransportViewModel: ObservableObject {
     private var inputPort = MIDIPortRef()
     private var connectedSources: [MIDIEndpointRef] = []
     private var statusTimer: Timer?
+    /// Port lists as of the last refresh. Enumerating CoreMIDI on every 5 Hz status pass
+    /// cost more than the rest of the pass; lists refresh on CoreMIDI setup changes instead.
+    private var cachedSources: [MIDISourceOption] = []
+    private var cachedDestinations: [MIDIDestinationOption] = []
+    /// Tiles currently on screen for this model. The status timer only runs while one is:
+    /// the store keeps models alive for every DAW tile ever shown.
+    private var visibleTileCount = 0
     private var lastResolvedFrameRate: DAWTransportResolvedFrameRate? = nil
     private var lastReceivedTimecode: DAWTimecode? = nil
     private var lastMTCReceivedAt: Date? = nil
@@ -1651,8 +1699,23 @@ final class DAWTransportViewModel: ObservableObject {
         }()
         setupMIDI()
         refreshMIDIPorts()
-        startStatusTimer()
         updateStatusSnapshot()
+    }
+
+    func tileDidAppear() {
+        visibleTileCount += 1
+        guard visibleTileCount == 1 else { return }
+        updateStatusSnapshot()
+        startStatusTimer()
+    }
+
+    var isStatusTimerRunning: Bool { statusTimer != nil }
+
+    func tileDidDisappear() {
+        visibleTileCount = max(0, visibleTileCount - 1)
+        guard visibleTileCount == 0 else { return }
+        statusTimer?.invalidate()
+        statusTimer = nil
     }
 
     deinit {
@@ -1667,6 +1730,7 @@ final class DAWTransportViewModel: ObservableObject {
         let frameRateChanged = self.configuration.frameRateSetting != normalizedConfiguration.frameRateSetting
         let modeChanged = self.configuration.commandMode != normalizedConfiguration.commandMode
         let dawChanged = self.configuration.dawType != normalizedConfiguration.dawType
+        let debugUIChanged = self.configuration.showDebugUI != normalizedConfiguration.showDebugUI
 
         self.configuration = normalizedConfiguration
 
@@ -1681,13 +1745,15 @@ final class DAWTransportViewModel: ObservableObject {
 
         if inputChanged || outputChanged {
             refreshMIDIPorts()
-        } else if frameRateChanged || modeChanged || dawChanged {
+        } else if frameRateChanged || modeChanged || dawChanged || debugUIChanged {
             updateStatusSnapshot()
         }
     }
 
     func refreshMIDIPorts() {
         MIDISendManager.shared.refreshDestinations()
+        cachedSources = MIDISourceDiscovery.currentSources()
+        cachedDestinations = MIDIDestinationDiscovery.currentDestinations()
         reconnectSelectedSources()
         logSelectedPorts()
         updateStatusSnapshot()
@@ -1893,7 +1959,13 @@ final class DAWTransportViewModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var newClient = MIDIClientRef()
             var newPort = MIDIPortRef()
-            MIDIClientCreate("RelayDAWTransport" as CFString, nil, nil, &newClient)
+            // The notify block runs on a CoreMIDI thread; port lists refresh on main.
+            MIDIClientCreateWithBlock("RelayDAWTransport" as CFString, &newClient) { notification in
+                guard notification.pointee.messageID == .msgSetupChanged else { return }
+                DispatchQueue.main.async { [weak self] in
+                    self?.refreshMIDIPorts()
+                }
+            }
             MIDIInputPortCreate(
                 newClient,
                 "RelayDAWTransportIn" as CFString,
@@ -1949,8 +2021,8 @@ final class DAWTransportViewModel: ObservableObject {
     }
 
     private func updateStatusSnapshot() {
-        let availableSources = MIDISourceDiscovery.currentSources()
-        let availableDestinations = MIDIDestinationDiscovery.currentDestinations()
+        let availableSources = cachedSources
+        let availableDestinations = cachedDestinations
         let selectedSourceID = configuration.midiInputSourceID
         let selectedDestinationID = configuration.midiOutputDestinationID
 
@@ -2036,7 +2108,7 @@ final class DAWTransportViewModel: ObservableObject {
             isMTCStale = false
             displayedTimecode = mtcDisplayText
             mtcStatusText = "Receiving MTC"
-            lastReceivedAgeText = "Last: \(formattedAge(mtcAge))"
+            lastReceivedAgeText = ageText(mtcAge)
             frameRateText = "Rate: \((frameRate ?? lastResolvedFrameRate)?.label ?? "Auto")"
             hasLoggedMTCStaleState = false
         } else if !prefersMTCDisplay, let appendedDisplayText, isHUIFresh, let dawCounterDisplay, let huiAge {
@@ -2044,7 +2116,7 @@ final class DAWTransportViewModel: ObservableObject {
             isMTCStale = false
             displayedTimecode = appendedDisplayText
             mtcStatusText = "\(receivingStatusText(for: dawCounterDisplay)) + MTC"
-            lastReceivedAgeText = "Last: \(formattedAge(huiAge))"
+            lastReceivedAgeText = ageText(huiAge)
             frameRateText = "Rate: DAW display + \((frameRate ?? lastResolvedFrameRate)?.label ?? "MTC")"
             hasLoggedHUIStaleState = false
             hasLoggedMTCStaleState = false
@@ -2053,7 +2125,7 @@ final class DAWTransportViewModel: ObservableObject {
             isMTCStale = false
             displayedTimecode = dawCounterDisplay.displayText
             mtcStatusText = receivingStatusText(for: dawCounterDisplay)
-            lastReceivedAgeText = "Last: \(formattedAge(huiAge))"
+            lastReceivedAgeText = ageText(huiAge)
             frameRateText = "Rate: DAW display"
             hasLoggedHUIStaleState = false
 
@@ -2065,7 +2137,7 @@ final class DAWTransportViewModel: ObservableObject {
             isMTCStale = false
             displayedTimecode = mtcDisplayText
             mtcStatusText = configuration.displayMode == .clock ? "Receiving MTC fallback" : "Receiving MTC"
-            lastReceivedAgeText = "Last: \(formattedAge(mtcAge))"
+            lastReceivedAgeText = ageText(mtcAge)
             frameRateText = "Rate: \((frameRate ?? lastResolvedFrameRate)?.label ?? "Auto")"
             hasLoggedMTCStaleState = false
         } else if !prefersMTCDisplay, let dawCounterDisplay, let huiAge {
@@ -2075,7 +2147,7 @@ final class DAWTransportViewModel: ObservableObject {
             mtcStatusText = connectionState == .paused
                 ? "Paused"
                 : "\(receivingStatusText(for: dawCounterDisplay).replacingOccurrences(of: "Receiving ", with: "")) stale"
-            lastReceivedAgeText = "Last: \(formattedAge(huiAge))"
+            lastReceivedAgeText = ageText(huiAge)
             frameRateText = "Rate: DAW display"
 
             if !hasLoggedHUIStaleState {
@@ -2090,7 +2162,7 @@ final class DAWTransportViewModel: ObservableObject {
             mtcStatusText = connectionState == .paused
                 ? "Paused"
                 : (configuration.displayMode == .clock ? "MTC fallback stale" : "MTC stale")
-            lastReceivedAgeText = "Last: \(formattedAge(mtcAge))"
+            lastReceivedAgeText = ageText(mtcAge)
             frameRateText = "Rate: \((frameRate ?? lastResolvedFrameRate)?.label ?? "Auto")"
 
             if !hasLoggedMTCStaleState {
@@ -2142,6 +2214,12 @@ final class DAWTransportViewModel: ObservableObject {
             return "MIDI Timecode is stale. Check that \(configuration.dawType.title) is still transmitting MTC."
         }
         return nil
+    }
+
+    /// "Last: …" grows every pass once any signal has arrived, so it's only kept current
+    /// while the debug rows that show it are on.
+    private func ageText(_ age: TimeInterval) -> String {
+        configuration.showDebugUI ? "Last: \(formattedAge(age))" : "Last: -"
     }
 
     private func formattedAge(_ age: TimeInterval) -> String {
@@ -2412,6 +2490,10 @@ struct DAWTransportTileView: View {
         .clipShape(RoundedRectangle(cornerRadius: tileCornerRadius))
         .onAppear {
             viewModel.updateConfiguration(config)
+            viewModel.tileDidAppear()
+        }
+        .onDisappear {
+            viewModel.tileDidDisappear()
         }
         .onChange(of: config) { _, newValue in
             viewModel.updateConfiguration(newValue)

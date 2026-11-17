@@ -230,6 +230,12 @@ struct TranscriptOutputPayload: Equatable {
     var latestEntry: TranscriptEntry?
     var window: [TranscriptEntry]
     var inputLevel: Double
+    /// Entries that were added or updated by the publish that produced this payload.
+    /// Word-trigger automation evaluates these rather than `latestEntry`: with several
+    /// sources, the entry that just changed is not necessarily the newest by timestamp
+    /// (a finalized line keeps the timestamp of its first partial). Empty for publishes
+    /// that only re-filter or trim existing entries, so those never re-fire triggers.
+    var changedEntries: [TranscriptEntry] = []
 
     static let empty = TranscriptOutputPayload(latestEntry: nil, window: [], inputLevel: 0)
 }
@@ -312,7 +318,9 @@ final class LiveTranscriptionSourceRegistry {
 
 private struct DashboardTranscriptionSourceSelection {
     var allowedSources: [LiveTranscriptionSourceConfig]
-    var allAllowedSourceIDs: [UUID]
+    /// Every tile's allowed sources on the tab, in dashboard order.
+    var allAllowedSources: [LiveTranscriptionSourceConfig]
+    var allAllowedSourceIDs: [UUID] { allAllowedSources.map(\.id) }
     var totalEnabledSources: Int
     var selectedEnabledSources: Int
 }
@@ -349,7 +357,7 @@ private final class TranscriptionChannelPipeline: NSObject {
     let channel: TranscriptChannel
     private let quality: LiveTranscriptionQualityMode
     private let requiresOnDevice: Bool
-    private let usesHelperTransport: Bool
+    private let host: TranscriptionEngineHost
     private let localeIdentifier: String?
     private let autoGainEnabled: Bool
     private let autoGainTarget: Double
@@ -363,8 +371,11 @@ private final class TranscriptionChannelPipeline: NSObject {
     private let pcmChunkBytes = 3200
     private let maxPendingPCMBytes = 3200 * 50
     private var emittedChunkCount = 0
-    private var firstBufferAt: Date?
-    private var lastTranscriberRestartAt: Date?
+    /// Speech detection and stall tracking. Fed on the capture thread, read and reset
+    /// on the main thread, so both live behind `voiceStateLock`.
+    private var voiceDetector = VoiceActivityDetector()
+    private var stallTracker = TranscriptionStallTracker()
+    private let voiceStateLock = NSLock()
     private var hasLoggedFirstAudio = false
 
     #if os(macOS)
@@ -386,7 +397,7 @@ private final class TranscriptionChannelPipeline: NSObject {
         channel: TranscriptChannel,
         quality: LiveTranscriptionQualityMode,
         requiresOnDevice: Bool,
-        usesHelperTransport: Bool,
+        host: TranscriptionEngineHost,
         localeIdentifier: String?,
         autoGainEnabled: Bool = true,
         autoGainTarget: Double = 0.06,
@@ -395,7 +406,7 @@ private final class TranscriptionChannelPipeline: NSObject {
         self.channel = channel
         self.quality = quality
         self.requiresOnDevice = requiresOnDevice
-        self.usesHelperTransport = usesHelperTransport
+        self.host = host
         self.localeIdentifier = localeIdentifier
         self.autoGainEnabled = autoGainEnabled
         self.autoGainTarget = autoGainTarget
@@ -439,8 +450,7 @@ private final class TranscriptionChannelPipeline: NSObject {
         #endif
         transcriber?.stop()
         transcriber = nil
-        firstBufferAt = nil
-        lastTranscriberRestartAt = nil
+        clearUnansweredVoice()
         pendingPCMLock.lock()
         pendingPCM.removeAll()
         pendingPCMLock.unlock()
@@ -612,7 +622,6 @@ private final class TranscriptionChannelPipeline: NSObject {
     private func handleBuffer(_ buffer: AVAudioPCMBuffer) {
         if !hasLoggedFirstAudio {
             hasLoggedFirstAudio = true
-            firstBufferAt = Date()
             log("first audio buffer sampleRate=\(String(format: "%.0f", buffer.format.sampleRate)) channels=\(buffer.format.channelCount)")
         }
         if downmixer == nil {
@@ -623,6 +632,12 @@ private final class TranscriptionChannelPipeline: NSObject {
             )
         }
         guard let mono = downmixer?.monoBuffer(from: buffer) else { return }
+        let preGainRMS = rmsLevel(from: mono)
+        let bufferDuration = mono.format.sampleRate > 0 ? Double(mono.frameLength) / mono.format.sampleRate : 0
+        voiceStateLock.lock()
+        let isVoice = voiceDetector.isVoice(rms: preGainRMS, duration: bufferDuration)
+        stallTracker.noteAudio(at: Date(), duration: bufferDuration, isVoice: isVoice)
+        voiceStateLock.unlock()
         if autoGainEnabled {
             let gain = computeAutoGain(for: mono, target: autoGainTarget)
             if gain != 1.0 {
@@ -681,8 +696,8 @@ private final class TranscriptionChannelPipeline: NSObject {
         )
         #if os(macOS)
         let transcriber: SpeechTranscribing
-        if usesHelperTransport {
-            transcriber = XPCSpeechTranscriberAdapter(config: config)
+        if let serviceName = host.helperServiceName {
+            transcriber = XPCSpeechTranscriberAdapter(config: config, serviceName: serviceName)
         } else {
             transcriber = InProcessSpeechTranscriberAdapter(config: config)
         }
@@ -691,10 +706,12 @@ private final class TranscriptionChannelPipeline: NSObject {
         #endif
         transcriber.onPartial = { [weak self] text, confidence in
             self?.log("partial textLength=\(text.count) confidence=\(Self.formatConfidence(confidence))")
+            self?.clearUnansweredVoice()
             self?.emitEvent(text: text, isFinal: false, confidence: confidence)
         }
         transcriber.onFinal = { [weak self] text, confidence in
             self?.log("final textLength=\(text.count) confidence=\(Self.formatConfidence(confidence))")
+            self?.clearUnansweredVoice()
             self?.emitEvent(text: text, isFinal: true, confidence: confidence)
         }
         transcriber.onError = { [weak self] failure in
@@ -708,19 +725,15 @@ private final class TranscriptionChannelPipeline: NSObject {
         return transcriber
     }
 
-    func restartTranscriberIfStalled(now: Date, quietWindow: TimeInterval = 8.0) {
-        guard let stats = lastStats else { return }
-        guard now.timeIntervalSince(stats.lastBufferTime) <= 1.5 else { return }
-        let referenceTime = stats.lastResultTime ?? firstBufferAt
-        guard let referenceTime else { return }
-        guard now.timeIntervalSince(referenceTime) >= quietWindow else { return }
-        if let lastRestart = lastTranscriberRestartAt,
-           now.timeIntervalSince(lastRestart) < quietWindow {
-            return
-        }
-        guard let existing = transcriber else { return }
-        lastTranscriberRestartAt = now
-        log("restarting stalled transcriber after quietWindow=\(String(format: "%.1f", quietWindow))s")
+    func restartTranscriberIfStalled(now: Date) {
+        voiceStateLock.lock()
+        let stalled = stallTracker.shouldRestart(now: now)
+        let unanswered = stallTracker.unansweredSpeech
+        let floor = voiceDetector.noiseFloor ?? 0
+        voiceStateLock.unlock()
+        guard stalled, let existing = transcriber else { return }
+        clearUnansweredVoice()
+        log("restarting stalled transcriber: \(String(format: "%.1f", unanswered))s of speech with no result (noiseFloor=\(String(format: "%.4f", floor)))")
         existing.stop()
         do {
             let replacement = try ensureTranscriber()
@@ -742,8 +755,18 @@ private final class TranscriptionChannelPipeline: NSObject {
         }
     }
 
+    private func clearUnansweredVoice() {
+        voiceStateLock.lock()
+        stallTracker.reset()
+        voiceStateLock.unlock()
+    }
+
+    private static let logTimeFormat = Date.FormatStyle()
+        .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits)
+        .secondFraction(.fractional(3))
+
     private func log(_ message: String) {
-        print("[Transcription Pipeline][\(channel.displayName)] \(message)")
+        print("[Transcription Pipeline][\(channel.displayName)] \(Date().formatted(Self.logTimeFormat)) \(message)")
     }
 
     private static func formatConfidence(_ confidence: Double?) -> String {
@@ -859,6 +882,14 @@ extension TranscriptionChannelPipeline: AVCaptureAudioDataOutputSampleBufferDele
 }
 #endif
 
+/// The live input level, observed only by the diagnostics line. As a `@Published` controller
+/// property it redrew the whole tile (and its transcript list) ~10 times a second per channel.
+@MainActor
+@Observable
+final class LiveTranscriptionLevelCell {
+    var level: Double = 0
+}
+
 @MainActor
 final class LiveTranscriptionController: ObservableObject {
     private final class WeakControllerBox {
@@ -874,9 +905,17 @@ final class LiveTranscriptionController: ObservableObject {
 
     @Published private(set) var state: LiveTranscriptionState = .idle
     @Published private(set) var entries: [TranscriptEntry] = []
-    @Published private(set) var inputLevel: Double = 0
+    let levelCell = LiveTranscriptionLevelCell()
+    /// Not `@Published`; see `LiveTranscriptionLevelCell`. Still feeds the output payload.
+    private(set) var inputLevel: Double = 0 {
+        didSet {
+            if levelCell.level != inputLevel { levelCell.level = inputLevel }
+        }
+    }
     @Published private(set) var debugInfo: String = ""
     @Published private(set) var inputWarning: String?
+    /// Per-input problems the operator should see in Live mode, such as a missing device.
+    @Published private(set) var sourceWarning: String?
 
     private let tileId: UUID
     private let tabId: UUID
@@ -916,6 +955,10 @@ final class LiveTranscriptionController: ObservableObject {
     private var retryWorkItem: DispatchWorkItem?
     private let logQueue = DispatchQueue(label: "LiveTranscription.Log", qos: .userInitiated)
     private var transcriptionInputsObserver: NSObjectProtocol?
+    private var clearRequestObserver: NSObjectProtocol?
+    /// This tile's sources and where they were assigned when the pipelines started.
+    private var activeSlotPlan: [UUID: TranscriptionSlotAssignment] = [:]
+    private var audioDevicesCancellable: AnyCancellable?
 
     static func shared(
         tabId: UUID,
@@ -967,10 +1010,37 @@ final class LiveTranscriptionController: ObservableObject {
                 self.evaluateRunState(restartIfRunning: true)
             }
         }
+        // Observed here rather than in the tile view: the "Clear Live Transcript" automation
+        // action must work while the tile is off screen (automation view, culled canvas tile).
+        clearRequestObserver = NotificationCenter.default.addObserver(
+            forName: .liveTranscriptionClearRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let requestedTileId = note.userInfo?["tileId"] as? UUID else { return }
+            Task { @MainActor [weak self] in
+                guard let self, requestedTileId == self.tileId else { return }
+                self.clearOutputs()
+            }
+        }
+        #if os(macOS)
+        // A device coming or going (Dante starting late, a USB mic unplugged) changes
+        // which sources can take a recognizer slot.
+        audioDevicesCancellable = AudioInputDeviceCache.shared.$devices
+            .map { Set($0.map(\.uid)) }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.audioDevicesDidChange()
+            }
+        #endif
     }
 
     deinit {
         if let observer = transcriptionInputsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = clearRequestObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         let tileId = tileId
@@ -1004,10 +1074,13 @@ final class LiveTranscriptionController: ObservableObject {
 
     func updateTabSnapshot(_ tabSnapshot: DashboardTab) {
         guard tabSnapshot.id == tabId else { return }
-        let previousAllowedSourceIds = Set(dashboardSourceSelection(in: self.tabSnapshot).allowedSources.map(\.id))
+        // Recognizer slots are handed out across every tile on the tab, so another
+        // tile's sources changing can move this tile's sources to a different host.
+        let previousSelection = dashboardSourceSelection(in: self.tabSnapshot)
         self.tabSnapshot = tabSnapshot
-        let updatedAllowedSourceIds = Set(dashboardSourceSelection(in: tabSnapshot).allowedSources.map(\.id))
-        if previousAllowedSourceIds != updatedAllowedSourceIds {
+        let updatedSelection = dashboardSourceSelection(in: tabSnapshot)
+        if Set(previousSelection.allowedSources.map(\.id)) != Set(updatedSelection.allowedSources.map(\.id))
+            || previousSelection.allAllowedSourceIDs != updatedSelection.allAllowedSourceIDs {
             evaluateRunState(restartIfRunning: true)
         }
     }
@@ -1041,12 +1114,19 @@ final class LiveTranscriptionController: ObservableObject {
         evaluateRunState(restartIfRunning: true)
     }
 
+    /// Clears the visible transcript. The recognizer's stream-tracking state (committed
+    /// prefixes, final-word history) is kept while it is running: the recognizer reports
+    /// cumulative text, so dropping that state would make already-cleared lines reappear
+    /// on the next partial result.
     func clearOutputs() {
         entries.removeAll()
-        committedPrefixes.removeAll()
         recentFinals.removeAll()
-        finalWordHistoryByChannel.removeAll()
         LiveTranscriptionOutputStore.shared.clear(tileId: tileId)
+    }
+
+    private func resetStreamTracking() {
+        committedPrefixes.removeAll()
+        finalWordHistoryByChannel.removeAll()
     }
 
     func restoreFromStore() {
@@ -1133,8 +1213,6 @@ final class LiveTranscriptionController: ObservableObject {
         #else
         if sourceSelection.selectedEnabledSources > enabledSources.count {
             debugInfo = "Dashboard input cap reached: using \(enabledSources.count) of \(sourceSelection.selectedEnabledSources) enabled inputs for this tile."
-        } else if enabledSources.count > 2 {
-            debugInfo = "Running \(enabledSources.count) sources. Performance may vary."
         } else {
             debugInfo = ""
         }
@@ -1163,10 +1241,11 @@ final class LiveTranscriptionController: ObservableObject {
     /// Text filters are read from the input store on demand rather than cached at pipeline
     /// start. A cache is emptied on every restart, and entries recomputed in that window
     /// silently lost their profanity filtering.
-    private func textFilters(forSourceID id: UUID) -> (profanity: ProfanityFilter, wordFilters: [WordReplacementFilter]) {
-        let input = settings.sources.first(where: { $0.id == id }).flatMap(resolveTranscriptionInput(for:))
-        return (ProfanityFilter(settings: input?.profanitySettings ?? LiveTranscriptionProfanitySettings()),
-                input?.wordFilters ?? [])
+    private func textFilter(forSourceID id: UUID) -> TranscriptTextFilter {
+        guard let input = settings.sources.first(where: { $0.id == id }).flatMap(resolveTranscriptionInput(for:)) else {
+            return .passthrough
+        }
+        return TranscriptTextFilter(wordFilters: input.wordFilters, profanitySettings: input.profanitySettings)
     }
 
     private func setupPipelines(with sources: [LiveTranscriptionSourceConfig]) throws {
@@ -1182,10 +1261,10 @@ final class LiveTranscriptionController: ObservableObject {
         let activeSources = sources
         let requiresOnDevice = supportsOnDevice && activeSources.count <= 1
         let dashboardSelection = dashboardSourceSelection(in: tabSnapshot)
+        let slotPlan = Self.slotPlan(for: dashboardSelection)
+        activeSlotPlan = slotPlan.filter { id, _ in activeSources.contains { $0.id == id } }
+        print("[Transcription Controller] slot plan " + activeSources.map { "\($0.transcriptDisplayName)=\(slotPlan[$0.id].map { "\($0)" } ?? "none")" }.joined(separator: " "))
         var warnings: [String] = []
-        if activeSources.count > 2 {
-            warnings.append("Running \(activeSources.count) sources. Performance may vary.")
-        }
         if dashboardSelection.selectedEnabledSources > activeSources.count {
             warnings.append("Dashboard input cap reached: this tile is using \(activeSources.count) of its \(dashboardSelection.selectedEnabledSources) enabled inputs.")
         }
@@ -1202,7 +1281,6 @@ final class LiveTranscriptionController: ObservableObject {
         #else
         let supportsOnDevice = SpeechTranscriber.supportsOnDevice(localeIdentifier: localeIdentifier)
         let requiresOnDevice = supportsOnDevice
-        let usesHelperTransport = false
         let activeSources = Array(sources.prefix(1))
         var warnings: [String] = []
         if !supportsOnDevice {
@@ -1213,7 +1291,7 @@ final class LiveTranscriptionController: ObservableObject {
         #endif
 
         var firstStartupError: Error?
-        for (index, source) in activeSources.enumerated() {
+        for source in activeSources {
             let channel = TranscriptChannel(
                 id: source.id,
                 displayName: source.transcriptDisplayName,
@@ -1235,16 +1313,22 @@ final class LiveTranscriptionController: ObservableObject {
                 sourceRequiresOnDevice = false
             }
             #if os(macOS)
-            let globalSourceIndex = dashboardSelection.allAllowedSourceIDs.firstIndex(of: source.id) ?? index
-            let usesHelperTransport = globalSourceIndex > 0
+            let assignment = slotPlan[source.id] ?? .overCapacity
+            guard case .host(let host) = assignment else {
+                if let warning = TranscriptionSlotPlanner.warning(for: assignment, sourceName: channel.displayName) {
+                    runtimeWarningsByChannel[channel.id] = warning
+                    recomputeModuleWarning()
+                }
+                continue
+            }
             #else
-            let usesHelperTransport = false
+            let host = TranscriptionEngineHost.inProcess
             #endif
             let pipeline = try TranscriptionChannelPipeline(
                 channel: channel,
                 quality: settings.quality,
                 requiresOnDevice: sourceRequiresOnDevice,
-                usesHelperTransport: usesHelperTransport,
+                host: host,
                 localeIdentifier: localeIdentifier,
                 autoGainEnabled: autoGainEnabled,
                 autoGainTarget: autoGainTarget,
@@ -1319,9 +1403,43 @@ final class LiveTranscriptionController: ObservableObject {
         if pipelines.isEmpty, let firstStartupError {
             throw firstStartupError
         }
+        if pipelines.isEmpty, !runtimeWarningsByChannel.isEmpty {
+            let message = runtimeWarningsByChannel.values.sorted().joined(separator: " ")
+            throw NSError(domain: "Relay.Transcription", code: -2, userInfo: [NSLocalizedDescriptionKey: message])
+        }
     }
 
+    #if os(macOS)
+    private static func slotPlan(for selection: DashboardTranscriptionSourceSelection) -> [UUID: TranscriptionSlotAssignment] {
+        TranscriptionSlotPlanner.plan(orderedSourceIDs: selection.allAllowedSourceIDs) { id in
+            let source = selection.allAllowedSources.first { $0.id == id }
+            return isAudioDeviceAvailable(uid: source?.deviceUID)
+        }
+    }
+
+    /// A source with no device UID follows the system default input.
+    nonisolated private static func isAudioDeviceAvailable(uid: String?) -> Bool {
+        guard let uid, !uid.isEmpty else { return true }
+        return AudioDeviceEnumerator.deviceId(for: uid) != nil
+    }
+
+    private func audioDevicesDidChange() {
+        guard isLiveMode, settings.isEnabled, !isStarting else { return }
+        guard isRunning else {
+            // Every source may have been missing its device; try again now.
+            evaluateRunState(restartIfRunning: false)
+            return
+        }
+        let plan = Self.slotPlan(for: dashboardSourceSelection(in: tabSnapshot))
+        let updated = plan.filter { id, _ in activeSlotPlan.keys.contains(id) }
+        guard updated != activeSlotPlan else { return }
+        print("[Transcription Controller] audio devices changed; restarting with new slot plan")
+        evaluateRunState(restartIfRunning: true)
+    }
+    #endif
+
     private func stopPipelines() {
+        activeSlotPlan.removeAll()
         pipelines.values.forEach { $0.stop() }
         pipelines.removeAll()
         segmenters.removeAll()
@@ -1335,9 +1453,12 @@ final class LiveTranscriptionController: ObservableObject {
         recomputeModuleWarning()
     }
 
+    /// Runs on every stats callback (several a second per channel). `inputWarning` is
+    /// `@Published`, which notifies even for an unchanged value, so only write a change.
     private func updateInputWarning() {
         let hasHotInput = channelStats.values.contains { $0.peak >= 0.98 || $0.rms >= 0.25 }
-        inputWarning = hasHotInput ? "Input is hot. Reduce device gain." : nil
+        let warning: String? = hasHotInput ? "Input is hot. Reduce device gain." : nil
+        if inputWarning != warning { inputWarning = warning }
     }
 
     private func recomputeModuleWarning() {
@@ -1345,19 +1466,26 @@ final class LiveTranscriptionController: ObservableObject {
         let runtimeWarnings = runtimeWarningsByChannel.values.sorted()
         warnings.append(contentsOf: runtimeWarnings)
         moduleWarning = warnings.isEmpty ? nil : warnings.joined(separator: " ")
+        let newSourceWarning = runtimeWarnings.isEmpty ? nil : runtimeWarnings.joined(separator: "\n")
+        if sourceWarning != newSourceWarning {
+            sourceWarning = newSourceWarning
+        }
     }
 
     private func dashboardSourceSelection(in tab: DashboardTab) -> DashboardTranscriptionSourceSelection {
         #if os(iOS)
         let sourceLimit = 1
         #else
-        let sourceLimit = 4
+        // No count cap here: TranscriptionSlotPlanner gives recognizer slots only to
+        // sources whose device is present, so a disconnected input (Dante offline)
+        // doesn't push a working one out. Sources beyond its capacity get a warning.
+        let sourceLimit = Int.max
         #endif
 
         var totalEnabledSources = 0
         var selectedEnabledSources = 0
         var allowedSources: [LiveTranscriptionSourceConfig] = []
-        var allAllowedSourceIDs: [UUID] = []
+        var allAllowedSources: [LiveTranscriptionSourceConfig] = []
         var remainingSlots = sourceLimit
 
         for tile in tab.tiles {
@@ -1372,7 +1500,7 @@ final class LiveTranscriptionController: ObservableObject {
             let enabledSources = model.sources.filter(\.isEnabled)
             totalEnabledSources += enabledSources.count
             if remainingSlots > 0 {
-                allAllowedSourceIDs.append(contentsOf: enabledSources.prefix(remainingSlots).map(\.id))
+                allAllowedSources.append(contentsOf: enabledSources.prefix(remainingSlots))
             }
 
             if tile.id == tileId {
@@ -1390,7 +1518,7 @@ final class LiveTranscriptionController: ObservableObject {
             let enabledSources = settings.sources.filter(\.isEnabled)
             return DashboardTranscriptionSourceSelection(
                 allowedSources: Array(enabledSources.prefix(sourceLimit)),
-                allAllowedSourceIDs: Array(enabledSources.prefix(sourceLimit)).map(\.id),
+                allAllowedSources: Array(enabledSources.prefix(sourceLimit)),
                 totalEnabledSources: enabledSources.count,
                 selectedEnabledSources: enabledSources.count
             )
@@ -1398,7 +1526,7 @@ final class LiveTranscriptionController: ObservableObject {
 
         return DashboardTranscriptionSourceSelection(
             allowedSources: allowedSources,
-            allAllowedSourceIDs: allAllowedSourceIDs,
+            allAllowedSources: allAllowedSources,
             totalEnabledSources: totalEnabledSources,
             selectedEnabledSources: selectedEnabledSources
         )
@@ -1428,6 +1556,7 @@ final class LiveTranscriptionController: ObservableObject {
         }
         if shouldClearOutputs {
             clearOutputs()
+            resetStreamTracking()
         }
     }
 
@@ -1454,19 +1583,20 @@ final class LiveTranscriptionController: ObservableObject {
         guard !entries.isEmpty else { return }
 
         var updated = entries
-        var didChange = false
+        var changed: [TranscriptEntry] = []
 
         for idx in updated.indices {
             if !updated[idx].isFinal {
                 updated[idx].isFinal = true
-                didChange = true
-                committedPrefixes[updated[idx].sourceId] = updated[idx].displayText
+                changed.append(updated[idx])
+                // Compared against raw recognizer text in stripCommittedPrefix, so store raw.
+                committedPrefixes[updated[idx].sourceId] = updated[idx].rawText
             }
         }
 
-        if didChange {
+        if !changed.isEmpty {
             entries = updated
-            publishOutputs(entries: updated)
+            publishOutputs(entries: updated, changedEntries: changed)
         }
     }
 
@@ -1546,6 +1676,12 @@ final class LiveTranscriptionController: ObservableObject {
         let update = segmenter.handleUpdate(text: cleanedText, isFinal: event.isFinal, now: event.timestamp)
         segmenters[channel.id] = segmenter
         applySegmenterUpdate(update, channelId: channel.id, overrideChannel: channel)
+        if event.isFinal {
+            // A final result ends the recognizer task, and the next one starts from empty text.
+            // A stale prefix would make overlap stripping drop the new task's first words
+            // whenever they repeat the end of the last line ("…let's go" → "go again").
+            committedPrefixes[channel.id] = ""
+        }
     }
 
     private func applySegmenterUpdate(_ update: TranscriptSegmenterUpdate, channelId: UUID, overrideChannel: TranscriptChannel? = nil) {
@@ -1638,7 +1774,9 @@ final class LiveTranscriptionController: ObservableObject {
         let recent = (recentFinals[channelId] ?? []).filter { now.timeIntervalSince($0.timestamp) <= duplicateFinalSuppressWindow }
         recentFinals[channelId] = recent
         for entry in recent {
-            if entry.text.contains(normalized) || normalized.contains(entry.text) {
+            // Word-level containment: a character-level check would drop "no" after "I know".
+            if TranscriptPhraseMatcher.containsWordSequence(entry.text, normalized)
+                || TranscriptPhraseMatcher.containsWordSequence(normalized, entry.text) {
                 return true
             }
             if isNearDuplicate(lhs: normalized, rhs: entry.text) {
@@ -1698,21 +1836,6 @@ final class LiveTranscriptionController: ObservableObject {
         return false
     }
 
-    private func applyWordFilters(_ filters: [WordReplacementFilter], to text: String) -> String {
-        guard !filters.isEmpty else { return text }
-        var result = text
-        for filter in filters {
-            let from = filter.from.trimmingCharacters(in: .whitespacesAndNewlines)
-            let to = filter.to
-            guard !from.isEmpty else { continue }
-            let escaped = NSRegularExpression.escapedPattern(for: from)
-            guard let regex = try? NSRegularExpression(pattern: escaped, options: [.caseInsensitive]) else { continue }
-            let range = NSRange(result.startIndex..<result.endIndex, in: result)
-            result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: to)
-        }
-        return result
-    }
-
     private func appendEntry(
         source: TranscriptChannel,
         raw: String,
@@ -1722,8 +1845,7 @@ final class LiveTranscriptionController: ObservableObject {
         timestamp: Date
     ) {
         let retention = settings.retention
-        let filters = textFilters(forSourceID: source.id)
-        let displayText = applyWordFilters(filters.wordFilters, to: filters.profanity.apply(to: display))
+        let displayText = textFilter(forSourceID: source.id).apply(to: display)
         let normalizedDisplay = normalizeForDedup(displayText)
 
         if isFinal, shouldSkipFinal(displayText, channelId: source.id, now: timestamp) {
@@ -1736,8 +1858,8 @@ final class LiveTranscriptionController: ObservableObject {
             let lastNormalized = normalizeForDedup(lastFinal.displayText)
             if !normalizedDisplay.isEmpty {
                 let isDuplicateFinal = normalizedDisplay == lastNormalized
-                    || lastNormalized.contains(normalizedDisplay)
-                    || normalizedDisplay.contains(lastNormalized)
+                    || TranscriptPhraseMatcher.containsWordSequence(lastNormalized, normalizedDisplay)
+                    || TranscriptPhraseMatcher.containsWordSequence(normalizedDisplay, lastNormalized)
                 let isRecentDuplicateFinal = timestamp.timeIntervalSince(lastFinal.timestamp) <= duplicateFinalSuppressWindow
                 if isFinal && isDuplicateFinal && isRecentDuplicateFinal {
                     return
@@ -1749,6 +1871,7 @@ final class LiveTranscriptionController: ObservableObject {
         }
 
         var updated = currentEntries
+        let changedEntry: TranscriptEntry
 
         if let index = updated.lastIndex(where: { $0.sourceId == source.id && !$0.isFinal }) {
             let existing = updated[index]
@@ -1760,7 +1883,7 @@ final class LiveTranscriptionController: ObservableObject {
                 return
             }
             let existingTimestamp = updated[index].timestamp
-            updated[index] = TranscriptEntry(
+            changedEntry = TranscriptEntry(
                 id: existing.id,
                 timestamp: existingTimestamp,
                 sourceId: source.id,
@@ -1770,19 +1893,19 @@ final class LiveTranscriptionController: ObservableObject {
                 isFinal: isFinal,
                 confidence: confidence
             )
+            updated[index] = changedEntry
         } else {
-            updated.append(
-                TranscriptEntry(
-                    id: UUID(),
-                    timestamp: timestamp,
-                    sourceId: source.id,
-                    sourceDisplayName: source.displayName,
-                    rawText: raw,
-                    displayText: displayText,
-                    isFinal: isFinal,
-                    confidence: confidence
-                )
+            changedEntry = TranscriptEntry(
+                id: UUID(),
+                timestamp: timestamp,
+                sourceId: source.id,
+                sourceDisplayName: source.displayName,
+                rawText: raw,
+                displayText: displayText,
+                isFinal: isFinal,
+                confidence: confidence
             )
+            updated.append(changedEntry)
         }
 
         if isFinal {
@@ -1790,13 +1913,17 @@ final class LiveTranscriptionController: ObservableObject {
         }
 
         let trimmed = LiveTranscriptionController.trimmedEntries(updated, retention: retention)
-        entries = trimmed.sorted { $0.timestamp < $1.timestamp }
+        entries = Self.sortedByTimestamp(trimmed)
         if isFinal {
-            appendFinalWordHistory(displayText, channelId: source.id)
+            // The word history and committed prefix are compared against raw recognizer text
+            // (stripLeadingFinalText / stripCommittedPrefix), so they must be stored raw. Storing
+            // the filtered text broke overlap stripping whenever a word filter or the profanity
+            // filter changed the line, which duplicated transcript text.
+            appendFinalWordHistory(raw, channelId: source.id)
             recordFinal(displayText, channelId: source.id, timestamp: timestamp)
-            updateCommittedPrefix(displayText, channelId: source.id)
+            updateCommittedPrefix(raw, channelId: source.id)
         }
-        publishOutputs(entries: entries)
+        publishOutputs(entries: entries, changedEntries: [changedEntry])
     }
 
     private func stripLeadingFinalText(_ text: String, channelId: UUID) -> String {
@@ -1854,6 +1981,13 @@ final class LiveTranscriptionController: ObservableObject {
         return 0
     }
 
+    /// Entries arrive in order almost always (a new line is appended; an updated line keeps its
+    /// timestamp), so check before copying and sorting the whole transcript on every partial.
+    nonisolated static func sortedByTimestamp(_ entries: [TranscriptEntry]) -> [TranscriptEntry] {
+        let inOrder = zip(entries, entries.dropFirst()).allSatisfy { $0.timestamp <= $1.timestamp }
+        return inOrder ? entries : entries.sorted { $0.timestamp < $1.timestamp }
+    }
+
     nonisolated private static func trimmedEntries(
         _ entries: [TranscriptEntry],
         retention: LiveTranscriptionRetentionSettings
@@ -1889,18 +2023,18 @@ final class LiveTranscriptionController: ObservableObject {
     }
 
     private func recomputeDisplayTexts() {
-        var filtersBySource: [UUID: (profanity: ProfanityFilter, wordFilters: [WordReplacementFilter])] = [:]
+        var filtersBySource: [UUID: TranscriptTextFilter] = [:]
         let updated = entries.map { entry in
             let source = settings.sources.first(where: { $0.id == entry.sourceId })
-            let filters = filtersBySource[entry.sourceId] ?? textFilters(forSourceID: entry.sourceId)
-            filtersBySource[entry.sourceId] = filters
+            let filter = filtersBySource[entry.sourceId] ?? textFilter(forSourceID: entry.sourceId)
+            filtersBySource[entry.sourceId] = filter
             return TranscriptEntry(
                 id: entry.id,
                 timestamp: entry.timestamp,
                 sourceId: entry.sourceId,
                 sourceDisplayName: source?.transcriptDisplayName ?? entry.sourceDisplayName,
                 rawText: entry.rawText,
-                displayText: applyWordFilters(filters.wordFilters, to: filters.profanity.apply(to: entry.rawText)),
+                displayText: filter.apply(to: entry.rawText),
                 isFinal: entry.isFinal,
                 confidence: entry.confidence
             )
@@ -1917,9 +2051,14 @@ final class LiveTranscriptionController: ObservableObject {
         }
     }
 
-    private func publishOutputs(entries: [TranscriptEntry]) {
+    private func publishOutputs(entries: [TranscriptEntry], changedEntries: [TranscriptEntry] = []) {
         let latest = entries.last
-        let payload = TranscriptOutputPayload(latestEntry: latest, window: entries, inputLevel: Self.sanitizedInputLevel(inputLevel))
+        let payload = TranscriptOutputPayload(
+            latestEntry: latest,
+            window: entries,
+            inputLevel: Self.sanitizedInputLevel(inputLevel),
+            changedEntries: changedEntries
+        )
         LiveTranscriptionOutputStore.shared.update(tileId: tileId, payload: payload)
     }
 
@@ -2060,6 +2199,17 @@ struct LiveTranscriptionTileView: View {
         )
     }
 
+    /// The tile lists at most this many recent lines. With "Limit transcript history" off the
+    /// transcript keeps every line for Copy and Export, and listing all of them made each update
+    /// re-check the whole session. A higher entry limit, if set, is shown in full.
+    nonisolated static func displayedEntryLimit(retention: LiveTranscriptionRetentionSettings) -> Int {
+        let base = 400
+        guard retention.limitsEnabled == true, let maxEntries = retention.maxEntries, maxEntries > base else {
+            return base
+        }
+        return maxEntries
+    }
+
     var body: some View {
         let model = LiveTranscriptionTileView.resolveModel(module: module)
         let tileId = tile.id
@@ -2080,7 +2230,7 @@ struct LiveTranscriptionTileView: View {
                         }
                         .frame(height: 0)
                         LazyVStack(alignment: .leading, spacing: 6) {
-                            ForEach(controller.entries) { entry in
+                            ForEach(controller.entries.suffix(Self.displayedEntryLimit(retention: model.retention))) { entry in
                                 TranscriptRow(
                                     entry: entry,
                                     color: colorForSource(entry.sourceId, model: model),
@@ -2286,12 +2436,9 @@ struct LiveTranscriptionTileView: View {
                 controller.setLiveMode(effectiveLiveMode && phase == .active)
                 #endif
             }
-            .onReceive(NotificationCenter.default.publisher(for: .liveTranscriptionClearRequested)) { note in
-                guard let id = note.userInfo?["tileId"] as? UUID, id == tileId else { return }
-                controller.clearOutputs()
-            }
             .onReceive(SharedSecondTicker.shared.publisher) { date in
-                guard model.usesRelativeTimestamps == true else { return }
+                // Nothing to re-label until there's a line.
+                guard model.usesRelativeTimestamps == true, !controller.entries.isEmpty else { return }
                 relativeTimestampRefreshDate = date
             }
         }
@@ -2431,6 +2578,14 @@ struct LiveTranscriptionTileView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+                if let warning = controller.sourceWarning, effectiveLiveMode {
+                    Text(warning)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if let warning = controller.inputWarning, effectiveLiveMode {
                     Text(warning)
                         .font(.caption2)
@@ -2441,9 +2596,7 @@ struct LiveTranscriptionTileView: View {
 
                 if model.showsDiagnostics {
                     if controller.state == .listening {
-                        Text("Input level: \(String(format: "%.3f", controller.inputLevel))")
-                            .font(.caption2)
-                            .foregroundStyle(chromeTextColor)
+                        LiveTranscriptionInputLevelText(cell: controller.levelCell, color: chromeTextColor)
                     }
                     if !controller.debugInfo.isEmpty {
                         Text(controller.debugInfo)
@@ -2681,6 +2834,17 @@ struct LiveTranscriptionTileView: View {
     }
 }
 
+private struct LiveTranscriptionInputLevelText: View {
+    let cell: LiveTranscriptionLevelCell
+    let color: Color
+
+    var body: some View {
+        Text("Input level: \(String(format: "%.3f", cell.level))")
+            .font(.caption2)
+            .foregroundStyle(color)
+    }
+}
+
 private struct TranscriptRow: View {
     @Environment(\.tileTextFormatting) private var tileTextFormatting
     let entry: TranscriptEntry
@@ -2838,8 +3002,7 @@ private func attributedTranscriptText(_ text: String, rules: [DashboardGraph.Wor
                 searchStart = range.upperBound
             }
         case .wholeWord:
-            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: needle) + "\\b"
-            underlineMatches(pattern: pattern, in: base, output: &output)
+            underlineMatches(pattern: TranscriptPhraseMatcher.wholeWordPattern(for: needle), in: base, output: &output)
         }
     }
     return output

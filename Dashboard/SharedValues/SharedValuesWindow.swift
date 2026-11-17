@@ -16,6 +16,8 @@ struct SharedValuesWindow: View {
     @State private var expandedConsoleIDs: Set<String> = []
     @State private var expandedPlanningCenterIDs: Set<String> = []
     @State private var planningCenterFilter: PlanningCenterVariableFilter = .all
+    /// Not observed; just remembers organizer results between renders.
+    @State private var planningCenterGroupsCache = PlanningCenterGroupsCache()
     @State private var expandedRemoteGroups: Set<String> = []
     @ObservedObject private var devices = ExternalDevicesStore.shared
     @ObservedObject private var linkedPeople = LinkedComputerPersonVariableStore.shared
@@ -187,12 +189,25 @@ struct SharedValuesWindow: View {
     }
 
     private func planningCenterGroups(filter: PlanningCenterVariableFilter) -> [PlanningCenterVariableTabGroup] {
+        // This is reached several times per render (counts, sidebar, list), and the window
+        // re-renders every second as clock values tick. Organizing splits every Planning
+        // Center key string, which pegged the main thread while this window was open, so
+        // reuse the last result while the inputs are unchanged.
         let values = matchingValues.filter { category(for: $0) == .planningCenter }
+        let cache = planningCenterGroupsCache
+        if let entry = cache.entries[filter],
+           entry.values == values,
+           entry.query == query,
+           entry.tabNames.allSatisfy({ SharedValueSourceCoordinator.shared.tabName(for: $0.key) == $0.value }) {
+            return entry.groups
+        }
         let ids = Set(values.compactMap(PlanningCenterVariableOrganizer.tabID))
         let names = Dictionary(uniqueKeysWithValues: ids.compactMap { id in
             SharedValueSourceCoordinator.shared.tabName(for: id).map { (id, $0) }
         })
-        return PlanningCenterVariableOrganizer.organize(values, tabNames: names, query: query, filter: filter)
+        let groups = PlanningCenterVariableOrganizer.organize(values, tabNames: names, query: query, filter: filter)
+        cache.entries[filter] = .init(values: values, query: query, tabNames: names, groups: groups)
+        return groups
     }
 
     private func planningCenterExpanded(_ id: String) -> Binding<Bool> {
@@ -707,6 +722,16 @@ private struct ConsoleVariableGroup: Identifiable {
     let id: String
     let name: String
     let values: [SharedValue]
+}
+
+final class PlanningCenterGroupsCache {
+    struct Entry {
+        let values: [SharedValue]
+        let query: String
+        let tabNames: [UUID: String]
+        let groups: [PlanningCenterVariableTabGroup]
+    }
+    var entries: [PlanningCenterVariableFilter: Entry] = [:]
 }
 
 enum PlanningCenterVariableFilter: String, CaseIterable, Identifiable {

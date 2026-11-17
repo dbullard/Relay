@@ -383,10 +383,10 @@ final class DashboardCanvasBoundsStore: ObservableObject {
     }
 
     private func saveUserPresets() {
-        guard let data = try? JSONEncoder().encode(userPresets),
+        guard let data = try? JSONEncoder.stableKeyOrder().encode(userPresets),
               let raw = String(data: data, encoding: .utf8)
         else { return }
-        UserDefaults.standard.set(raw, forKey: userPresetsKey)
+        UserDefaults.standard.setIfChanged(raw, forKey: userPresetsKey)
     }
 
     private let customPresetID = "custom"

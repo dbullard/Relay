@@ -19,6 +19,12 @@ final class SpectrogramController: ObservableObject {
 
     private var fftTask: Task<Void, Never>?
     private var fftSubscriptionID: UUID?
+    /// False while the canvas is hidden (e.g. behind the Automation view). Rows keep
+    /// accumulating so history is preserved, but the per-frame image render is skipped:
+    /// it ran ~23 times a second on the main thread and competed with the visible view
+    /// (it was up to ~48% of main-thread time while zooming the Automation graph).
+    private var isVisible: Bool = true
+
     // Pre-allocated pixel buffer reused across renderImage calls to avoid 512 KB
     // malloc/free at 23 Hz.
     private var pixelBuffer: [UInt32] = []
@@ -63,6 +69,14 @@ final class SpectrogramController: ObservableObject {
         if isLive && settings.isEnabled { restartSubscription() } else { stopSubscription() }
     }
 
+    func setVisible(_ visible: Bool) {
+        guard visible != isVisible else { return }
+        isVisible = visible
+        if visible, !rawRows.isEmpty {
+            image = renderImage(rawRows: rawRows, width: outputWidth)
+        }
+    }
+
     func setTileActive(_ isActive: Bool) {
         if isActive && settings.isEnabled { restartSubscription() } else { stopSubscription() }
     }
@@ -96,21 +110,23 @@ final class SpectrogramController: ObservableObject {
               let config = AudioInputsConfigStore.shared.input(for: inputID) else {
             isRunning = false; return
         }
+        // Hold `self` only per frame: a strong capture for the stream's lifetime kept the
+        // controller alive, so deinit never cancelled the FFT after the tile was removed.
         fftTask = Task { [weak self] in
-            guard let self else { return }
             let (subID, stream) = await AudioAnalysisEngine.shared.subscribeFFT(
                 to: inputID, config: config, resolution: .thirdOct)
-            guard !Task.isCancelled else {
+            if !Task.isCancelled, let owner = self {
+                owner.fftSubscriptionID = subID
+                owner.isRunning = true
+            } else {
                 await AudioAnalysisEngine.shared.unsubscribeFFT(id: subID)
                 return
             }
-            self.fftSubscriptionID = subID
-            self.isRunning = true
             for await frame in stream {
-                guard !Task.isCancelled else { break }
-                self.appendRow(frame: frame)
+                guard !Task.isCancelled, let owner = self else { break }
+                owner.appendRow(frame: frame)
             }
-            self.isRunning = false
+            self?.isRunning = false
         }
     }
 
@@ -157,6 +173,7 @@ final class SpectrogramController: ObservableObject {
 
         if rawRows.count >= maxRows { rawRows.removeFirst() }
         rawRows.append(row)
+        guard isVisible else { return }
         image = renderImage(rawRows: rawRows, width: outputWidth)
     }
 

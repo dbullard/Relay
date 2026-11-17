@@ -243,6 +243,10 @@ struct ShureOverviewRawChannel: Identifiable, Equatable {
     let isReconnecting: Bool
     let isTransmitterOff: Bool
     let isWarmupActive: Bool
+    /// Whether the receiver has been connected at any point since Live mode last turned on.
+    /// An offline receiver that never connected is likely powered down or unused; one that
+    /// dropped after connecting is a real problem.
+    var wasConnectedThisSession: Bool = true
     let lastTelemetry: Date?
 }
 
@@ -277,6 +281,12 @@ final class ShureOverviewHub: ObservableObject {
     /// the fast single-tile-equivalent rate.
     private var baseThrottleInterval: TimeInterval = 0.3
     private var previousDroppedCounts: [UUID: Int] = [:]
+    /// Per-device: how long the strain check has failed without a break. One check covers
+    /// about two seconds, and a receiver's startup data burst or a tile opening can push a
+    /// single check over the drop threshold (seen live: 357/s for one check, then ~30/s).
+    private var sustainedStrain = ShureOverviewSustainedCondition()
+    /// How long a device must stay strained before the banner shows (and latches).
+    static let strainSustainSeconds: TimeInterval = 6
     private var previousStrainCheckAt: Date?
     /// Minimum span between drop-rate strain evaluations, independent of
     /// how often recompute() itself runs. recompute() is throttled to
@@ -294,8 +304,13 @@ final class ShureOverviewHub: ObservableObject {
     private static let minimumStrainEvaluationInterval: TimeInterval = 2.0
 
     private var registeredInstances: Set<UUID> = []
+    /// Receivers each registered tile shows. A tile with no entry shows every Shure receiver.
+    private var instanceDeviceScopes: [UUID: Set<UUID>] = [:]
     private var liveInstances: Set<UUID> = []
     private var liveModeActivatedAt: Date?
+    /// Receivers seen connected since Live mode last turned on (see
+    /// `ShureOverviewRawChannel.wasConnectedThisSession`).
+    private var connectedThisSession: Set<UUID> = []
     private var requestedAudioModes: [UUID: ShureOverviewAudioActivityMode] = [:]
     private let telemetryWarmupInterval: TimeInterval = 4
     private var blinkTimer: AnyCancellable?
@@ -328,13 +343,52 @@ final class ShureOverviewHub: ObservableObject {
     /// Mode enabled. The hub connects/streams telemetry iff this is true.
     var isHubLive: Bool { isLive }
 
-    func registerInstance(_ id: UUID) {
+    /// The live meter for a channel on a receiver the hub is connected to, or nil.
+    func meter(deviceID: UUID, channelIndex: Int) -> ShureChannelMeter? {
+        services[deviceID]?.meter(for: channelIndex)
+    }
+
+    /// Registers an Overview tile. `deviceScope` is the set of receivers it shows, or nil
+    /// for every Shure receiver; the hub only connects to receivers some tile shows.
+    func registerInstance(_ id: UUID, deviceScope: Set<UUID>? = nil) {
         registeredInstances.insert(id)
+        if let deviceScope {
+            instanceDeviceScopes[id] = deviceScope
+        } else {
+            instanceDeviceScopes.removeValue(forKey: id)
+        }
         refreshServices()
+    }
+
+    func setInstanceDeviceScope(_ id: UUID, deviceScope: Set<UUID>?) {
+        guard registeredInstances.contains(id) else { return }
+        guard instanceDeviceScopes[id] != deviceScope else { return }
+        if let deviceScope {
+            instanceDeviceScopes[id] = deviceScope
+        } else {
+            instanceDeviceScopes.removeValue(forKey: id)
+        }
+        refreshServices()
+        requestRecompute()
+    }
+
+    /// The receivers the hub should connect to: the union of what registered tiles show, or
+    /// nil for all receivers when any tile shows all of them. No tiles means none.
+    nonisolated static func wantedDeviceIDs(
+        registeredInstances: Set<UUID>,
+        deviceScopes: [UUID: Set<UUID>]
+    ) -> Set<UUID>? {
+        var wanted = Set<UUID>()
+        for instance in registeredInstances {
+            guard let scope = deviceScopes[instance] else { return nil }
+            wanted.formUnion(scope)
+        }
+        return wanted
     }
 
     func unregisterInstance(_ id: UUID) {
         registeredInstances.remove(id)
+        instanceDeviceScopes.removeValue(forKey: id)
         requestedAudioModes.removeValue(forKey: id)
         let wasLive = isLive
         liveInstances.remove(id)
@@ -370,11 +424,13 @@ final class ShureOverviewHub: ObservableObject {
 
     private func setHubLive(_ live: Bool) {
         liveModeActivatedAt = live ? Date() : nil
+        connectedThisSession.removeAll()
         // A fresh Live Mode activation (or turning it off) is the one clean
         // "new episode" boundary for the strain latch below -- see
         // updatePerformanceStrain for why it otherwise never auto-clears.
         isPerformanceStrained = false
         previousDroppedCounts.removeAll()
+        sustainedStrain = ShureOverviewSustainedCondition()
         previousStrainCheckAt = nil
         for service in services.values {
             service.setLiveModeEnabled(live)
@@ -421,18 +477,28 @@ final class ShureOverviewHub: ObservableObject {
     }
 
     private func refreshServices() {
+        // Only receivers some Overview tile shows: an Overview limited to a few receivers
+        // used to connect to, and poll, every receiver in the device list.
+        let wanted = Self.wantedDeviceIDs(registeredInstances: registeredInstances, deviceScopes: instanceDeviceScopes)
         let eligibleDevices = store.devices
             .filter { $0.kind == .shureWireless }
             .filter(Self.isTelemetryEligibleDevice(_:))
+            .filter { wanted?.contains($0.id) ?? true }
         let deviceIDs = Set(eligibleDevices.map(\.id))
 
         for removed in services.keys where !deviceIDs.contains(removed) {
             services[removed]?.removeConsumer(consumerID)
+            // Removing the consumer stops polling, but a live connection keeps streaming
+            // meter samples. Drop live mode too, unless something else still uses it.
+            if let service = services[removed], !service.hasConsumers {
+                service.setLiveModeEnabled(false)
+            }
             serviceTokens[removed]?.cancel()
             serviceTokens.removeValue(forKey: removed)
             services.removeValue(forKey: removed)
             deviceSnapshots.removeValue(forKey: removed)
             previousDroppedCounts.removeValue(forKey: removed)
+            _ = sustainedStrain.isSustained(id: removed.uuidString, active: false, now: Date(), for: Self.strainSustainSeconds)
         }
 
         for device in eligibleDevices where services[device.id] == nil {
@@ -469,8 +535,10 @@ final class ShureOverviewHub: ObservableObject {
     /// device-list-lifecycle events, so a channel switching on/off updates
     /// this promptly instead of waiting for the next registration change.
     private func refreshThrottleIntervalForActivity() {
-        let now = Date()
-        let target = services.values.contains { $0.hasAnyOnChannel(now: now) }
+        // Uses the snapshots the hub already holds. It used to ask every service to
+        // re-resolve every channel's transmitter state, on every snapshot from any
+        // receiver: cost grew with receivers x channels x publish rate.
+        let target = deviceSnapshots.values.contains(where: \.hasChannelOn)
             ? 0.15
             : baseThrottleInterval
         guard target != currentThrottleInterval else { return }
@@ -533,12 +601,13 @@ final class ShureOverviewHub: ObservableObject {
             // the very first recompute. The busy-time check still runs
             // normally on this first pass.
             let previousDropped = previousDroppedCounts[device.id] ?? diagnostics.droppedCoalescedUpdateCount
-            if !isWithinStrainWarmup, ShureOverviewPerformanceStrainEvaluator.isStrained(
+            let failsCheck = !isWithinStrainWarmup && ShureOverviewPerformanceStrainEvaluator.isStrained(
                 diagnostics: diagnostics,
                 pollingIntervalSeconds: currentThrottleInterval,
                 previousDroppedCount: previousDropped,
                 elapsedSeconds: elapsedSeconds
-            ) {
+            )
+            if sustainedStrain.isSustained(id: device.id.uuidString, active: failsCheck, now: now, for: Self.strainSustainSeconds) {
                 strained = true
             }
             previousDroppedCounts[device.id] = diagnostics.droppedCoalescedUpdateCount
@@ -562,10 +631,15 @@ final class ShureOverviewHub: ObservableObject {
         let eligibleDevices = store.devices
             .filter { $0.kind == .shureWireless }
             .filter(Self.isTelemetryEligibleDevice(_:))
+            .filter { services[$0.id] != nil }
 
         var built: [ShureOverviewRawChannel] = []
         for device in eligibleDevices {
             guard let snapshot = deviceSnapshots[device.id] else { continue }
+            if snapshot.isConnected {
+                connectedThisSession.insert(device.id)
+            }
+            let wasConnectedThisSession = connectedThisSession.contains(device.id)
             let channelCount = max(device.effectiveShureChannelCount, 1)
             let kind: ShureOverviewChannelKind = Self.isIEMDevice(device) ? .iem : .mic
 
@@ -612,6 +686,7 @@ final class ShureOverviewHub: ObservableObject {
                         isReconnecting: snapshot.isReconnecting,
                         isTransmitterOff: transmitterState == .off,
                         isWarmupActive: warmupActive,
+                        wasConnectedThisSession: wasConnectedThisSession,
                         lastTelemetry: lastTelemetry
                     )
                 )

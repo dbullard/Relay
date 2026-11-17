@@ -1056,7 +1056,7 @@ struct TriggerGraphNodeView: View {
                     .labelStyle(.titleAndIcon)
                     .font(.caption)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(GraphPushButtonStyle(isProminent: true))
 
             let firedText: String = {
                 guard let manualLastFiredAt else { return "—" }
@@ -1103,7 +1103,7 @@ struct TriggerGraphNodeView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .font(.caption)
-                .buttonStyle(.bordered)
+                .buttonStyle(GraphPushButtonStyle())
 
                 Button {
                     clearKeystrokeShortcut(cfg)
@@ -1134,7 +1134,7 @@ struct TriggerGraphNodeView: View {
                 .frame(width: 0, height: 0)
             }
 #else
-            TextField("Key", text: Binding(
+            GraphTextField("Key", text: Binding(
                 get: { cfg.wrappedValue.keyEquivalent },
                 set: { newValue in
                     var v = cfg.wrappedValue
@@ -1155,7 +1155,7 @@ struct TriggerGraphNodeView: View {
                 }
             ))
 #if os(macOS)
-            .toggleStyle(.checkbox)
+            .toggleStyle(GraphCheckboxToggleStyle())
 #endif
 
             Toggle("Shift", isOn: Binding(
@@ -1167,7 +1167,7 @@ struct TriggerGraphNodeView: View {
                 }
             ))
 #if os(macOS)
-            .toggleStyle(.checkbox)
+            .toggleStyle(GraphCheckboxToggleStyle())
 #endif
 
             Toggle("Option", isOn: Binding(
@@ -1179,7 +1179,7 @@ struct TriggerGraphNodeView: View {
                 }
             ))
 #if os(macOS)
-            .toggleStyle(.checkbox)
+            .toggleStyle(GraphCheckboxToggleStyle())
 #endif
 
             Toggle("Control", isOn: Binding(
@@ -1191,7 +1191,7 @@ struct TriggerGraphNodeView: View {
                 }
             ))
 #if os(macOS)
-            .toggleStyle(.checkbox)
+            .toggleStyle(GraphCheckboxToggleStyle())
 #endif
 
             Toggle("Allow Key Repeat", isOn: Binding(
@@ -1202,14 +1202,14 @@ struct TriggerGraphNodeView: View {
                     cfg.wrappedValue = v
                 }
             ))
-            .toggleStyle(.switch)
+            .toggleStyle(GraphSwitchToggleStyle())
 
             HStack(spacing: 8) {
                 Text("Cooldown")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                TextField("0", value: Binding(
+                GraphTextField("0", value: Binding(
                     get: { cfg.wrappedValue.cooldownSeconds },
                     set: {
                         var v = cfg.wrappedValue
@@ -1317,12 +1317,12 @@ struct TriggerGraphNodeView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            Picker("Mode", selection: cfg.mode) {
+            GraphPicker("Mode", selection: cfg.mode) {
                 ForEach(DashboardGraph.TimeTriggerConfig.Mode.allCases, id: \.self) { mode in
                     Text(mode == .interval ? "Interval" : "At Time").tag(mode)
                 }
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
 
             if cfg.wrappedValue.mode == .interval {
                 HStack(spacing: 10) {
@@ -1330,7 +1330,7 @@ struct TriggerGraphNodeView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("Seconds", value: cfg.intervalSeconds, format: .number)
+                    GraphTextField("Seconds", value: cfg.intervalSeconds, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
 
@@ -1346,7 +1346,7 @@ struct TriggerGraphNodeView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("HH:mm", text: cfg.timeOfDay)
+                    GraphTextField("HH:mm", text: cfg.timeOfDay)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
 
@@ -1359,7 +1359,7 @@ struct TriggerGraphNodeView: View {
                     .font(.caption)
                     .opacity(0.8)
 
-                TextField("Seconds", value: cfg.cooldownSeconds, format: .number)
+                GraphTextField("Seconds", value: cfg.cooldownSeconds, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
 
@@ -1381,26 +1381,26 @@ struct TriggerGraphNodeView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            Picker("Metric", selection: cfg.metric) {
+            GraphPicker("Metric", selection: cfg.metric) {
                 Text("SPL").tag(DashboardGraph.DbThresholdMetric.spl)
                 Text("Peak").tag(DashboardGraph.DbThresholdMetric.peak)
                 Text("Raw dBFS").tag(DashboardGraph.DbThresholdMetric.rawDbFS)
                 Text("Raw Peak dBFS").tag(DashboardGraph.DbThresholdMetric.rawPeakDbFS)
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
-            Picker("Comparison", selection: cfg.comparison) {
+            GraphPicker("Comparison", selection: cfg.comparison) {
                 Text("Above").tag(DashboardGraph.DbThresholdComparison.above)
                 Text("Below").tag(DashboardGraph.DbThresholdComparison.below)
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
 
             HStack(spacing: 10) {
                 Text("Threshold")
                     .font(.caption)
                     .opacity(0.8)
 
-                TextField("dB", value: cfg.threshold, format: .number)
+                GraphTextField("dB", value: cfg.threshold, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
 
@@ -1416,7 +1416,7 @@ struct TriggerGraphNodeView: View {
                     .font(.caption)
                     .opacity(0.8)
 
-                TextField("Seconds", value: cfg.cooldownSeconds, format: .number)
+                GraphTextField("Seconds", value: cfg.cooldownSeconds, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
 
@@ -1449,7 +1449,7 @@ struct TriggerGraphNodeView: View {
             ForEach(rules) { rule in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        TextField("Phrase", text: Binding(
+                        GraphTextField("Phrase", text: Binding(
                             get: { rule.phrase },
                             set: { newValue in
                                 updateRule(rule.id) { $0.phrase = newValue }
@@ -1466,7 +1466,7 @@ struct TriggerGraphNodeView: View {
                         .buttonStyle(.plain)
                     }
 
-                    Picker("Match", selection: Binding(
+                    GraphPicker("Match", selection: Binding(
                         get: { rule.matchMode },
                         set: { newValue in
                             updateRule(rule.id) { $0.matchMode = newValue }
@@ -1475,7 +1475,7 @@ struct TriggerGraphNodeView: View {
                         Text("Contains").tag(DashboardGraph.WordTriggerRule.MatchMode.contains)
                         Text("Whole word").tag(DashboardGraph.WordTriggerRule.MatchMode.wholeWord)
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
 
                     Toggle("Final only", isOn: Binding(
                         get: { rule.finalOnly },
@@ -1489,7 +1489,7 @@ struct TriggerGraphNodeView: View {
                         Text("Cooldown")
                             .font(.caption)
                             .opacity(0.8)
-                        TextField("Seconds", value: Binding(
+                        GraphTextField("Seconds", value: Binding(
                             get: { rule.cooldownSeconds },
                             set: { newValue in
                                 updateRule(rule.id) { $0.cooldownSeconds = newValue }
@@ -1631,7 +1631,7 @@ struct TriggerGraphNodeView: View {
                     cfg.wrappedValue = v
                 }
             ))
-            .toggleStyle(.switch)
+            .toggleStyle(GraphSwitchToggleStyle())
 
             HStack(spacing: 10) {
                 Text("Listen")
@@ -1798,7 +1798,7 @@ struct TriggerGraphNodeView: View {
                     .font(.caption)
                     .opacity(0.8)
 
-                Picker("Type", selection: Binding(
+                GraphPicker("Type", selection: Binding(
                     get: { cfg.wrappedValue.messageType },
                     set: { newValue in
                         var v = cfg.wrappedValue
@@ -1810,7 +1810,7 @@ struct TriggerGraphNodeView: View {
                         Text(midiTypeLabel(t)).tag(t)
                     }
                 }
-                .pickerStyle(.menu)
+                .graphPickerStyle(.menu)
 
                 Spacer(minLength: 0)
             }
@@ -1821,7 +1821,7 @@ struct TriggerGraphNodeView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("Any", text: $midiProgramText)
+                    GraphTextField("Any", text: $midiProgramText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
                         .onAppear {
@@ -1847,7 +1847,7 @@ struct TriggerGraphNodeView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("Any", text: $midiNoteText)
+                    GraphTextField("Any", text: $midiNoteText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
                         .onAppear {
@@ -1873,7 +1873,7 @@ struct TriggerGraphNodeView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("Number", text: $midiCCNumberText)
+                    GraphTextField("Number", text: $midiCCNumberText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
                         .onAppear {
@@ -1893,7 +1893,7 @@ struct TriggerGraphNodeView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("Any", text: $midiCCValueText)
+                    GraphTextField("Any", text: $midiCCValueText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 90)
                         .onAppear {
@@ -1919,7 +1919,7 @@ struct TriggerGraphNodeView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("Hex prefix (optional)", text: $midiSysexPrefixText)
+                    GraphTextField("Hex prefix (optional)", text: $midiSysexPrefixText)
                         .textFieldStyle(.roundedBorder)
                         .onAppear {
                             if midiSysexPrefixText.isEmpty {
@@ -1944,7 +1944,7 @@ struct TriggerGraphNodeView: View {
                         .font(.caption)
                         .opacity(0.8)
 
-                    TextField("Any", text: $midiChannelText)
+                    GraphTextField("Any", text: $midiChannelText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
                         .onAppear {
@@ -2027,7 +2027,7 @@ struct TriggerGraphNodeView: View {
                             cfg.wrappedValue = v
                         }
                         .font(.caption2)
-                        .buttonStyle(.borderless)
+                        .buttonStyle(GraphBorderlessButtonStyle())
                     } else {
                         Text("Will fire on any plan update once a plan is loaded.")
                             .font(.caption2)
@@ -2036,7 +2036,7 @@ struct TriggerGraphNodeView: View {
                 }
                 .padding(.vertical, 4)
             } else {
-                Picker("", selection: Binding<String>(
+                GraphPicker("", selection: Binding<String>(
                     get: { selectedFilter },
                     set: { var v = cfg.wrappedValue; v.titleFilter = $0; cfg.wrappedValue = v }
                 )) {
@@ -2047,7 +2047,7 @@ struct TriggerGraphNodeView: View {
                     }
                 }
                 .labelsHidden()
-                .pickerStyle(.menu)
+                .graphPickerStyle(.menu)
 
                 if !selectedFilter.isEmpty {
                     Text("Fires only when the loaded plan contains \"\(selectedFilter)\".")
@@ -2064,7 +2064,7 @@ struct TriggerGraphNodeView: View {
             HStack {
                 Text("Cooldown (s)")
                 Spacer()
-                TextField("", value: Binding(
+                GraphTextField("", value: Binding(
                     get: { cfg.wrappedValue.cooldownSeconds },
                     set: { var v = cfg.wrappedValue; v.cooldownSeconds = max(0, $0); cfg.wrappedValue = v }
                 ), format: .number)
@@ -2076,9 +2076,9 @@ struct TriggerGraphNodeView: View {
 
     private var proPresenterTriggerSettings: some View {
         let cfg = proPresenterTriggerCfg
-        let profiles = ProPresenterProfilesStore.loadProfiles()
-        let proPresenterGlobal = ProPresenterGlobalConnectionSettings.loadFromAppStorage()
-        let showMissingProfilesWarning = profiles.isEmpty && !proPresenterGlobal.isValid
+        let profiles = ProPresenterProfilesStore.loadProfilesCached()
+        let showMissingProfilesWarning = profiles.isEmpty
+            && !ProPresenterGlobalConnectionSettings.hasValidHostAndPort()
 
         return VStack(alignment: .leading, spacing: 10) {
             if showMissingProfilesWarning {
@@ -2091,7 +2091,7 @@ struct TriggerGraphNodeView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                Picker("", selection: Binding<DashboardGraph.ProPresenterTriggerEvent>(
+                GraphPicker("", selection: Binding<DashboardGraph.ProPresenterTriggerEvent>(
                     get: { cfg.wrappedValue.event },
                     set: { var v = cfg.wrappedValue; v.event = $0; cfg.wrappedValue = v }
                 )) {
@@ -2109,7 +2109,7 @@ struct TriggerGraphNodeView: View {
                     .opacity(0.8)
                     .frame(width: 60, alignment: .leading)
 
-                Picker("", selection: Binding<UUID?>(
+                GraphPicker("", selection: Binding<UUID?>(
                     get: { cfg.wrappedValue.profileId },
                     set: { var v = cfg.wrappedValue; v.profileId = $0; cfg.wrappedValue = v }
                 )) {
@@ -2140,7 +2140,7 @@ struct TriggerGraphNodeView: View {
             HStack {
                 Text("Cooldown (s)")
                 Spacer()
-                TextField("", value: Binding(
+                GraphTextField("", value: Binding(
                     get: { cfg.wrappedValue.cooldownSeconds },
                     set: { var v = cfg.wrappedValue; v.cooldownSeconds = max(0, $0); cfg.wrappedValue = v }
                 ), format: .number)
@@ -2156,7 +2156,7 @@ struct TriggerGraphNodeView: View {
 
     private var appStateSettings: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Event", selection: Binding(
+            GraphPicker("Event", selection: Binding(
                 get: { appStateCfg.wrappedValue.eventKind },
                 set: { var v = appStateCfg.wrappedValue; v.eventKind = $0; appStateCfg.wrappedValue = v }
             )) {
@@ -2164,12 +2164,12 @@ struct TriggerGraphNodeView: View {
                     Text($0.displayName).tag($0)
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             HStack {
                 Text("Cooldown (s)")
                 Spacer()
-                TextField("", value: Binding(
+                GraphTextField("", value: Binding(
                     get: { appStateCfg.wrappedValue.cooldownSeconds },
                     set: { var v = appStateCfg.wrappedValue; v.cooldownSeconds = max(0, $0); appStateCfg.wrappedValue = v }
                 ), format: .number)
@@ -2246,7 +2246,7 @@ private struct ShureWirelessTriggerSettings: View {
 
             let devices = ExternalDevicesStore.shared.devices.filter { $0.kind == .shureWireless }
 
-            Picker("Device", selection: Binding<UUID?>(
+            GraphPicker("Device", selection: Binding<UUID?>(
                 get: { config.deviceID },
                 set: { newValue in
                     config.deviceID = newValue
@@ -2262,7 +2262,7 @@ private struct ShureWirelessTriggerSettings: View {
                     Text(d.name).tag(UUID?.some(d.id))
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             Spacer(minLength: 0)
         }
@@ -2274,7 +2274,7 @@ private struct ShureWirelessTriggerSettings: View {
                 .font(.caption)
                 .opacity(0.8)
 
-            Picker("Channel", selection: Binding<Int?>(
+            GraphPicker("Channel", selection: Binding<Int?>(
                 get: { config.channelIndex },
                 set: { config.channelIndex = $0 }
             )) {
@@ -2284,7 +2284,7 @@ private struct ShureWirelessTriggerSettings: View {
                     Text(label).tag(Int?.some(ch))
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             Spacer(minLength: 0)
         }
@@ -2315,12 +2315,12 @@ private struct ShureWirelessTriggerSettings: View {
                 .font(.caption)
                 .opacity(0.8)
 
-            Picker("Trigger", selection: $config.triggerKind) {
+            GraphPicker("Trigger", selection: $config.triggerKind) {
                 ForEach(DashboardGraph.WirelessTriggerConfig.TriggerKind.allCases, id: \.self) { k in
                     Text(displayName(for: k)).tag(k)
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             Spacer(minLength: 0)
         }
@@ -2338,7 +2338,7 @@ private struct ShureWirelessTriggerSettings: View {
                 .font(.caption)
                 .opacity(0.8)
 
-            TextField("Seconds", value: $config.cooldownSeconds, format: .number)
+            GraphTextField("Seconds", value: $config.cooldownSeconds, format: .number)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 110)
 
@@ -2358,7 +2358,7 @@ private struct ShureWirelessTriggerSettings: View {
 
             switch config.triggerKind {
             case .batteryBelow:
-                Stepper(value: $config.threshold, in: 0...100, step: 1) {
+                GraphStepper(value: $config.threshold, in: 0...100, step: 1) {
                     Text("\(Int(config.threshold))%")
                         .font(.caption)
                         .opacity(0.85)
@@ -2366,14 +2366,14 @@ private struct ShureWirelessTriggerSettings: View {
 
             case .rfBelow:
                 // Shure uses 0-5 bars.
-                Stepper(value: $config.threshold, in: 0...5, step: 1) {
+                GraphStepper(value: $config.threshold, in: 0...5, step: 1) {
                     Text("\(Int(config.threshold))/5")
                         .font(.caption)
                         .opacity(0.85)
                 }
 
             case .audioClip:
-                TextField("Value", value: $config.threshold, format: .number)
+                GraphTextField("Value", value: $config.threshold, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
 
@@ -2473,7 +2473,7 @@ private struct SennheiserWirelessTriggerSettings: View {
 
             let devices = ExternalDevicesStore.shared.devices.filter { $0.kind == .sennheiserWireless }
 
-            Picker("Device", selection: Binding<UUID?>(
+            GraphPicker("Device", selection: Binding<UUID?>(
                 get: { config.deviceID },
                 set: { newValue in
                     config.deviceID = newValue
@@ -2488,7 +2488,7 @@ private struct SennheiserWirelessTriggerSettings: View {
                     Text(d.name).tag(UUID?.some(d.id))
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             Spacer(minLength: 0)
         }
@@ -2500,7 +2500,7 @@ private struct SennheiserWirelessTriggerSettings: View {
                 .font(.caption)
                 .opacity(0.8)
 
-            Picker("Channel", selection: Binding<Int?>(
+            GraphPicker("Channel", selection: Binding<Int?>(
                 get: { config.channelIndex },
                 set: { config.channelIndex = $0 }
             )) {
@@ -2511,7 +2511,7 @@ private struct SennheiserWirelessTriggerSettings: View {
                     Text(name ?? "CH \(ch)").tag(Int?.some(ch))
                 }
             }
-            .pickerStyle(.menu)
+            .graphPickerStyle(.menu)
 
             Spacer(minLength: 0)
         }
@@ -2533,12 +2533,12 @@ private struct SennheiserWirelessTriggerSettings: View {
                     .font(.caption)
                     .opacity(0.8)
 
-                Picker("Trigger", selection: $config.triggerKind) {
+                GraphPicker("Trigger", selection: $config.triggerKind) {
                     ForEach(DashboardGraph.WirelessTriggerConfig.TriggerKind.allCases, id: \.self) { k in
                         Text(displayName(for: k)).tag(k)
                     }
                 }
-                .pickerStyle(.menu)
+                .graphPickerStyle(.menu)
 
                 Spacer(minLength: 0)
             }
@@ -2556,7 +2556,7 @@ private struct SennheiserWirelessTriggerSettings: View {
                     .font(.caption)
                     .opacity(0.8)
 
-                TextField("Seconds", value: $config.cooldownSeconds, format: .number)
+                GraphTextField("Seconds", value: $config.cooldownSeconds, format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
 
@@ -2577,7 +2577,7 @@ private struct SennheiserWirelessTriggerSettings: View {
 
             switch config.triggerKind {
             case .batteryBelow:
-                Stepper(value: $config.threshold, in: 0...100, step: 1) {
+                GraphStepper(value: $config.threshold, in: 0...100, step: 1) {
                     Text("\(Int(config.threshold))%")
                         .font(.caption)
                         .opacity(0.85)
@@ -2585,14 +2585,14 @@ private struct SennheiserWirelessTriggerSettings: View {
 
             case .rfBelow:
                 // Sennheiser RF is normalized 0..1.
-                Stepper(value: $config.threshold, in: 0...1, step: 0.05) {
+                GraphStepper(value: $config.threshold, in: 0...1, step: 0.05) {
                     Text(String(format: "%.2f", config.threshold))
                         .font(.caption)
                         .opacity(0.85)
                 }
 
             case .audioClip:
-                Stepper(value: $config.threshold, in: 0...1, step: 0.05) {
+                GraphStepper(value: $config.threshold, in: 0...1, step: 0.05) {
                     Text(String(format: "%.2f", config.threshold))
                         .font(.caption)
                         .opacity(0.85)

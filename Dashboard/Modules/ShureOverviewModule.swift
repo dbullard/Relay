@@ -111,6 +111,28 @@ struct ShureOverviewModuleConfig: Codable, Equatable {
     }
 }
 
+/// Tracks how long a per-channel condition has held, so alerts can wait until it's certain.
+struct ShureOverviewSustainedCondition {
+    private var since: [String: Date] = [:]
+
+    /// Records whether the condition holds now and returns whether it has held continuously
+    /// for at least `duration`.
+    mutating func isSustained(id: String, active: Bool, now: Date, for duration: TimeInterval) -> Bool {
+        guard active else {
+            since.removeValue(forKey: id)
+            return false
+        }
+        let start = since[id] ?? now
+        since[id] = start
+        return now.timeIntervalSince(start) >= duration
+    }
+
+    /// Drops entries for channels that are no longer listed.
+    mutating func prune(keeping ids: Set<String>) {
+        since = since.filter { ids.contains($0.key) }
+    }
+}
+
 enum ShureOverviewSeverity: Int {
     case healthy = 0
     case warning = 1
@@ -142,6 +164,9 @@ struct ShureOverviewChannelSnapshot: Identifiable, Equatable {
     let isSyncing: Bool
     let isStale: Bool
     let isOffline: Bool
+    /// Offline after having connected this Live session: a real problem, unlike a receiver
+    /// that never connected (likely powered down or unused).
+    var isConnectionLost: Bool = false
     let warningReasons: [String]
     let severity: ShureOverviewSeverity
     let assignedPersonName: String?
@@ -173,6 +198,12 @@ final class ShureOverviewViewModel: ObservableObject {
 
     private let hub: ShureOverviewHub
     private var token: AnyCancellable?
+    /// RF alerts wait out the transmitter-presence hold: when a mic is switched off its RF
+    /// drops at once while presence still reads "on" for up to this long, which used to flag
+    /// "RF critical" on every power-off.
+    static let rfAlertSustainSeconds: TimeInterval = ShureAxientPresenceResolver.positiveEvidenceHoldSeconds
+    private var rfCriticalCondition = ShureOverviewSustainedCondition()
+    private var rfLowCondition = ShureOverviewSustainedCondition()
     private var config: ShureOverviewModuleConfig = .default()
 
     init(hub: ShureOverviewHub? = nil) {
@@ -208,7 +239,9 @@ final class ShureOverviewViewModel: ObservableObject {
             let transmitterOff = raw.isTransmitterOff
             let lastTelemetry = raw.lastTelemetry
             let baseWarmupActive = raw.isWarmupActive
-            let stale = transmitterOff
+            let offline = !raw.isConnected
+            let connectionLost = offline && raw.wasConnectedThisSession
+            let stale = transmitterOff || (offline && !connectionLost)
                 ? false
                 : (baseWarmupActive
                     ? false
@@ -224,7 +257,6 @@ final class ShureOverviewViewModel: ObservableObject {
 
             var reasons: [String] = []
             var severity: ShureOverviewSeverity = .healthy
-            let offline = !raw.isConnected
             let warmupActive = baseWarmupActive || (!offline && !transmitterOff && !hasLiveTelemetryEvidence)
             // Presence resolution takes time (up to the full 12s Axient
             // positive-evidence hold) to positively conclude a transmitter
@@ -246,14 +278,26 @@ final class ShureOverviewViewModel: ObservableObject {
             } else if !warmupActive, transmitterConfirmedOn, !offline, let battery, battery <= config.lowBatteryWarningPercent {
                 reasons.append("Battery low")
             }
-            if !warmupActive, transmitterConfirmedOn, !offline, let rf, rf <= config.criticalRFThreshold {
+            let rfCheckApplies = !warmupActive && transmitterConfirmedOn && !offline
+            let rfIsCritical = rfCheckApplies && rf.map { $0 <= config.criticalRFThreshold } == true
+            let rfIsLow = rfCheckApplies && rf.map { $0 <= config.lowRFWarningThreshold } == true
+            let rfCriticalSustained = rfCriticalCondition.isSustained(
+                id: raw.id, active: rfIsCritical, now: now, for: Self.rfAlertSustainSeconds
+            )
+            let rfLowSustained = rfLowCondition.isSustained(
+                id: raw.id, active: rfIsLow, now: now, for: Self.rfAlertSustainSeconds
+            )
+            if rfCriticalSustained {
                 reasons.append("RF critical")
-            } else if !warmupActive, transmitterConfirmedOn, !offline, let rf, rf <= config.lowRFWarningThreshold {
+            } else if rfLowSustained {
                 reasons.append("RF low")
             }
 
-            if offline {
+            if connectionLost {
                 severity = .critical
+            } else if offline {
+                // Never connected this session: shown as Offline, not an alert.
+                severity = .healthy
             } else if transmitterOff {
                 severity = .healthy
             } else if reasons.contains(where: { $0 == "Battery critical" || $0 == "RF critical" }) {
@@ -305,12 +349,17 @@ final class ShureOverviewViewModel: ObservableObject {
                     isSyncing: warmupActive && !offline && !transmitterOff,
                     isStale: stale,
                     isOffline: offline,
+                    isConnectionLost: connectionLost,
                     warningReasons: reasons,
                     severity: severity,
                     assignedPersonName: assignedPersonName
                 )
             )
         }
+
+        let listedIDs = Set(rawChannels.map(\.id))
+        rfCriticalCondition.prune(keeping: listedIDs)
+        rfLowCondition.prune(keeping: listedIDs)
 
         let sorted = sort(channels: built, order: config.sortOrder)
         channels = sorted
@@ -322,7 +371,7 @@ final class ShureOverviewViewModel: ObservableObject {
         onlineCount = sorted.filter { !$0.isOffline }.count
         warningCount = sorted.filter { $0.severity == .warning }.count
         criticalCount = sorted.filter { $0.severity == .critical }.count
-        staleCount = sorted.filter { ($0.isOffline || $0.isStale) && $0.transmitterState != .off }.count
+        staleCount = sorted.filter { ($0.isConnectionLost || $0.isStale) && $0.transmitterState != .off }.count
         lastUpdated = hub.lastUpdated
     }
 
@@ -335,7 +384,7 @@ final class ShureOverviewViewModel: ObservableObject {
     }
 
     private func severitySortRank(for channel: ShureOverviewChannelSnapshot) -> Int {
-        if channel.transmitterState == .off {
+        if channel.transmitterState == .off || (channel.isOffline && !channel.isConnectionLost) {
             return 4
         }
         if channel.severity == .critical {
@@ -511,7 +560,7 @@ struct ShureOverviewModuleView: View {
         .allowsHitTesting(effectiveLiveMode)
         .onAppear {
             selectedTab = resolveDefaultTab()
-            hub.registerInstance(instanceID)
+            hub.registerInstance(instanceID, deviceScope: hubDeviceScope(for: config))
             viewModel.updateConfig(config)
             hub.setInstanceLiveMode(instanceID, enabled: effectiveLiveMode)
             hub.setInstanceAudioMode(instanceID, mode: config.audioActivityMode)
@@ -522,6 +571,7 @@ struct ShureOverviewModuleView: View {
         .onChange(of: config, initial: false) { _, newValue in
             viewModel.updateConfig(newValue)
             hub.setInstanceAudioMode(instanceID, mode: newValue.audioActivityMode)
+            hub.setInstanceDeviceScope(instanceID, deviceScope: hubDeviceScope(for: newValue))
         }
         .onChange(of: isLiveMode, initial: true) { _, newValue in
             hub.setInstanceLiveMode(instanceID, enabled: newValue || liveModeEnabled)
@@ -529,6 +579,11 @@ struct ShureOverviewModuleView: View {
         .onChange(of: liveModeEnabled, initial: false) { _, newValue in
             hub.setInstanceLiveMode(instanceID, enabled: newValue || isLiveMode)
         }
+    }
+
+    /// Receivers this tile shows, for the hub's connections; nil means every Shure receiver.
+    private func hubDeviceScope(for config: ShureOverviewModuleConfig) -> Set<UUID>? {
+        config.deviceScope == .selectedDevices ? config.selectedDeviceIDs : nil
     }
 
     private var selectedRows: [ShureOverviewChannelSnapshot] {
@@ -770,8 +825,8 @@ struct ShureOverviewModuleView: View {
         let label: String
         let color: Color
         let useSolidFill: Bool
-        if row.isOffline, row.isReconnecting { label = "Reconnecting"; color = .orange }
-        else if row.isOffline { label = "Offline"; color = .red }
+        if row.isOffline, row.isReconnecting, row.isConnectionLost { label = "Reconnecting"; color = .orange }
+        else if row.isOffline { label = "Offline"; color = row.isConnectionLost ? .red : secondaryTextColor }
         else if row.transmitterState == .off { label = "Off"; color = secondaryTextColor }
         else if row.isSyncing { label = "Syncing"; color = .blue }
         else if row.isStale { label = "Stale"; color = .orange }
@@ -876,45 +931,22 @@ struct ShureOverviewModuleView: View {
             .lineLimit(1)
     }
 
-    private static let audioMeterSegmentCount = ShureOverviewAudioBucket.segmentCount
 
+    /// The row's audio indicator. It observes the channel's live meter in its own view, so
+    /// audio moves at display rate without rebuilding the row list.
     @ViewBuilder
     private func audioMeter(for row: ShureOverviewChannelSnapshot, compact: Bool) -> some View {
-        switch ShureOverviewAudioIndicator.indicator(
-            mode: config.audioActivityMode,
-            audioBucket: row.transmitterState == .off ? 0 : row.audioBucket,
-            effectiveLiveMode: effectiveLiveMode
-        ) {
-        case .hidden:
-            EmptyView()
-        case .signalLight(let isLive):
-            Circle()
-                .fill(isLive ? Color.green.opacity(0.85) : primaryTextColor.opacity(0.15))
-                .frame(width: compact ? 8 : 7, height: compact ? 8 : 7)
-        case .meter(let filledSegments):
-            // Last segment is a true clip/overage alert, not just "the
-            // meter happens to be fully pegged": it's driven by the
-            // receiver's own AUDIO_LED_BITMAP bit 7 ("LED 8 - Red" per
-            // Shure's Axient Digital reference), the same way the RF
-            // meter's dedicated overload segment is driven by
-            // RSSI_LED_BITMAP bit 5, not by rfBars alone. Only lights up
-            // when that real bit says so -- not derived from our own
-            // level/bar-count math, which can reach 8/8 at a different
-            // threshold than the receiver's own clip detection.
-            let audioOverload = row.transmitterState == .off ? false : row.audioOverload
-            HStack(spacing: 2) {
-                ForEach(0..<Self.audioMeterSegmentCount, id: \.self) { index in
-                    let isOverageSegment = index == Self.audioMeterSegmentCount - 1
-                    let isLit = isOverageSegment ? audioOverload : (index < filledSegments)
-                    let fillColor: Color = {
-                        guard isLit else { return primaryTextColor.opacity(0.08) }
-                        return isOverageSegment ? Color.red.opacity(0.85) : Color.green.opacity(0.55)
-                    }()
-                    Capsule()
-                        .fill(fillColor)
-                        .frame(height: compact ? 7 : 6)
-                }
-            }
+        if config.audioActivityMode != .off,
+           let meter = hub.meter(deviceID: row.deviceID, channelIndex: row.channelIndex) {
+            ShureOverviewLiveAudioIndicator(
+                meter: meter,
+                mode: config.audioActivityMode,
+                kind: row.kind,
+                isTransmitterOff: row.transmitterState == .off,
+                effectiveLiveMode: effectiveLiveMode,
+                compact: compact,
+                primaryTextColor: primaryTextColor
+            )
         }
     }
 
@@ -989,7 +1021,7 @@ struct ShureOverviewModuleView: View {
 
     private func alertTint(for row: ShureOverviewChannelSnapshot) -> Color? {
         if row.isSyncing || row.transmitterState == .off || row.isOffline {
-            return row.isOffline ? .red : nil
+            return row.isConnectionLost ? .red : nil
         } else if row.warningReasons.contains("Battery critical") || row.warningReasons.contains("RF critical") {
             return .red
         } else if row.isStale {
@@ -1068,6 +1100,45 @@ enum ShureOverviewAudioIndicator: Equatable {
             return .signalLight(isLive: effectiveLiveMode && audioBucket > 0)
         case .meter:
             return .meter(filledSegments: effectiveLiveMode ? audioBucket : 0)
+        }
+    }
+}
+
+private struct ShureOverviewLiveAudioIndicator: View {
+    let meter: ShureChannelMeter
+    let mode: ShureOverviewAudioActivityMode
+    let kind: ShureOverviewChannelKind
+    let isTransmitterOff: Bool
+    let effectiveLiveMode: Bool
+    let compact: Bool
+    let primaryTextColor: Color
+
+    private static let segmentCount = ShureOverviewAudioBucket.segmentCount
+
+    var body: some View {
+        let bucket = isTransmitterOff
+            ? 0
+            : ShureOverviewAudioBucket.bucket(level: meter.level, isMuted: meter.isMuted, kind: kind)
+        switch ShureOverviewAudioIndicator.indicator(mode: mode, audioBucket: bucket, effectiveLiveMode: effectiveLiveMode) {
+        case .hidden:
+            EmptyView()
+        case .signalLight(let isLive):
+            Circle()
+                .fill(isLive ? Color.green.opacity(0.85) : primaryTextColor.opacity(0.15))
+                .frame(width: compact ? 8 : 7, height: compact ? 8 : 7)
+        case .meter(let filledSegments):
+            // The last segment is the receiver's own clip alert (AUDIO_LED_BITMAP bit 7), not
+            // "fully pegged" by our level math. Muted mirrors the bucket's muted handling.
+            let isOverloaded = !isTransmitterOff && !meter.isMuted && meter.isOverloaded
+            HStack(spacing: 2) {
+                ForEach(0..<Self.segmentCount, id: \.self) { index in
+                    let isOverageSegment = index == Self.segmentCount - 1
+                    let isLit = isOverageSegment ? isOverloaded : (index < filledSegments)
+                    Capsule()
+                        .fill(isLit ? (isOverageSegment ? Color.red.opacity(0.85) : Color.green.opacity(0.55)) : primaryTextColor.opacity(0.08))
+                        .frame(height: compact ? 7 : 6)
+                }
+            }
         }
     }
 }

@@ -443,6 +443,12 @@ extension Notification.Name {
 }
 
 extension Notification.Name {
+    /// Posted just before flipping to Automation so the hidden graph builds itself before the
+    /// flip animation starts, instead of stalling it partway through.
+    static let relayPrewarmAutomationView = Notification.Name("Relay.PrewarmAutomationView")
+}
+
+extension Notification.Name {
     static let prodLinkToggleVisibilityRequested = Notification.Name("Relay.ToggleVisibilityRequested")
 }
 

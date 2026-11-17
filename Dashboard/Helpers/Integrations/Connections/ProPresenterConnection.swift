@@ -34,6 +34,19 @@ struct ProPresenterGlobalConnectionSettings: Equatable {
     }
 
     var isValid: Bool {
+        Self.isValid(host: host, port: port)
+    }
+
+    /// Same check as `isValid`, but reads only host/port from UserDefaults and never
+    /// touches the Keychain. Use this from SwiftUI view bodies: `loadFromAppStorage()`
+    /// does an uncached Keychain read (via `ProPresenterKeychainStore`) on every call.
+    static func hasValidHostAndPort(from defaults: UserDefaults = .standard) -> Bool {
+        let host = defaults.string(forKey: "propresenter_host") ?? ""
+        let port = defaults.object(forKey: "propresenter_port") as? Int ?? 1025
+        return isValid(host: host, port: port)
+    }
+
+    private static func isValid(host: String, port: Int) -> Bool {
         !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && port > 0 && port < 65536
     }
 }
@@ -99,8 +112,31 @@ enum ProPresenterProfilesStore {
         return (try? JSONDecoder().decode([ProPresenterConnectionProfile].self, from: data)) ?? []
     }
 
+    private static let cacheLock = NSLock()
+    private static var cachedProfilesData: Data?
+    private static var cachedProfiles: [ProPresenterConnectionProfile] = []
+
+    /// `loadProfiles()` for hot paths such as SwiftUI view bodies. Only re-decodes the
+    /// JSON when the stored bytes change, so repeated renders cost a Data comparison.
+    static func loadProfilesCached(from defaults: UserDefaults = .standard) -> [ProPresenterConnectionProfile] {
+        let data = defaults.data(forKey: profilesKey)
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if data == cachedProfilesData { return cachedProfiles }
+        let decoded: [ProPresenterConnectionProfile]
+        if let data, !data.isEmpty {
+            decoded = (try? JSONDecoder().decode([ProPresenterConnectionProfile].self, from: data)) ?? []
+        } else {
+            decoded = []
+        }
+        cachedProfilesData = data
+        cachedProfiles = decoded
+        return decoded
+    }
+
+    /// Uses the decode cache: each ProPresenter poll looks a profile up several times.
     static func loadProfile(id: UUID, from defaults: UserDefaults = .standard) -> ProPresenterConnectionProfile? {
-        loadProfiles(from: defaults).first(where: { $0.id == id })
+        loadProfilesCached(from: defaults).first(where: { $0.id == id })
     }
 
     static func activeProfileID(from defaults: UserDefaults = .standard) -> UUID? {

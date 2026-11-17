@@ -57,8 +57,12 @@ final class SystemUsageMonitor: ObservableObject {
             if cpuSamples.count > maxSamples {
                 cpuSamples.removeFirst(cpuSamples.count - maxSamples)
             }
-            cpuPercent = average(cpuSamples)
-            cpuPeakPercent = cpuSamples.max() ?? cpuPercent
+            // Publish only visible changes (the overlay shows whole percents). Each publish
+            // schedules a SwiftUI transaction, so skipping no-op ones avoids a wakeup every 0.5 s.
+            let avg = average(cpuSamples)
+            if avg.rounded() != cpuPercent.rounded() { cpuPercent = avg }
+            let peak = cpuSamples.max() ?? avg
+            if peak.rounded() != cpuPeakPercent.rounded() { cpuPeakPercent = peak }
         }
 
         if let mem = readAppMemoryPercent() {
@@ -66,7 +70,8 @@ final class SystemUsageMonitor: ObservableObject {
             if memorySamples.count > maxSamples {
                 memorySamples.removeFirst(memorySamples.count - maxSamples)
             }
-            memoryPercent = average(memorySamples)
+            let avg = average(memorySamples)
+            if avg.rounded() != memoryPercent.rounded() { memoryPercent = avg }
         }
 
         let oscManager = OSCManager.shared

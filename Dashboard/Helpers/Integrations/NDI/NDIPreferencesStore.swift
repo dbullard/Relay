@@ -24,10 +24,10 @@ enum NDIPreferencesStore {
     static func save(_ preferences: NDIGlobalPreferences, defaults: UserDefaults = .standard) {
         if let preferredInterfaceID = preferences.preferredInterfaceID,
            !preferredInterfaceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            defaults.set(preferredInterfaceID, forKey: preferredInterfaceIDKey)
+            defaults.setIfChanged(preferredInterfaceID, forKey: preferredInterfaceIDKey)
         } else {
-            defaults.removeObject(forKey: preferredInterfaceIDKey)
+            defaults.removeIfPresent(forKey: preferredInterfaceIDKey)
         }
-        defaults.set(preferences.allowAutoFallback, forKey: allowAutoFallbackKey)
+        defaults.setIfChanged(preferences.allowAutoFallback, forKey: allowAutoFallbackKey)
     }
 }

@@ -53,6 +53,10 @@ final class TranscriptionHelperCallbackRouter: NSObject, TranscriptionHelperCall
         }
     }
 
+    func session(_ sessionID: String, didLog message: String) {
+        print("[Transcription Helper][\(sessionID.prefix(8))] \(message)")
+    }
+
     private func dispatchToAdapter(sessionID: String, action: @escaping (XPCSpeechTranscriberAdapter) -> Void) {
         let adapter: XPCSpeechTranscriberAdapter?
         lock.lock()

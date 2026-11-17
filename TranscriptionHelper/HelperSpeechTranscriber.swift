@@ -110,12 +110,19 @@ final class HelperSpeechTranscriber {
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    /// The request whose results are still wanted. Guarded by `currentRequestLock` (not
+    /// `queue`) so recognizer callbacks can check it without blocking on `queue`.
+    private let currentRequestLock = NSLock()
+    private var currentRequest: SFSpeechAudioBufferRecognitionRequest?
     private var appendedBufferCount = 0
     private var partialResultCount = 0
 
     var onPartial: ((String, Double?) -> Void)?
     var onFinal: ((String, Double?) -> Void)?
     var onError: ((TranscriptionFailure) -> Void)?
+    /// Receives every diagnostic line. `print` from an XPC service goes nowhere, so the
+    /// service forwards these to the app (and to the unified log).
+    var onLog: ((String) -> Void)?
 
     init(config: Config) {
         self.config = config
@@ -154,6 +161,7 @@ final class HelperSpeechTranscriber {
         // teardown below, so a scheduled result can't be delivered for a session
         // the caller was just told had stopped.
         throttler.cancel()
+        setCurrentRequest(nil)
         queue.async { [weak self] in
             self?.log("stop appendedBuffers=\(self?.appendedBufferCount ?? 0)")
             self?.request?.endAudio()
@@ -182,6 +190,7 @@ final class HelperSpeechTranscriber {
             request.requiresOnDeviceRecognition = true
         }
         self.request = request
+        setCurrentRequest(request)
         self.partialResultCount = 0
         log("request configured requiresOnDevice=\(request.requiresOnDeviceRecognition)")
 
@@ -194,21 +203,18 @@ final class HelperSpeechTranscriber {
                     message: "Speech error (\(nsError.domain) \(nsError.code)): \(nsError.localizedDescription)"
                 )
                 self.log("task error domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
+                // Cancelling a task in stop() or during a restart reports an error for it;
+                // only the current task's errors are real.
+                guard self.isCurrent(request) else { return }
                 if self.shouldRestart(for: error) {
                     self.log("task restarting after recoverable error")
-                    self.queue.async { [weak self] in
-                        self?.request?.endAudio()
-                        self?.task?.cancel()
-                        self?.task = nil
-                        self?.request = nil
-                        self?.startRecognition()
-                    }
+                    self.restartRecognition(after: request)
                     return
                 }
                 self.onError?(wrapped)
                 return
             }
-            guard let result else { return }
+            guard let result, self.isCurrent(request) else { return }
             let text = result.bestTranscription.formattedString
             let confidence = result.bestTranscription.segments.last.map { Double($0.confidence) }
             if result.isFinal {
@@ -223,6 +229,10 @@ final class HelperSpeechTranscriber {
                 self.throttler.publish(isFinal: true, targetHz: self.config.publishHz) { [weak self] in
                     self?.onFinal?(text, confidence)
                 }
+                // A final result ends the task: audio appended afterwards is ignored. Start a
+                // fresh task right away instead of waiting for the controller's stall watchdog,
+                // which dropped several seconds of speech after every final.
+                self.restartRecognition(after: request)
             } else {
                 self.throttler.publish(isFinal: false, targetHz: self.config.publishHz) { [weak self] in
                     self?.onPartial?(text, confidence)
@@ -233,6 +243,35 @@ final class HelperSpeechTranscriber {
             log("task created state=\(describe(task.state))")
         } else {
             log("task creation returned nil")
+        }
+    }
+
+    /// Whether `request` still belongs to the running session (not stopped or replaced).
+    private func isCurrent(_ request: SFSpeechAudioBufferRecognitionRequest) -> Bool {
+        currentRequestLock.lock()
+        defer { currentRequestLock.unlock() }
+        return currentRequest === request
+    }
+
+    private func setCurrentRequest(_ request: SFSpeechAudioBufferRecognitionRequest?) {
+        currentRequestLock.lock()
+        currentRequest = request
+        currentRequestLock.unlock()
+    }
+
+    /// Replaces the task that owned `request` with a fresh one, unless the session was stopped
+    /// or the task was already replaced.
+    private func restartRecognition(after request: SFSpeechAudioBufferRecognitionRequest) {
+        queue.async { [weak self] in
+            guard let self, self.isCurrent(request), self.recognizer != nil else { return }
+            self.log("restarting recognition task")
+            // Retire the old request first so its cancellation error is ignored.
+            self.setCurrentRequest(nil)
+            self.request?.endAudio()
+            self.task?.cancel()
+            self.task = nil
+            self.request = nil
+            self.startRecognition()
         }
     }
 
@@ -251,7 +290,7 @@ final class HelperSpeechTranscriber {
     }
 
     private func log(_ message: String) {
-        print("[Helper Speech] \(message)")
+        onLog?(message)
     }
 
     private func describe(_ status: SFSpeechRecognizerAuthorizationStatus) -> String {
@@ -282,6 +321,10 @@ final class HelperSpeechTranscriberAdapter {
     var onPartial: ((String, Double?) -> Void)?
     var onFinal: ((String, Double?) -> Void)?
     var onError: ((TranscriptionFailure) -> Void)?
+    var onLog: ((String) -> Void)? {
+        get { transcriber.onLog }
+        set { transcriber.onLog = newValue }
+    }
 
     init(config: HelperSpeechTranscriber.Config) {
         transcriber = HelperSpeechTranscriber(config: config)

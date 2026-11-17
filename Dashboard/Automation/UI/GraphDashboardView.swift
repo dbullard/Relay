@@ -53,13 +53,22 @@ var onGraphChanged: (() -> Void)? = nil
 #else
 private let isWorkEnabled: Bool = true
 #endif
+/// True when the graph was built ahead of a flip to Automation (`.relayPrewarmAutomationView`),
+/// so the ~300 ms build happens before the flip animation instead of during it. Cleared when
+/// the graph is hidden again, which unmounts it: a hidden mounted graph keeps re-rendering on
+/// every document change.
+@State private var hasMountedGraphContent: Bool = false
 @Environment(\.undoManager) private var undoManager
     
 // Drag state
 @State private var dragStartByTileId: [UUID: CGPoint] = [:]
 @State private var dragGrabOffsetByTileId: [UUID: CGPoint] = [:]
-// During drag, keep positions locally to avoid hammering tab.graph (which triggers large SwiftUI invalidations).
-@State private var transientNodePositions: [UUID: CGPoint] = [:]
+/// Start positions of the other selected nodes moving with the dragged one.
+@State private var dragCompanionStartsByTileId: [UUID: CGPoint] = [:]
+// Pan/zoom, live drag positions, the in-progress link line and the marquee live in this
+// store instead of @State so per-event updates don't re-run this entire body.
+// See GraphInteractionStore.
+@State private var interaction = GraphInteractionStore()
 
 /// Cache the last non-empty module groups so brief/transitionary empty snapshots
 /// (e.g. during a flip) don't visually drop nodes.
@@ -77,8 +86,14 @@ private let isWorkEnabled: Bool = true
 @FocusState private var addNodeSearchIsFocused: Bool
 // Link-drag state (source -> destination)
 @State private var linkingFromNodeId: UUID? = nil
-@State private var linkingFromPoint: CGPoint? = nil
-@State private var linkingCurrentPoint: CGPoint? = nil
+private var linkingFromPoint: CGPoint? {
+    get { interaction.untrackedLinkingFromPoint }
+    nonmutating set { interaction.setLinkingFromPoint(newValue) }
+}
+private var linkingCurrentPoint: CGPoint? {
+    get { interaction.untrackedLinkingCurrentPoint }
+    nonmutating set { interaction.setLinkingCurrentPoint(newValue) }
+}
 @State private var hoverReceiverNodeId: UUID? = nil
 @State private var hoverInvalidReceiverNodeId: UUID? = nil
 @State private var currentRepeaterOutputIndex: Int = 0
@@ -91,9 +106,18 @@ private let isWorkEnabled: Bool = true
 
 // MARK: - Marquee selection (Graph)
 
-@State private var isMarqueeSelecting: Bool = false
-@State private var marqueeStart: CGPoint? = nil
-@State private var marqueeCurrent: CGPoint? = nil
+private var isMarqueeSelecting: Bool {
+    get { interaction.untrackedIsMarqueeSelecting }
+    nonmutating set { interaction.setMarqueeSelecting(newValue) }
+}
+private var marqueeStart: CGPoint? {
+    get { interaction.untrackedMarqueeStart }
+    nonmutating set { interaction.setMarqueeStart(newValue) }
+}
+private var marqueeCurrent: CGPoint? {
+    get { interaction.untrackedMarqueeCurrent }
+    nonmutating set { interaction.setMarqueeCurrent(newValue) }
+}
 @State private var isNodeDragging: Bool = false
 @State private var selectedGraphNodeIds: Set<UUID> = []
 @State private var suppressNextBackgroundTap: Bool = false
@@ -109,7 +133,6 @@ private let isWorkEnabled: Bool = true
 @State private var smartLightRunningNodeIds: Set<UUID> = []
 @State private var consoleActionErrors: [UUID: String] = [:]
 @State private var consoleActionRunningNodeIds: Set<UUID> = []
-@State private var lastTriggerFireAtByNodeId: [UUID: TimeInterval] = [:]
 @State private var conditionComparisonTextDraftByNodeId: [UUID: String] = [:]
 @State private var editingConditionComparisonNodeIds: Set<UUID> = []
 @State private var showTriggerSendMigrationAlert: Bool = false
@@ -124,12 +147,6 @@ private let isWorkEnabled: Bool = true
 /// allocation on every buildGroups call. Same pattern as stableUUIDByKey.
 @State private var rundownItemCache: [String: VistaPCORundownItem?] = [:]
 
-private struct GraphNodeSizePreferenceKey: PreferenceKey {
-    static var defaultValue: [UUID: CGSize] = [:]
-    static func reduce(value: inout [UUID: CGSize], nextValue: () -> [UUID: CGSize]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
 
 private struct AddNodeHelpContent: Equatable {
     let title: String
@@ -138,7 +155,10 @@ private struct AddNodeHelpContent: Equatable {
 
 #if os(macOS)
 private struct GraphDeleteKeyMonitor: NSViewRepresentable {
-    let isEnabled: Bool
+    /// Checked when the key is pressed, not when the view renders: a value captured at
+    /// render time could still be `true` after the user clicked into a node's text field,
+    /// so Backspace there deleted the selected node instead of a character.
+    let isEnabled: () -> Bool
     let onDelete: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -162,11 +182,11 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
     }
 
     final class Coordinator {
-        var isEnabled: Bool
+        var isEnabled: () -> Bool
         var onDelete: () -> Void
         private var localMonitor: Any?
 
-        init(isEnabled: Bool, onDelete: @escaping () -> Void) {
+        init(isEnabled: @escaping () -> Bool, onDelete: @escaping () -> Void) {
             self.isEnabled = isEnabled
             self.onDelete = onDelete
         }
@@ -174,7 +194,7 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
         func installMonitor() {
             guard localMonitor == nil else { return }
             localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.isEnabled else { return event }
+                guard let self, self.isEnabled() else { return event }
                 if event.keyCode == 51 || event.keyCode == 117 {
                     self.onDelete()
                     return nil
@@ -216,7 +236,54 @@ private func dismissGraphTextInput() {
     }
 }
 
+/// Whether the click being handled landed in a text input (an NSTextView-backed field or
+/// a SwiftUI TextField's field editor). Uses the live mouse position rather than
+/// `NSApp.currentEvent`, which isn't reliably the mouse event when a SwiftUI tap gesture
+/// ends.
+private func currentClickLandedInTextInput() -> Bool {
+    guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return false }
+    let mouseInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+
+    // AppKit makes the clicked field first responder on mouse-down, before the tap
+    // gesture ends on mouse-up. If that text input is under the mouse, the click was in it.
+    if let responder = window.firstResponder as? NSView, responder is NSText || responder is NSTextField {
+        var candidates: [NSView] = [responder]
+        if let scrollView = responder.enclosingScrollView { candidates.append(scrollView) }
+        if let fieldEditor = responder as? NSTextView, let owner = fieldEditor.delegate as? NSView {
+            candidates.append(owner)
+        }
+        for view in candidates {
+            let frameInWindow = view.convert(view.bounds, to: nil).insetBy(dx: -4, dy: -4)
+            if frameInWindow.contains(mouseInWindow) { return true }
+        }
+    }
+
+    // Fallback: hit-test the window. hitTest(_:) takes a point in the receiver's
+    // superview's coordinates.
+    guard let contentView = window.contentView else { return false }
+    let point = contentView.superview?.convert(mouseInWindow, from: nil) ?? mouseInWindow
+    var view = contentView.hitTest(point)
+    while let current = view {
+        if current is NSText || current is NSTextField { return true }
+        if let scrollView = current as? NSScrollView, scrollView.documentView is NSText { return true }
+        if let clipView = current as? NSClipView, clipView.documentView is NSText { return true }
+        view = current.superview
+    }
+    return false
+}
+
 private func focusGraphSurface() {
+    // Node and background tap gestures call this. A click into a node's text field also
+    // fires the node's tap gesture, which used to resign the field right after AppKit
+    // focused it, so typing in nodes was impossible.
+    if currentClickLandedInTextInput() {
+        return
+    }
+    // The click started editing a SwiftUI-drawn field (GraphTextField and friends), which
+    // has no AppKit text view under the mouse yet.
+    if GraphTextEditingClaim.isRecent {
+        return
+    }
     dismissGraphTextInput()
     graphIsFocused = true
     DispatchQueue.main.async {
@@ -227,9 +294,76 @@ private func focusGraphSurface() {
 
 @ViewBuilder
 private func nodeSizeReporter(_ nodeId: UUID) -> some View {
-    GeometryReader { proxy in
-        Color.clear.preference(key: GraphNodeSizePreferenceKey.self, value: [nodeId: proxy.size])
+    // onGeometryChange fires only when the node's size changes. The GeometryReader +
+    // preference it replaces re-ran for every node on every zoom step (the node's
+    // geometry includes the viewport transform), which re-reduced preferences up the
+    // whole view tree each frame.
+    GraphNodeSizeReporter(store: interaction) { newSize in
+        reportNodeSize(newSize, for: nodeId)
     }
+}
+
+/// Merges measured node sizes and resolves collisions when a node materially grows.
+/// Ignores sub-point jitter.
+private func applyReportedNodeSizes(_ newSizes: [UUID: CGSize]) {
+    let startedAt = CFAbsoluteTimeGetCurrent()
+    var changed: [UUID] = []
+    var collisionCandidates: [UUID] = []
+
+    for (id, sz) in newSizes {
+        let prev = measuredNodeSizes[id]
+        guard !graphCGSizeApproximatelyEqual(prev, sz) else { continue }
+        changed.append(id)
+        if graphNodeSizeGrowthRequiresCollisionResolution(previous: prev, current: sz) {
+            collisionCandidates.append(id)
+        }
+        measuredNodeSizes[id] = sz
+    }
+
+    guard !changed.isEmpty else { return }
+
+    var moved = 0
+    // Only resolve collisions when a previously measured node materially grows.
+    for id in collisionCandidates {
+        let current = nodePosition(for: id)
+        let adjusted = resolveCollisionsForMovedNode(id, startingAt: current)
+        if !graphCGPointApproximatelyEqual(adjusted, current) {
+            // Apply immediately so nodes can't overlap when their content grows.
+            interaction.setDragPosition(adjusted, for: id)
+            moved += 1
+
+            // Persist into the graph layout model using TileGraphLayout.position.
+            if var layout = tab.graph?.tileLayouts[id] {
+                layout.position = CGPointCodable(adjusted)
+                tab.graph?.tileLayouts[id] = layout
+            } else {
+                tab.graph?.tileLayouts[id] = TileGraphLayout(position: adjusted)
+            }
+        }
+    }
+
+    let duration = CFAbsoluteTimeGetCurrent() - startedAt
+    let details = "reported=\(newSizes.count) changed=\(changed.count) candidates=\(collisionCandidates.count) moved=\(moved)"
+    recordGraphPerfMetric(
+        "graph.nodeSizePreference.apply",
+        duration: duration,
+        details: details,
+        slowThreshold: 0.008
+    )
+    incrementGraphCounter("graph.nodeSizePreference.changedNodes", by: changed.count)
+}
+
+private func reportNodeSize(_ size: CGSize, for nodeId: UUID) {
+    interaction.pendingNodeSizes[nodeId] = size
+    // Coalesce bursts (e.g. many nodes measured on first layout) into one apply.
+    nodeSizePreferenceWorkItem?.cancel()
+    let workItem = DispatchWorkItem {
+        let newSizes = interaction.pendingNodeSizes
+        interaction.pendingNodeSizes.removeAll()
+        applyReportedNodeSizes(newSizes)
+    }
+    nodeSizePreferenceWorkItem = workItem
+    DispatchQueue.main.async(execute: workItem)
 }
 
 // MARK: - Graph selection + delete
@@ -462,8 +596,7 @@ private func deleteGraphNode(nodeId: UUID, key: String) {
     conditionMismatchErrors.removeValue(forKey: nodeId)
     consoleActionErrors.removeValue(forKey: nodeId)
     consoleActionRunningNodeIds.remove(nodeId)
-    lastTriggerFireAtByNodeId.removeValue(forKey: nodeId)
-    transientNodePositions.removeValue(forKey: nodeId)
+    interaction.setDragPosition(nil, for: nodeId)
     measuredNodeSizes.removeValue(forKey: nodeId)
 
     removeGraphOnlyModuleGroupNodeInstance(nodeId: nodeId)
@@ -546,7 +679,11 @@ private func postGraphSelectionCount() {
     /// Snapshot the current graph for Undo/Redo.
     /// Uses Codable round-trip to avoid reference-sharing.
     private func snapshotGraphForUndo() -> Data? {
-        guard let g = tab.graph else { return nil }
+        encodeGraphForUndo(tab.graph)
+    }
+
+    private func encodeGraphForUndo(_ graph: DashboardGraph?) -> Data? {
+        guard let g = graph else { return nil }
         let startedAt = CFAbsoluteTimeGetCurrent()
         let encoded = GraphDashboardPersistenceAdapter.encodeGraph(g)
         let duration = CFAbsoluteTimeGetCurrent() - startedAt
@@ -621,19 +758,24 @@ private func postGraphSelectionCount() {
     }
 
     private func commitGraphEdit(actionName: String = "Edit Node", _ mutation: () -> Void) {
-        let before = snapshotGraphForUndo()
+        // Compare graph values instead of JSON-encoding the whole graph before and after
+        // every edit (this runs on each keystroke in node text fields). The copy is
+        // copy-on-write, so holding it is cheap.
+        let beforeGraph = tab.graph
         mutation()
-        let after = snapshotGraphForUndo()
-        guard before != after else { return }
+        guard tab.graph != beforeGraph else { return }
         #if os(macOS)
         if isGraphTextInputActive() {
+            // Typing bursts coalesce into one undo step; only the first edit of the
+            // burst needs a "before" snapshot.
+            let before = pendingGraphEditUndoBefore == nil ? encodeGraphForUndo(beforeGraph) : nil
             schedulePendingGraphEditUndo(actionName: actionName, before: before)
         } else {
             finalizePendingGraphEditUndo()
-            registerGraphUndo(actionName: actionName, before: before)
+            registerGraphUndo(actionName: actionName, before: encodeGraphForUndo(beforeGraph))
         }
         #else
-        registerGraphUndo(actionName: actionName, before: before)
+        registerGraphUndo(actionName: actionName, before: encodeGraphForUndo(beforeGraph))
         #endif
         Task { @MainActor in
             automationRuntime.setActiveTabSnapshot(tab)
@@ -900,8 +1042,9 @@ private func handleNodeTapSelect(_ nodeId: UUID) {
     graphIsFocused = true
     #endif
     #if os(macOS)
-    let flags = NSEvent.modifierFlags
-    let isShift = flags.contains(.shift)
+    // Prefer the click event's own modifiers; the global key state can lag or miss them.
+    let isShift = NSEvent.modifierFlags.contains(.shift)
+        || (NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false)
     #else
     let isShift = false
     #endif
@@ -962,9 +1105,17 @@ private func unhideAllGraphNodes() {
     updateHiddenNodesFlag()
 }
 
-// Basic pan/zoom can come later; leave at identity for now.
-@State private var pan: CGSize = .zero
-@State private var zoom: CGFloat = 1.0
+// Viewport pan/zoom live in `interaction`. Reads are untracked so gesture math and
+// helpers never subscribe this body; writes (including inside withAnimation) update
+// only GraphViewportTransform and the zoom controls.
+private var pan: CGSize {
+    get { interaction.untrackedPan }
+    nonmutating set { interaction.pan = newValue }
+}
+private var zoom: CGFloat {
+    get { interaction.untrackedZoom }
+    nonmutating set { interaction.setZoom(newValue) }
+}
 
 // Node width constants for consistent layout and link offsets
 private let senderNodeWidth: CGFloat = 420
@@ -990,7 +1141,61 @@ private var shouldUseGraphNodePerformanceMode: Bool {
 }
 
 private var isGraphSimplifiedModeActive: Bool {
-    shouldUseGraphNodePerformanceMode
+    // Zoomed out: show summary cards (see GraphInteractionStore.isZoomedOut). This read
+    // is tracked, but the flag only changes when the zoom threshold is crossed.
+    shouldUseGraphNodePerformanceMode || interaction.isZoomedOut
+}
+
+/// While zooming back in past the compact-card threshold: the nodes allowed to show full
+/// forms so far, or nil when no reveal is in progress. Building every full form in one
+/// frame stalled ~150 ms, so they're revealed a few per frame, nearest the center first.
+@State private var detailRevealedNodeIds: Set<UUID>? = nil
+@State private var detailRevealTask: Task<Void, Never>? = nil
+private static let detailRevealBatchSize = 3
+
+private func handleZoomedOutChange(wasZoomedOut: Bool, isZoomedOut: Bool, viewportSize: CGSize) {
+    detailRevealTask?.cancel()
+    detailRevealTask = nil
+    guard wasZoomedOut, !isZoomedOut, !shouldUseGraphNodePerformanceMode else {
+        detailRevealedNodeIds = nil
+        return
+    }
+    let ordered = nodeIdsNearestViewportCenterFirst(viewportSize: viewportSize)
+    guard ordered.count > Self.detailRevealBatchSize else {
+        detailRevealedNodeIds = nil
+        return
+    }
+    detailRevealedNodeIds = Set(ordered.prefix(Self.detailRevealBatchSize))
+    detailRevealTask = Task { @MainActor in
+        var index = Self.detailRevealBatchSize
+        while index < ordered.count {
+            // One batch per frame: let the previous batch render first.
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            guard !Task.isCancelled else { return }
+            let next = ordered[index..<min(index + Self.detailRevealBatchSize, ordered.count)]
+            detailRevealedNodeIds?.formUnion(next)
+            index += Self.detailRevealBatchSize
+        }
+        try? await Task.sleep(nanoseconds: 16_000_000)
+        guard !Task.isCancelled else { return }
+        // Anything without a stored position (and any node added meanwhile) shows now.
+        detailRevealedNodeIds = nil
+        detailRevealTask = nil
+    }
+}
+
+private func nodeIdsNearestViewportCenterFirst(viewportSize: CGSize) -> [UUID] {
+    let zoom = max(0.0001, interaction.untrackedZoom)
+    let pan = interaction.untrackedPan
+    let center = CGPoint(
+        x: (viewportSize.width / 2 - pan.width) / zoom,
+        y: (viewportSize.height / 2 - pan.height) / zoom
+    )
+    let layouts = tab.graph?.tileLayouts ?? [:]
+    return layouts.keys.sorted { lhs, rhs in
+        let a = nodePosition(for: lhs), b = nodePosition(for: rhs)
+        return hypot(a.x - center.x, a.y - center.y) < hypot(b.x - center.x, b.y - center.y)
+    }
 }
 
 private var showGraphPerformanceNotice: Bool {
@@ -998,7 +1203,10 @@ private var showGraphPerformanceNotice: Bool {
 }
 
 private func shouldRenderDetailedGraphNode(_ nodeId: UUID) -> Bool {
-    guard isGraphSimplifiedModeActive else { return true }
+    if !isGraphSimplifiedModeActive {
+        guard let revealed = detailRevealedNodeIds else { return true }
+        if revealed.contains(nodeId) { return true }
+    }
     if selectedGraphNodeIds.contains(nodeId) { return true }
     if linkingFromNodeId == nodeId { return true }
     if hoverReceiverNodeId == nodeId || hoverInvalidReceiverNodeId == nodeId { return true }
@@ -1123,49 +1331,33 @@ private func graphNodeSummaryCard(
     systemImage: String,
     accent: Color,
     width: CGFloat,
-    detail: String? = nil
+    detail: String? = nil,
+    fullHeight: CGFloat? = nil
 ) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-        HStack(alignment: .center, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: GraphNodeStyleTokens.secondaryCornerRadius, style: .continuous)
-                    .fill(accent.opacity(0.18))
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(accent)
-            }
-            .frame(width: 30, height: 30)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 0)
-        }
-
-        if let detail, !detail.isEmpty {
-            Text(detail)
-                .font(.caption2)
-                .foregroundStyle(Color.white.opacity(0.72))
-                .lineLimit(2)
-        }
-    }
+    GraphNodeCompactSummary(
+        systemImage: systemImage,
+        title: title,
+        subtitle: subtitle,
+        detail: detail,
+        accent: accent,
+        minHeight: graphNodeCompactContentHeight(fullHeight: fullHeight, padding: 12)
+    )
     .padding(12)
     .frame(width: width, alignment: .leading)
+    // `accent` is the full-strength category color. The tint is a little stronger than
+    // the full node chrome so the category stays readable when the canvas is zoomed out.
     .background(
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.white.opacity(0.07))
+        ZStack {
+            RoundedRectangle(cornerRadius: GraphNodeStyleTokens.cornerRadius, style: .continuous)
+                .fill(Color.white.opacity(GraphNodeStyleTokens.baseFillOpacity))
+            RoundedRectangle(cornerRadius: GraphNodeStyleTokens.cornerRadius, style: .continuous)
+                .fill(accent.opacity(0.18))
+                .blendMode(.screen)
+        }
     )
     .overlay(
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .stroke(accent.opacity(0.22), lineWidth: 1)
+        RoundedRectangle(cornerRadius: GraphNodeStyleTokens.cornerRadius, style: .continuous)
+            .stroke(accent.opacity(0.55), lineWidth: 1.5)
     )
 }
 
@@ -2604,12 +2796,12 @@ private func peopleNameFormatSettingsPopover(
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Picker("", selection: normalizedFormat) {
+            GraphPicker("", selection: normalizedFormat) {
                 Text("First").tag("first")
                 Text("Last").tag("last")
                 Text("Position").tag("position")
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
         }
 
         VStack(alignment: .leading, spacing: 6) {
@@ -2617,11 +2809,11 @@ private func peopleNameFormatSettingsPopover(
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Picker("", selection: normalizedCasing) {
+            GraphPicker("", selection: normalizedCasing) {
                 Text("Title Case").tag("title")
                 Text("UPPERCASE").tag("upper")
             }
-            .pickerStyle(.segmented)
+            .graphPickerStyle(.segmented)
         }
     }
     .padding(14)
@@ -2733,8 +2925,7 @@ private func graphSceneView(
         geoSize: geoSize,
         isWorkEnabled: isWorkEnabled,
         showAddNodePopover: $showAddNodePopover,
-        pan: $pan,
-        zoom: $zoom,
+        interaction: interaction,
         onBackgroundDoubleTap: {
             graphIsFocused = true
             addNodeSearchText = ""
@@ -2745,7 +2936,6 @@ private func graphSceneView(
         // Keep the viewport region stable and only transform the graph content inside it.
         // If the event monitor moves with pan/zoom, wheel and magnify handling can stop
         // once the transformed layer drifts outside its original bounds.
-        dottedGridLayer(in: geoSize, zoom: zoom)
         linksLayer(in: geoSize)
         moduleGroupNodesLayer(in: geoSize, groups: groups, peopleTeamOptions: teamOptions)
         consoleNodesLayer(in: geoSize, canvasPeopleMembers: canvasPeopleMembers, currentGroups: groups)
@@ -2756,10 +2946,8 @@ private func graphSceneView(
     .coordinateSpace(.named("GraphSceneSpace"))
     .overlay(alignment: .bottom) {
         if !isLiveMode {
-            ViewportPanZoomControls(
-                pan: $pan,
-                zoom: $zoom,
-                zoomRange: 0.25...2.5,
+            GraphViewportZoomControls(
+                store: interaction,
                 viewportSize: geoSize,
                 onActualSize: {
                     centerGraphBounds(in: geoSize, zoomLevel: 1.0)
@@ -2800,14 +2988,15 @@ private func graphSceneView(
                 }
 
                 guard isMarqueeSelecting else { return }
-                graphIsFocused = true
-                DispatchQueue.main.async {
-                    graphIsFocused = true
-                }
+                // Focus was set when the marquee started; re-writing it on every mouse
+                // move invalidated the whole graph view each event.
                 marqueeCurrent = value.location
 
                 if let rect = marqueeRectInGraphSpace() {
-                    selectedGraphNodeIds = nodesIntersectingMarquee(rect)
+                    let hits = nodesIntersectingMarquee(rect)
+                    if hits != selectedGraphNodeIds {
+                        selectedGraphNodeIds = hits
+                    }
                 }
             }
                 .onEnded { _ in
@@ -2829,9 +3018,17 @@ private func graphSceneView(
                 }
         )
     .simultaneousGesture(
-        TapGesture()
-            .onEnded {
+        SpatialTapGesture(coordinateSpace: .named("GraphSceneSpace"))
+            .onEnded { value in
                 if suppressNextBackgroundTap { return }
+                // This fires for clicks on nodes too (simultaneous with the node's own tap).
+                // Clearing the selection there broke Shift-click multi-select whenever this
+                // ran after the node's tap had added to the selection.
+                let tapGraphPoint = graphPoint(fromViewPoint: value.location)
+                let tappedNode = allVisibleGraphNodeIds.contains { id in
+                    nodeRect(center: nodePosition(for: id), size: nodeHitTestSize(for: id)).contains(tapGraphPoint)
+                }
+                if tappedNode { return }
                 selectedGraphNodeIds.removeAll()
                 #if os(macOS)
                 focusGraphSurface()
@@ -2839,18 +3036,8 @@ private func graphSceneView(
             }
     )
     .overlay {
-        if let rect = marqueeRectInViewSpace(), isMarqueeSelecting {
-            Path { p in
-                p.addRect(rect)
-            }
-            .stroke(Color.accentColor.opacity(0.9), lineWidth: 1.5)
-            .background(
-                Path { p in p.addRect(rect) }
-                    .fill(Color.accentColor.opacity(0.15))
-            )
-            .allowsHitTesting(false)
+        GraphMarqueeOverlay(store: interaction)
             .zIndex(900)
-        }
     }
     .overlay { automationEmptyStateOverlay }
 
@@ -2901,62 +3088,11 @@ private func applyGraphLifecycle<Content: View>(
         ensureGraphInitialized(canvasSize: geoSize)
         pruneGraphStateForRemovedCanvasNodes(currentGroups: builtGroups)
     }
-    .onPreferenceChange(GraphNodeSizePreferenceKey.self) { newSizes in
-        // Merge size updates and resolve collisions when a node grows/shrinks.
-        // Ignore sub-point jitter and coalesce bursts to avoid layout feedback loops.
-        nodeSizePreferenceWorkItem?.cancel()
-        let workItem = DispatchWorkItem {
-            let startedAt = CFAbsoluteTimeGetCurrent()
-            var changed: [UUID] = []
-            var collisionCandidates: [UUID] = []
-
-            for (id, sz) in newSizes {
-                let prev = measuredNodeSizes[id]
-                guard !graphCGSizeApproximatelyEqual(prev, sz) else { continue }
-                changed.append(id)
-                if graphNodeSizeGrowthRequiresCollisionResolution(previous: prev, current: sz) {
-                    collisionCandidates.append(id)
-                }
-                measuredNodeSizes[id] = sz
-            }
-
-            guard !changed.isEmpty else { return }
-
-            var moved = 0
-            // Only resolve collisions when a previously measured node materially grows.
-            for id in collisionCandidates {
-                let current = nodePosition(for: id)
-                let adjusted = resolveCollisionsForMovedNode(id, startingAt: current)
-                if !graphCGPointApproximatelyEqual(adjusted, current) {
-                    // Apply immediately so nodes can't overlap when their content grows.
-                    transientNodePositions[id] = adjusted
-                    moved += 1
-
-                    // Persist into the graph layout model using TileGraphLayout.position.
-                    if var layout = tab.graph?.tileLayouts[id] {
-                        layout.position = CGPointCodable(adjusted)
-                        tab.graph?.tileLayouts[id] = layout
-                    } else {
-                        tab.graph?.tileLayouts[id] = TileGraphLayout(position: adjusted)
-                    }
-                }
-            }
-
-            let duration = CFAbsoluteTimeGetCurrent() - startedAt
-            let details = "reported=\(newSizes.count) changed=\(changed.count) candidates=\(collisionCandidates.count) moved=\(moved)"
-            recordGraphPerfMetric(
-                "graph.nodeSizePreference.apply",
-                duration: duration,
-                details: details,
-                slowThreshold: 0.008
-            )
-            incrementGraphCounter("graph.nodeSizePreference.changedNodes", by: changed.count)
-        }
-        nodeSizePreferenceWorkItem = workItem
-        DispatchQueue.main.async(execute: workItem)
-    }
     .onChange(of: tab.id, initial: false) { _, _ in
         configureGraphRuntimeBindings()
+    }
+    .onChange(of: interaction.isZoomedOut, initial: false) { wasZoomedOut, isZoomedOut in
+        handleZoomedOutChange(wasZoomedOut: wasZoomedOut, isZoomedOut: isZoomedOut, viewportSize: geoSize)
     }
     .onAppear {
         NotificationCenter.default.post(
@@ -2990,36 +3126,9 @@ private func applyGraphLifecycle<Content: View>(
         postGraphSelectionCount()
     }
 
-    let triggerContent = lifecycleContent
-    .onReceive(NotificationCenter.default.publisher(for: TriggerNodeNotifications.fired)) { note in
-        guard isWorkEnabled else { return }
-        let ui = note.userInfo ?? [:]
-        guard let triggerId = ui[TriggerNodeUserInfoKeys.triggerNodeId] as? UUID else { return }
-        guard shouldHandleTrigger(nodeId: triggerId) else { return }
-        runActionsDownstream(of: triggerId, userInfo: ui)
-    }
-    .onReceive(NotificationCenter.default.publisher(for: .triggerNodeDidFire)) { note in
-        // Back-compat: older trigger posts may carry nodeId as String.
-        guard isWorkEnabled else { return }
-        let ui = note.userInfo ?? [:]
-        if let id = ui["nodeId"] as? UUID {
-            guard shouldHandleTrigger(nodeId: id) else { return }
-            runActionsDownstream(of: id, userInfo: ui)
-            return
-        }
-        if let s = ui["nodeId"] as? String, let id = UUID(uuidString: s) {
-            guard shouldHandleTrigger(nodeId: id) else { return }
-            runActionsDownstream(of: id, userInfo: ui)
-            return
-        }
-        if let s = ui["nodeIdString"] as? String, let id = UUID(uuidString: s) {
-            guard shouldHandleTrigger(nodeId: id) else { return }
-            runActionsDownstream(of: id, userInfo: ui)
-            return
-        }
-    }
-
-    return triggerContent
+    // Trigger execution lives only in GraphAutomationRuntime (in Canvas and Automation view).
+    // This view used to run triggers too, so actions could run twice here.
+    return lifecycleContent
     .onReceive(NotificationCenter.default.publisher(for: ActionNodeNotifications.proPresenterTriggerFailed)) { note in
         guard isWorkEnabled else { return }
         let ui = note.userInfo ?? [:]
@@ -3622,11 +3731,13 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
     let isHoverReceiver = (hoverReceiverNodeId == nodeId)
     let isLinkingTarget = (linkingFromNodeId != nil)
 
-    let proPresenterProfiles = ProPresenterProfilesStore.loadProfiles()
-    let proPresenterGlobal = ProPresenterGlobalConnectionSettings.loadFromAppStorage()
-    let showProPresenterWarning = key == "action.proPresenterTrigger"
+    // Only ProPresenter nodes need these, and never the Keychain password: this runs on
+    // every graph render for every action node.
+    let isProPresenterNode = key == "action.proPresenterTrigger"
+    let proPresenterProfiles = isProPresenterNode ? ProPresenterProfilesStore.loadProfilesCached() : []
+    let showProPresenterWarning = isProPresenterNode
         && proPresenterProfiles.isEmpty
-        && !proPresenterGlobal.isValid
+        && !ProPresenterGlobalConnectionSettings.hasValidHostAndPort()
     let proPresenterError = proPresenterTriggerErrors[nodeId]
     let appControlError = key == "action.appControl" ? appControlErrors[nodeId] : nil
     let isAppControlRunning = key == "action.appControl" && appControlRunningNodeIds.contains(nodeId)
@@ -3839,7 +3950,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Picker("Device", selection: Binding<UUID?>(
+                    GraphPicker("Device", selection: Binding<UUID?>(
                         get: { cfg.wrappedValue.deviceId },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -3852,7 +3963,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(device.name).tag(Optional(device.id))
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if devices.isEmpty {
                         Text("No Shure devices with control support are configured.")
@@ -3860,7 +3971,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Picker("Command", selection: Binding(
+                    GraphPicker("Command", selection: Binding(
                         get: { cfg.wrappedValue.commandKind },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -3871,11 +3982,11 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         Text("Set Channel Name").tag(DashboardGraph.ShureSendActionConfig.CommandKind.setChannelName)
                         Text("Raw Command").tag(DashboardGraph.ShureSendActionConfig.CommandKind.rawCommand)
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
 
                     if cfg.wrappedValue.commandKind == .setChannelName {
                         if linkedSourceNames.count <= 1 {
-                            Picker("Channel", selection: Binding(
+                            GraphPicker("Channel", selection: Binding(
                                 get: { cfg.wrappedValue.channelIndex },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -3887,7 +3998,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text("CH \(idx)").tag(idx)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                         }
 
                         if let linkedSourceName {
@@ -3927,7 +4038,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                                         .font(.caption)
                                                         .lineLimit(1)
                                                     Spacer()
-                                                    Picker("", selection: shureChannelAssignmentBinding(forNodeId: nodeId, sourceName: sourceName)) {
+                                                    GraphPicker("", selection: shureChannelAssignmentBinding(forNodeId: nodeId, sourceName: sourceName)) {
                                                         Text("—").tag(Int?.none)
                                                         ForEach(1...channelCount, id: \.self) { idx in
                                                             Text("CH \(idx)").tag(Optional(idx))
@@ -4011,7 +4122,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 }
                             }
 
-                            Picker("Channel name", selection: Binding(
+                            GraphPicker("Channel name", selection: Binding(
                                 get: { cfg.wrappedValue.channelName },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4034,9 +4145,9 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text(formatted).tag(person.title)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                             } else {
-                                TextField("Channel name (max 8 chars)", text: Binding(
+                                GraphTextField("Channel name (max 8 chars)", text: Binding(
                                     get: { cfg.wrappedValue.channelName },
                                     set: { newValue in
                                         var v = cfg.wrappedValue
@@ -4085,7 +4196,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Picker("Device", selection: Binding<UUID?>(
+                    GraphPicker("Device", selection: Binding<UUID?>(
                         get: { cfg.wrappedValue.deviceId },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -4098,7 +4209,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(device.name).tag(Optional(device.id))
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if devices.isEmpty {
                         Text("No Sennheiser devices with control support are configured.")
@@ -4112,7 +4223,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Picker("Action", selection: Binding(
+                    GraphPicker("Action", selection: Binding(
                         get: { cfg.wrappedValue.commandKind },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -4124,11 +4235,11 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(option.1).tag(option.0)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if cfg.wrappedValue.commandKind == .setChannelName {
                         if linkedSourceNames.count <= 1 {
-                            Picker("Channel", selection: Binding(
+                            GraphPicker("Channel", selection: Binding(
                                 get: { cfg.wrappedValue.channelIndex },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4140,7 +4251,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text("CH \(idx)").tag(idx)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                         }
 
                         if let linkedSourceName {
@@ -4180,7 +4291,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                                         .font(.caption)
                                                         .lineLimit(1)
                                                     Spacer()
-                                                    Picker("", selection: sennheiserChannelAssignmentBinding(forNodeId: nodeId, sourceName: sourceName)) {
+                                                    GraphPicker("", selection: sennheiserChannelAssignmentBinding(forNodeId: nodeId, sourceName: sourceName)) {
                                                         Text("—").tag(Int?.none)
                                                         ForEach(1...channelCount, id: \.self) { idx in
                                                             Text("CH \(idx)").tag(Optional(idx))
@@ -4264,7 +4375,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 }
                             }
 
-                            Picker("Channel name", selection: Binding(
+                            GraphPicker("Channel name", selection: Binding(
                                 get: { cfg.wrappedValue.channelName },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4287,9 +4398,9 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text(formatted).tag(person.title)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                             } else {
-                                TextField("Channel name (max 8 chars)", text: Binding(
+                                GraphTextField("Channel name (max 8 chars)", text: Binding(
                                     get: { cfg.wrappedValue.channelName },
                                     set: { newValue in
                                         var v = cfg.wrappedValue
@@ -4302,7 +4413,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             }
                         }
                     } else if cfg.wrappedValue.commandKind == .setMute {
-                        Picker("Channel", selection: Binding(
+                        GraphPicker("Channel", selection: Binding(
                             get: { cfg.wrappedValue.channelIndex },
                             set: { newValue in
                                 var v = cfg.wrappedValue
@@ -4314,7 +4425,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 Text("CH \(idx)").tag(idx)
                             }
                         }
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
 
                         Toggle("Muted", isOn: Binding(
                             get: { cfg.wrappedValue.muteEnabled },
@@ -4325,7 +4436,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             }
                         ))
                     } else if cfg.wrappedValue.commandKind == .setGain {
-                        Picker("Channel", selection: Binding(
+                        GraphPicker("Channel", selection: Binding(
                             get: { cfg.wrappedValue.channelIndex },
                             set: { newValue in
                                 var v = cfg.wrappedValue
@@ -4337,7 +4448,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 Text("CH \(idx)").tag(idx)
                             }
                         }
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
 
                         let gainBinding = Binding<Double>(
                             get: { cfg.wrappedValue.gainDb },
@@ -4355,11 +4466,11 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 .opacity(0.8)
                                 .frame(width: 70, alignment: .leading)
 
-                            TextField("dB", value: gainBinding, format: .number)
+                            GraphTextField("dB", value: gainBinding, format: .number)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
 
-                            Stepper("", value: gainBinding, in: -3...42, step: 3)
+                            GraphStepper("", value: gainBinding, in: -3...42, step: 3)
                         }
                     } else if cfg.wrappedValue.commandKind == .setRfMute {
                         Text("RF On/Off is not supported for EW-DX SSC v1. Use Advanced (Raw) if your model exposes an endpoint.")
@@ -4369,7 +4480,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
 
                     if cfg.wrappedValue.commandKind == .advanced {
                         HStack(spacing: 12) {
-                            Picker("Method", selection: Binding(
+                            GraphPicker("Method", selection: Binding(
                                 get: { cfg.wrappedValue.method },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4381,9 +4492,9 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text(method.rawValue).tag(method)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
 
-                            Picker("Scheme", selection: Binding(
+                            GraphPicker("Scheme", selection: Binding(
                                 get: { cfg.wrappedValue.scheme },
                                 set: { newValue in
                                     var v = cfg.wrappedValue
@@ -4394,7 +4505,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 Text("http").tag("http")
                                 Text("https").tag("https")
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                         }
 
                         AutomationVariableTokenField(title: "Path", text: Binding(
@@ -4474,7 +4585,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             .opacity(0.8)
                             .frame(width: 60, alignment: .leading)
 
-                        TextField("Seconds", value: Binding(
+                        GraphTextField("Seconds", value: Binding(
                             get: { cfg.wrappedValue.durationSeconds },
                             set: { newValue in
                                 var v = cfg.wrappedValue
@@ -4502,7 +4613,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Picker("Target", selection: Binding(
+                    GraphPicker("Target", selection: Binding(
                         get: { cfg.wrappedValue.targetMode },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -4514,7 +4625,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(mode.displayName).tag(mode)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if cfg.wrappedValue.targetMode == .specificPeer {
                         if availablePeers.isEmpty {
@@ -4522,7 +4633,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            Picker("Peer", selection: Binding(
+                            GraphPicker("Peer", selection: Binding(
                                 // A target saved by an older build may be the peer's name; show it
                                 // as that peer so the next selection saves the real deviceId.
                                 get: {
@@ -4540,7 +4651,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                                     Text(peer.deviceName ?? peer.endpointKey).tag(peer.deviceId)
                                 }
                             }
-                            .pickerStyle(.menu)
+                            .graphPickerStyle(.menu)
                         }
                     }
 
@@ -4586,7 +4697,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             .opacity(0.8)
                             .frame(width: 60, alignment: .leading)
 
-                        TextField("Seconds", value: Binding(
+                        GraphTextField("Seconds", value: Binding(
                             get: { cfg.wrappedValue.durationSeconds },
                             set: { newValue in
                                 var v = cfg.wrappedValue
@@ -4611,7 +4722,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
-                    Picker("Action", selection: Binding(
+                    GraphPicker("Action", selection: Binding(
                         get: { cfg.wrappedValue.actionKind },
                         set: { newValue in
                             var v = cfg.wrappedValue
@@ -4623,7 +4734,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(actionKind.displayName).tag(actionKind)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if cfg.wrappedValue.actionKind == .resyncDeviceNames {
                         NameRefreshDeviceOptionsEditor(
@@ -4722,7 +4833,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                         set: { var v = cfg.wrappedValue; v.urlString = $0; cfg.wrappedValue = v }
                     ), variableValues: GraphRuntime.universalVariableValuesByName(tab: tab))
 
-                    Picker("Method", selection: Binding(
+                    GraphPicker("Method", selection: Binding(
                         get: { cfg.wrappedValue.method },
                         set: { var v = cfg.wrappedValue; v.method = $0; cfg.wrappedValue = v }
                     )) {
@@ -4730,7 +4841,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text($0.rawValue).tag($0)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .graphPickerStyle(.segmented)
 
                     AutomationVariableTokenField(title: "Headers JSON (optional)", text: Binding(
                         get: { cfg.wrappedValue.headersJSON },
@@ -4745,7 +4856,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                     HStack {
                         Text("Timeout (s)")
                         Spacer()
-                        TextField("", value: Binding(
+                        GraphTextField("", value: Binding(
                             get: { cfg.wrappedValue.timeoutSeconds },
                             set: { var v = cfg.wrappedValue; v.timeoutSeconds = max(1, $0); cfg.wrappedValue = v }
                         ), format: .number)
@@ -4768,7 +4879,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                     .sorted { $0.1 < $1.1 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Picker("Variable", selection: Binding<UUID?>(
+                    GraphPicker("Variable", selection: Binding<UUID?>(
                         get: { cfg.wrappedValue.targetVariableNodeId },
                         set: { var v = cfg.wrappedValue; v.targetVariableNodeId = $0; cfg.wrappedValue = v }
                     )) {
@@ -4777,7 +4888,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             Text(opt.1).tag(Optional(opt.0))
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     Text("Type: \(targetType.displayName)")
                         .font(.caption)
@@ -4797,13 +4908,13 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             set: { var v = cfg.wrappedValue; v.textValue = $0; cfg.wrappedValue = v }
                         ), variableValues: GraphRuntime.universalVariableValuesByName(tab: tab))
                     case .number:
-                        TextField("Value", value: Binding(
+                        GraphTextField("Value", value: Binding(
                             get: { Int(cfg.wrappedValue.numberValue) },
                             set: { var v = cfg.wrappedValue; v.numberValue = Double($0); cfg.wrappedValue = v }
                         ), format: .number)
                         .textFieldStyle(.roundedBorder)
                     case .float:
-                        TextField("Value", value: Binding(
+                        GraphTextField("Value", value: Binding(
                             get: { cfg.wrappedValue.numberValue },
                             set: { var v = cfg.wrappedValue; v.numberValue = $0; cfg.wrappedValue = v }
                         ), format: .number)
@@ -4813,7 +4924,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                             get: { cfg.wrappedValue.booleanValue },
                             set: { var v = cfg.wrappedValue; v.booleanValue = $0; cfg.wrappedValue = v }
                         ))
-                        .toggleStyle(.switch)
+                        .toggleStyle(GraphSwitchToggleStyle())
                     }
                 }
             } else {
@@ -4830,9 +4941,10 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                 title: title,
                 subtitle: graphNodeSummarySubtitle(for: key),
                 systemImage: DashboardActionDescriptor.systemImage(for: key),
-                accent: nodeTintColor,
+                accent: category.accentColor,
                 width: senderNodeWidth,
-                detail: warningText ?? subtitle
+                detail: warningText ?? subtitle,
+                fullHeight: measuredNodeSizes[nodeId]?.height
             )
         }
     }
@@ -4845,7 +4957,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                 nodeSizeReporter(nodeId)
             }
         }
-        .position(applyViewport(to: nodePosition(for: nodeId)))
+        .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
         .contextMenu {
             Button("Duplicate Node") {
@@ -4956,6 +5068,7 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
     let isLinkingTarget = (linkingFromNodeId != nil)
 
     let cfg = delayActionConfigBinding(forNodeId: nodeId)
+    let showDetailed = shouldRenderDetailedGraphNode(nodeId)
 
     let base = DelayGraphNodeView(
         nodeId: nodeId,
@@ -4970,6 +5083,8 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
         onOutputDragEnded: { value in
             handleDelayOutputDragEnded(nodeId: nodeId, value: value)
         },
+        compactDetail: showDetailed ? nil : "Waits \(max(0, cfg.wrappedValue.delayMs)) ms",
+        compactFullHeight: measuredNodeSizes[nodeId]?.height,
         settings: {
             let delayBinding = Binding<Int>(
                 get: { max(0, cfg.wrappedValue.delayMs) },
@@ -4987,8 +5102,13 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
     base
         .overlay(invalidLinkHoverOverlay(for: nodeId))
         .frame(width: 420)
-        .background(nodeSizeReporter(nodeId))
-        .position(applyViewport(to: nodePosition(for: nodeId)))
+        .background {
+            // Only measure the full form, so switching to the compact form doesn't move nodes.
+            if showDetailed {
+                nodeSizeReporter(nodeId)
+            }
+        }
+        .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
         .contextMenu {
             Button("Duplicate Node") {
@@ -5042,6 +5162,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         .sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
 
     let connections = connectedConditionBranches(from: nodeId)
+    let showDetailed = shouldRenderDetailedGraphNode(nodeId)
 
     let base = ConditionGraphNodeView(
         nodeId: nodeId,
@@ -5063,9 +5184,11 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         onDismissWarning: conditionMismatchErrors[nodeId] != nil ? {
             conditionMismatchErrors.removeValue(forKey: nodeId)
         } : nil,
+        compactDetail: showDetailed ? nil : conditionSummaryText(cfg.wrappedValue, variableOptions: variableOptions),
+        compactFullHeight: measuredNodeSizes[nodeId]?.height,
         settings: {
             VStack(alignment: .leading, spacing: 10) {
-                    Picker("Source", selection: Binding(
+                    GraphPicker("Source", selection: Binding(
                         get: { cfg.wrappedValue.sourceKind },
                         set: {
                             var v = cfg.wrappedValue
@@ -5077,10 +5200,10 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                             Text(source.displayName).tag(source)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if cfg.wrappedValue.sourceKind == .variable {
-                        Picker("Variable", selection: Binding<UUID?>(
+                        GraphPicker("Variable", selection: Binding<UUID?>(
                             get: { cfg.wrappedValue.variableNodeId },
                             set: {
                                 var v = cfg.wrappedValue
@@ -5093,10 +5216,10 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                                 Text(option.1).tag(Optional(option.0))
                             }
                         }
-                        .pickerStyle(.menu)
+                        .graphPickerStyle(.menu)
                     }
 
-                    Picker("Operator", selection: Binding(
+                    GraphPicker("Operator", selection: Binding(
                         get: { cfg.wrappedValue.operator },
                         set: {
                             var v = cfg.wrappedValue
@@ -5108,11 +5231,11 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                             Text(op.displayName).tag(op)
                         }
                     }
-                    .pickerStyle(.menu)
+                    .graphPickerStyle(.menu)
 
                     if conditionOperatorNeedsText(cfg.wrappedValue.operator, sourceKind: cfg.wrappedValue.sourceKind) {
                         HStack(spacing: 6) {
-                            TextField(
+                            GraphTextField(
                                 "Comparison Text",
                                 text: conditionComparisonTextBinding(forNodeId: nodeId, config: cfg),
                                 onEditingChanged: { editing in
@@ -5142,7 +5265,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                             Text("Number")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            TextField("0", value: Binding(
+                            GraphTextField("0", value: Binding(
                                 get: { cfg.wrappedValue.comparisonNumber },
                                 set: {
                                     var v = cfg.wrappedValue
@@ -5163,7 +5286,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
                                 cfg.wrappedValue = v
                             }
                         ))
-                        .toggleStyle(.switch)
+                        .toggleStyle(GraphSwitchToggleStyle())
                     }
 
                     Divider()
@@ -5197,8 +5320,13 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
     base
         .overlay(invalidLinkHoverOverlay(for: nodeId))
         .frame(width: 420)
-        .background(nodeSizeReporter(nodeId))
-        .position(applyViewport(to: nodePosition(for: nodeId)))
+        .background {
+            // Only measure the full form, so switching to the compact form doesn't move nodes.
+            if showDetailed {
+                nodeSizeReporter(nodeId)
+            }
+        }
+        .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
         .contextMenu {
             Button("Duplicate Node") {
@@ -5238,6 +5366,30 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         }
 }
 
+/// One-line description of an If / Else node for its compact (zoomed-out) form,
+/// e.g. "Variable Score Greater Than 10".
+private func conditionSummaryText(
+    _ config: DashboardGraph.ConditionNodeConfig,
+    variableOptions: [(UUID, String)]
+) -> String {
+    var parts: [String] = []
+    if config.sourceKind == .variable {
+        let name = config.variableNodeId.flatMap { id in variableOptions.first { $0.0 == id }?.1 }
+        parts.append(name.map { "Variable \($0)" } ?? "No variable selected")
+    } else {
+        parts.append(config.sourceKind.displayName)
+    }
+    parts.append(config.operator.displayName)
+    if conditionOperatorNeedsText(config.operator, sourceKind: config.sourceKind) {
+        parts.append("\u{201C}\(config.comparisonText)\u{201D}")
+    } else if conditionOperatorNeedsNumber(config.operator, sourceKind: config.sourceKind) {
+        parts.append(config.comparisonNumber.formatted())
+    } else if conditionOperatorNeedsBoolean(config.operator, sourceKind: config.sourceKind) {
+        parts.append(config.comparisonBoolean ? "true" : "false")
+    }
+    return parts.joined(separator: " ")
+}
+
 @ViewBuilder
 private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
     let isSelected = selectedGraphNodeIds.contains(nodeId)
@@ -5248,6 +5400,9 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
 
     let outputCount = max(1, cfg.wrappedValue.outputCount)
     let connectedOutputs = min(connectedActionCount(from: nodeId), outputCount)
+    let showDetailed = shouldRenderDetailedGraphNode(nodeId)
+    let repeatCount = max(1, cfg.wrappedValue.repeatCount)
+    let repeaterDetail = "\(outputCount) output\(outputCount == 1 ? "" : "s") • \(repeatCount)× every \(max(0, cfg.wrappedValue.delayMs)) ms"
 
     let base = RepeaterGraphNodeView(
         nodeId: nodeId,
@@ -5264,6 +5419,8 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
         onOutputDragEnded: { index, value in
             handleRepeaterOutputDragEnded(nodeId: nodeId, index: index, total: outputCount, value: value)
         },
+        compactDetail: showDetailed ? nil : repeaterDetail,
+        compactFullHeight: measuredNodeSizes[nodeId]?.height,
         settings: {
             let outputBinding = Binding<Int>(
                 get: { max(1, cfg.wrappedValue.outputCount) },
@@ -5303,8 +5460,13 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
     base
         .overlay(invalidLinkHoverOverlay(for: nodeId))
         .frame(width: 420)
-        .background(nodeSizeReporter(nodeId))
-        .position(applyViewport(to: nodePosition(for: nodeId)))
+        .background {
+            // Only measure the full form, so switching to the compact form doesn't move nodes.
+            if showDetailed {
+                nodeSizeReporter(nodeId)
+            }
+        }
+        .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
         .contextMenu {
             Button("Duplicate Node") {
@@ -5366,9 +5528,14 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
 }
 
 var body: some View {
-    // Keep Graph mounted for flip animation/state, but skip heavy work when not visible.
-    if !isWorkEnabled {
+    // Only build the graph while it's showing (or about to be: see `hasMountedGraphContent`).
+    if !isWorkEnabled && !hasMountedGraphContent {
         Color.clear
+            #if os(macOS)
+            .onReceive(NotificationCenter.default.publisher(for: .relayPrewarmAutomationView)) { _ in
+                hasMountedGraphContent = true
+            }
+            #endif
     } else {
         GeometryReader { geo in
             let groups = computedModuleGroups()
@@ -5396,7 +5563,7 @@ var body: some View {
             }
             .background(
                 GraphDeleteKeyMonitor(
-                    isEnabled: shouldHandleGraphDeleteKey(),
+                    isEnabled: { shouldHandleGraphDeleteKey() },
                     onDelete: deleteSelectedGraphNodes
                 )
             )
@@ -5406,9 +5573,12 @@ var body: some View {
             #endif
         }
         .onAppear {
+            _ = installSendAllListenerIfNeeded()
+            // A prewarmed (hidden) graph must not take over the runtime from Canvas mode;
+            // activation happens in `onChange(of: isWorkEnabled)` when it's shown.
+            guard isWorkEnabled else { return }
             // Graph view must explicitly point the always-on runtime at the live bound tab.
             activateGraphRuntime()
-            _ = installSendAllListenerIfNeeded()
             #if os(macOS)
             dismissGraphTextInput()
             #endif
@@ -5434,9 +5604,16 @@ var body: some View {
         }
         .animation(.none, value: liveModeFromStorage)
         .onChange(of: isWorkEnabled, initial: false) { _, enabled in
+            guard enabled else {
+                // Unmount once hidden; `onDisappear` does the interaction cleanup.
+                hasMountedGraphContent = false
+                return
+            }
             // Never disable automations from the Graph view; only re-enable when graph becomes active.
-            guard enabled else { return }
             activateGraphRuntime()
+            #if os(macOS)
+            dismissGraphTextInput()
+            #endif
         }
         .onChange(of: tab.graph?.links, initial: false) { _, _ in
             refreshSendAllListenerForGraphChange()
@@ -5742,27 +5919,50 @@ private func canvasBackedModuleGroupNodeView(
     group: ModuleGroup,
     peopleTeamOptions: [String]
 ) -> some View {
-    let base = ModuleGroupNodeView(
-        nodeId: nodeId,
-        group: group,
-        tab: tab,
-        consoleDevices: availableAudioConsoleDevices,
-        shureDevices: availableShureDevices,
-        sennheiserDevices: availableSennheiserDevices,
-        peopleTeamOptions: (group.key == "moduleGroup.person" ? peopleTeamOptions : []),
-        selectedPeopleTeams: (group.key == "moduleGroup.person"
-                              ? peopleTeamSelectionBinding(forNodeId: nodeId)
-                              : Binding.constant(Set<String>())),
-        customPeople: Binding.constant([]),
-        isSelected: selectedGraphNodeIds.contains(nodeId),
-        peopleSourceMode: Binding.constant("pco"),
-        graph: $tab.graph,
-        performGraphEdit: performGraphEdit
-    )
+    // Canvas-backed nodes (Time, dB Threshold, Word Trigger, Planning Center, People, ...)
+    // also collapse to a summary card when zoomed out or in performance mode.
+    let showDetailed = shouldRenderDetailedGraphNode(nodeId)
+    let base = Group {
+        if showDetailed {
+            ModuleGroupNodeView(
+                nodeId: nodeId,
+                group: group,
+                tab: tab,
+                consoleDevices: availableAudioConsoleDevices,
+                shureDevices: availableShureDevices,
+                sennheiserDevices: availableSennheiserDevices,
+                peopleTeamOptions: (group.key == "moduleGroup.person" ? peopleTeamOptions : []),
+                selectedPeopleTeams: (group.key == "moduleGroup.person"
+                                      ? peopleTeamSelectionBinding(forNodeId: nodeId)
+                                      : Binding.constant(Set<String>())),
+                customPeople: Binding.constant([]),
+                isSelected: selectedGraphNodeIds.contains(nodeId),
+                peopleSourceMode: Binding.constant("pco"),
+                graph: $tab.graph,
+                performGraphEdit: performGraphEdit
+            )
+        } else {
+            graphNodeSummaryCard(
+                title: group.title,
+                subtitle: graphNodeSummarySubtitle(for: group.key),
+                systemImage: graphNodeSummaryIcon(for: group.key),
+                accent: GraphNodeCategory(nodeKey: group.key).accentColor,
+                width: senderNodeWidth,
+                detail: graphNodeSummaryDetailText(nodeId: nodeId, key: group.key, syntheticGroup: group),
+                fullHeight: measuredNodeSizes[nodeId]?.height
+            )
+        }
+    }
 
     base
         .frame(width: 420)
-        .background(nodeSizeReporter(nodeId))
+        .background {
+            // Only measure the full form; card sizes must not overwrite it, or switching
+            // back to the full form would trigger collision resolution and move nodes.
+            if showDetailed {
+                nodeSizeReporter(nodeId)
+            }
+        }
         .overlay(invalidLinkHoverOverlay(for: nodeId))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
@@ -5780,13 +5980,7 @@ private func canvasBackedModuleGroupNodeView(
                 // Per-rule output nubs — one per word trigger rule
                 VStack(spacing: 14) {
                     ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
-                        HStack(spacing: 4) {
-                            Text(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: 70, alignment: .trailing)
+                        Group {
                             ZStack(alignment: .trailing) {
                                 Rectangle()
                                     .fill(Color.clear)
@@ -5805,6 +5999,7 @@ private func canvasBackedModuleGroupNodeView(
                                     .offset(x: 5)
                                     .allowsHitTesting(false)
                             }
+                            .graphOutputPortLabel(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
                         }
                     }
                 }
@@ -5827,7 +6022,7 @@ private func canvasBackedModuleGroupNodeView(
             }
         }
         .contentShape(Rectangle())
-        .position(applyViewport(to: nodePosition(for: nodeId)))
+        .modifier(nodePositioner(nodeId))
         .simultaneousGesture(
             TapGesture().onEnded { handleNodeTapSelect(nodeId) }
         )
@@ -5863,6 +6058,154 @@ private func canvasBackedModuleGroupNodeView(
                 tab.graph?.nodeIdByPortId[GraphAutomationTraversal.wordTriggerRulePortId(nodeId: nodeId, ruleId: rule.id)] = nodeId
             }
         }
+}
+
+/// Output nubs for graph-only nodes: per-state (toggle), per-step (sequence), per-rule
+/// (word trigger) or per-button outputs, else a single nub. Kept separate from
+/// `graphOnlyModuleGroupNodeView` so that modifier chain stays small enough for older
+/// compilers to type-check (Xcode 26.6 timed out on it).
+@ViewBuilder
+private func graphOnlyModuleGroupOutputNubs(nodeId: UUID, key: String) -> some View {
+    if isToggleNodeId(nodeId) {
+        // Two output nubs: top = On, bottom = Off
+        VStack(spacing: 14) {
+            ForEach([true, false], id: \.self) { isOn in
+                ZStack(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: 26, height: 20)
+                        .contentShape(Rectangle())
+                        .highPriorityGesture(
+                            DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
+                                .onChanged { handleToggleOutputDragChanged(nodeId: nodeId, isOn: isOn, value: $0) }
+                                .onEnded   { handleToggleOutputDragEnded(nodeId: nodeId, isOn: isOn, value: $0) }
+                        )
+                    Circle()
+                        .fill(linkingFromNodeId == nodeId && currentToggleOutputIsOn == isOn
+                              ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
+                        .frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                        .offset(x: 5)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+    } else if isSequenceNodeId(nodeId) {
+        // N output nubs (top → bottom = step 1 → step N)
+        let total = sequenceOutputLimit(for: nodeId)
+        VStack(spacing: 14) {
+            ForEach(0..<total, id: \.self) { step in
+                ZStack(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: 26, height: 20)
+                        .contentShape(Rectangle())
+                        .highPriorityGesture(
+                            DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
+                                .onChanged { handleSequenceOutputDragChanged(nodeId: nodeId, step: step, total: total, value: $0) }
+                                .onEnded   { handleSequenceOutputDragEnded(nodeId: nodeId, step: step, total: total, value: $0) }
+                        )
+                    Circle()
+                        .fill(linkingFromNodeId == nodeId && currentSequenceOutputStep == step
+                              ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
+                        .frame(width: 10, height: 10)
+                        .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                        .offset(x: 5)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+    } else if isWordTriggerNodeId(nodeId) {
+        // Standalone word trigger nodes share the transcription node's config.
+        let canonicalId = isStandaloneWordTriggerNodeId(nodeId)
+            ? groupNodeId(for: "moduleGroup.transcription")
+            : nodeId
+        let rules = tab.graph?.wordTriggerConfigByNodeId[canonicalId.uuidString]?.rules ?? []
+        let total = max(1, rules.count)
+        VStack(spacing: 14) {
+            ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
+                Group {
+                    ZStack(alignment: .trailing) {
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(width: 26, height: 20)
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(
+                                DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
+                                    .onChanged { handleWordTriggerOutputDragChanged(nodeId: canonicalId, ruleId: rule.id, ruleIndex: index, total: total, value: $0) }
+                                    .onEnded   { handleWordTriggerOutputDragEnded(nodeId: canonicalId, ruleId: rule.id, value: $0) }
+                            )
+                        Circle()
+                            .fill(linkingFromNodeId == nodeId && currentWordTriggerRuleId == rule.id
+                                  ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                            .offset(x: 5)
+                            .allowsHitTesting(false)
+                    }
+                    .graphOutputPortLabel(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
+                }
+            }
+        }
+    } else if isMultiButtonNodeId(nodeId) {
+        let buttons = buttonsForButtonNode(nodeId)
+        VStack(spacing: 14) {
+            ForEach(Array(buttons.enumerated()), id: \.element.id) { index, button in
+                Group {
+                    // Label: title → icon symbol name → "Button N"
+                    let title = button.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let iconLabel: String = {
+                        switch button.icon.source {
+                        case .preset: return button.icon.preset.title
+                        case .symbol, .customSymbol:
+                            let s = button.icon.systemName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            return s.isEmpty ? "Button \(index + 1)" : s
+                        case .none: return "Button \(index + 1)"
+                        }
+                    }()
+                    ZStack(alignment: .trailing) {
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(width: 26, height: 20)
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(
+                                DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
+                                    .onChanged { handleButtonOutputDragChanged(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
+                                    .onEnded { handleButtonOutputDragEnded(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
+                            )
+                        Circle()
+                            .fill(linkingFromNodeId == nodeId && currentButtonOutputConfigId == button.id
+                                  ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+                            .offset(x: 5)
+                            .allowsHitTesting(false)
+                    }
+                    .graphOutputPortLabel(title.isEmpty ? iconLabel : title)
+                }
+            }
+        }
+    } else {
+    ZStack(alignment: .trailing) {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 26, height: 26)
+            .contentShape(Rectangle())
+            .highPriorityGesture(linkDragGestureFromSenderNub(nodeId: nodeId))
+            .accessibilityLabel("Link output")
+
+        Circle()
+            .fill(
+                linkingFromNodeId == nodeId
+                ? Color.accentColor.opacity(0.95)
+                : (isGraphVariablesFeatureEnabled && key == "utility.variable" ? Color.purple.opacity(0.80) : Color.white.opacity(0.70))
+            )
+            .frame(width: 10, height: 10)
+            .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
+            .offset(x: 5)
+            .allowsHitTesting(false)
+    }
+    } // end else (single nub)
 }
 
 @ViewBuilder
@@ -5925,160 +6268,10 @@ private func graphOnlyModuleGroupNodeView(
             }
         }
         .overlay(alignment: .trailing) {
-            if isToggleNodeId(nodeId) {
-                // Two output nubs: top = On, bottom = Off
-                VStack(spacing: 14) {
-                    ForEach([true, false], id: \.self) { isOn in
-                        ZStack(alignment: .trailing) {
-                            Rectangle()
-                                .fill(Color.clear)
-                                .frame(width: 26, height: 20)
-                                .contentShape(Rectangle())
-                                .highPriorityGesture(
-                                    DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
-                                        .onChanged { handleToggleOutputDragChanged(nodeId: nodeId, isOn: isOn, value: $0) }
-                                        .onEnded   { handleToggleOutputDragEnded(nodeId: nodeId, isOn: isOn, value: $0) }
-                                )
-                            Circle()
-                                .fill(linkingFromNodeId == nodeId && currentToggleOutputIsOn == isOn
-                                      ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
-                                .frame(width: 10, height: 10)
-                                .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                                .offset(x: 5)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                }
-            } else if isSequenceNodeId(nodeId) {
-                // N output nubs (top → bottom = step 1 → step N)
-                let total = sequenceOutputLimit(for: nodeId)
-                VStack(spacing: 14) {
-                    ForEach(0..<total, id: \.self) { step in
-                        ZStack(alignment: .trailing) {
-                            Rectangle()
-                                .fill(Color.clear)
-                                .frame(width: 26, height: 20)
-                                .contentShape(Rectangle())
-                                .highPriorityGesture(
-                                    DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
-                                        .onChanged { handleSequenceOutputDragChanged(nodeId: nodeId, step: step, total: total, value: $0) }
-                                        .onEnded   { handleSequenceOutputDragEnded(nodeId: nodeId, step: step, total: total, value: $0) }
-                                )
-                            Circle()
-                                .fill(linkingFromNodeId == nodeId && currentSequenceOutputStep == step
-                                      ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
-                                .frame(width: 10, height: 10)
-                                .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                                .offset(x: 5)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                }
-            } else if isWordTriggerNodeId(nodeId) {
-                // Standalone word trigger nodes share the transcription node's config.
-                let canonicalId = isStandaloneWordTriggerNodeId(nodeId)
-                    ? groupNodeId(for: "moduleGroup.transcription")
-                    : nodeId
-                let rules = tab.graph?.wordTriggerConfigByNodeId[canonicalId.uuidString]?.rules ?? []
-                let total = max(1, rules.count)
-                VStack(spacing: 14) {
-                    ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
-                        HStack(spacing: 4) {
-                            Text(rule.phrase.isEmpty ? "Rule \(index + 1)" : rule.phrase)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: 70, alignment: .trailing)
-                            ZStack(alignment: .trailing) {
-                                Rectangle()
-                                    .fill(Color.clear)
-                                    .frame(width: 26, height: 20)
-                                    .contentShape(Rectangle())
-                                    .highPriorityGesture(
-                                        DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
-                                            .onChanged { handleWordTriggerOutputDragChanged(nodeId: canonicalId, ruleId: rule.id, ruleIndex: index, total: total, value: $0) }
-                                            .onEnded   { handleWordTriggerOutputDragEnded(nodeId: canonicalId, ruleId: rule.id, value: $0) }
-                                    )
-                                Circle()
-                                    .fill(linkingFromNodeId == nodeId && currentWordTriggerRuleId == rule.id
-                                          ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
-                                    .frame(width: 10, height: 10)
-                                    .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                                    .offset(x: 5)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                    }
-                }
-            } else if isMultiButtonNodeId(nodeId) {
-                let buttons = buttonsForButtonNode(nodeId)
-                VStack(spacing: 14) {
-                    ForEach(Array(buttons.enumerated()), id: \.element.id) { index, button in
-                        HStack(spacing: 4) {
-                            // Label: title → icon symbol name → "Button N"
-                            let title = button.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let iconLabel: String = {
-                                switch button.icon.source {
-                                case .preset: return button.icon.preset.title
-                                case .symbol, .customSymbol:
-                                    let s = button.icon.systemName.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    return s.isEmpty ? "Button \(index + 1)" : s
-                                case .none: return "Button \(index + 1)"
-                                }
-                            }()
-                            Text(title.isEmpty ? iconLabel : title)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: 70, alignment: .trailing)
-
-                            ZStack(alignment: .trailing) {
-                                Rectangle()
-                                    .fill(Color.clear)
-                                    .frame(width: 26, height: 20)
-                                    .contentShape(Rectangle())
-                                    .highPriorityGesture(
-                                        DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
-                                            .onChanged { handleButtonOutputDragChanged(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
-                                            .onEnded { handleButtonOutputDragEnded(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
-                                    )
-                                Circle()
-                                    .fill(linkingFromNodeId == nodeId && currentButtonOutputConfigId == button.id
-                                          ? Color.accentColor.opacity(0.95) : Color.white.opacity(0.70))
-                                    .frame(width: 10, height: 10)
-                                    .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                                    .offset(x: 5)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                    }
-                }
-            } else {
-            ZStack(alignment: .trailing) {
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-                    .highPriorityGesture(linkDragGestureFromSenderNub(nodeId: nodeId))
-                    .accessibilityLabel("Link output")
-
-                Circle()
-                    .fill(
-                        linkingFromNodeId == nodeId
-                        ? Color.accentColor.opacity(0.95)
-                        : (isGraphVariablesFeatureEnabled && key == "utility.variable" ? Color.purple.opacity(0.80) : Color.white.opacity(0.70))
-                    )
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1))
-                    .offset(x: 5)
-                    .allowsHitTesting(false)
-            }
-            } // end else (single nub)
+            graphOnlyModuleGroupOutputNubs(nodeId: nodeId, key: key)
         }
         .contentShape(Rectangle())
-        .position(applyViewport(to: nodePosition(for: nodeId)))
+        .modifier(nodePositioner(nodeId))
         .simultaneousGesture(
             TapGesture().onEnded { handleNodeTapSelect(nodeId) }
         )
@@ -6168,9 +6361,10 @@ private func moduleGroupNodeBaseView(
             title: syntheticGroup.title,
             subtitle: graphNodeSummarySubtitle(for: key),
             systemImage: graphNodeSummaryIcon(for: key),
-            accent: GraphNodeCategory(nodeKey: key).tintColor,
+            accent: GraphNodeCategory(nodeKey: key).accentColor,
             width: senderNodeWidth,
-            detail: detailText
+            detail: detailText,
+            fullHeight: measuredNodeSizes[nodeId]?.height
         )
     }
 }
@@ -6678,7 +6872,7 @@ private func consoleNodeView(
                 title: device.name,
                 subtitle: "Console Destination",
                 systemImage: "hifispeaker.fill",
-                accent: GraphNodeCategory(nodeKey: "destination.console").tintColor,
+                accent: GraphNodeCategory(nodeKey: "destination.console").accentColor,
                 width: consoleNodeWidth,
                 detail: [
                     showAssignments ? "\(people.count) assignments" : nil,
@@ -6686,7 +6880,8 @@ private func consoleNodeView(
                     (showQuActions || showDigiCoActions || showStandardActions) ? "trigger actions linked" : nil
                 ]
                 .compactMap { $0 }
-                .joined(separator: " • ")
+                .joined(separator: " • "),
+                fullHeight: measuredNodeSizes[nodeId]?.height
             )
         }
     }
@@ -6713,7 +6908,7 @@ private func consoleNodeView(
             .offset(x: -5)
             .accessibilityLabel("Link input")
     }
-    .position(applyViewport(to: pos))
+    .modifier(nodePositioner(nodeId))
     .simultaneousGesture(
         TapGesture().onEnded { handleNodeTapSelect(nodeId) }
     )
@@ -6777,7 +6972,7 @@ private func missingConsoleNodeView(nodeId: UUID) -> some View {
         RoundedRectangle(cornerRadius: 14)
             .stroke(isSelected ? Color.accentColor.opacity(0.55) : Color.clear, lineWidth: 2)
     )
-    .position(applyViewport(to: nodePosition(for: nodeId)))
+    .modifier(nodePositioner(nodeId))
     .simultaneousGesture(TapGesture().onEnded { handleNodeTapSelect(nodeId) })
     .gesture(nodeDragGesture(tileId: nodeId))
     .contextMenu {
@@ -6981,9 +7176,10 @@ private func vistaNodeView(nodeId: UUID, pos: CGPoint) -> some View {
                 title: device?.name ?? "Vista",
                 subtitle: "Vista Destination",
                 systemImage: "light.beacon.max.fill",
-                accent: GraphNodeCategory(nodeKey: "destination.vista").tintColor,
+                accent: GraphNodeCategory(nodeKey: "destination.vista").accentColor,
                 width: senderNodeWidth,
-                detail: items.isEmpty ? "No linked PCO items" : "\(items.count) linked PCO item\(items.count == 1 ? "" : "s")"
+                detail: items.isEmpty ? "No linked PCO items" : "\(items.count) linked PCO item\(items.count == 1 ? "" : "s")",
+                fullHeight: measuredNodeSizes[nodeId]?.height
             )
         }
     }
@@ -7014,7 +7210,7 @@ private func vistaNodeView(nodeId: UUID, pos: CGPoint) -> some View {
             .offset(x: -5)
             .accessibilityLabel("Link input")
     }
-    .position(applyViewport(to: pos))
+    .modifier(nodePositioner(nodeId))
     .simultaneousGesture(TapGesture().onEnded { handleNodeTapSelect(nodeId) })
     .gesture(nodeDragGesture(tileId: nodeId))
     .contextMenu {
@@ -7209,253 +7405,254 @@ private func consoleTriggerSendConfigBinding(forConsoleNodeId nodeId: UUID) -> B
 
     private let canvasDrawPadding: CGFloat = 2400
 
-    @ViewBuilder
+    /// Builds node-relative link geometry here (cheap, runs only when this body runs) and
+    /// hands drawing to GraphLinksCanvasView, which follows live drag positions and the
+    /// in-progress link line from `interaction` without re-running this body.
     private func linksLayer(in size: CGSize) -> some View {
-        let pad = canvasDrawPadding
-        let w = size.width + pad * 2
-        let h = size.height + pad * 2
+        // Each helper below returns an offset from the node's center (they compute
+        // center + delta with center = .zero).
+        func senderNubCenter(for nodeId: UUID) -> CGPoint {
+            let center = CGPoint.zero  // offsets are node-center-relative
+            let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
+            let nubOffset: CGFloat = 5
+            return CGPoint(x: center.x + (width / 2.0) + nubOffset, y: center.y)
+        }
 
-        Canvas { context, _ in
-            func shift(_ p: CGPoint) -> CGPoint {
-                CGPoint(x: p.x + pad, y: p.y + pad)
+        func senderNubCenter(for link: GraphLink, nodeId: UUID) -> CGPoint {
+            if isRepeaterNodeId(nodeId) {
+                if let index = repeaterOutputIndex(fromPortId: link.fromPortId) {
+                    return repeaterNubCenter(nodeId: nodeId, index: index)
+                }
+                return repeaterNubCenter(nodeId: nodeId, index: 0)
             }
-
-            func senderNubCenter(for nodeId: UUID) -> CGPoint {
-                let center = nodePosition(for: nodeId)
-                let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
-                let nubOffset: CGFloat = 5
-                return CGPoint(x: center.x + (width / 2.0) + nubOffset, y: center.y)
+            if isConditionNodeId(nodeId) {
+                if let branch = conditionOutputBranch(fromPortId: link.fromPortId) {
+                    return conditionNubCenter(nodeId: nodeId, branch: branch)
+                }
+                return conditionNubCenter(nodeId: nodeId, branch: .true)
             }
-
-            func senderNubCenter(for link: GraphLink, nodeId: UUID) -> CGPoint {
-                if isRepeaterNodeId(nodeId) {
-                    if let index = repeaterOutputIndex(fromPortId: link.fromPortId) {
-                        return repeaterNubCenter(nodeId: nodeId, index: index)
-                    }
-                    return repeaterNubCenter(nodeId: nodeId, index: 0)
+            if isToggleNodeId(nodeId) {
+                let isOn = link.fromPortId.hasSuffix(":on")
+                return toggleNubCenter(nodeId: nodeId, isOn: isOn)
+            }
+            if isSequenceNodeId(nodeId) {
+                if let step = sequenceOutputStep(fromPortId: link.fromPortId) {
+                    return sequenceNubCenter(nodeId: nodeId, step: step)
                 }
-                if isConditionNodeId(nodeId) {
-                    if let branch = conditionOutputBranch(fromPortId: link.fromPortId) {
-                        return conditionNubCenter(nodeId: nodeId, branch: branch)
-                    }
-                    return conditionNubCenter(nodeId: nodeId, branch: .true)
+                return sequenceNubCenter(nodeId: nodeId, step: 0)
+            }
+            if isSmartLightNodeId(nodeId) {
+                return smartLightNubCenter(nodeId: nodeId, kind: smartLightOutputKind(fromPortId: link.fromPortId) ?? "success")
+            }
+            if isWordTriggerNodeId(nodeId) {
+                let rules = tab.graph?.wordTriggerConfigByNodeId[nodeId.uuidString]?.rules ?? []
+                if let ruleId = wordTriggerRuleId(fromPortId: link.fromPortId),
+                   let idx = rules.firstIndex(where: { $0.id == ruleId }) {
+                    return wordTriggerRuleNubCenter(nodeId: nodeId, ruleIndex: idx, total: rules.count)
                 }
-                if isToggleNodeId(nodeId) {
-                    let isOn = link.fromPortId.hasSuffix(":on")
-                    return toggleNubCenter(nodeId: nodeId, isOn: isOn)
-                }
-                if isSequenceNodeId(nodeId) {
-                    if let step = sequenceOutputStep(fromPortId: link.fromPortId) {
-                        return sequenceNubCenter(nodeId: nodeId, step: step)
-                    }
-                    return sequenceNubCenter(nodeId: nodeId, step: 0)
-                }
-                if isSmartLightNodeId(nodeId) {
-                    return smartLightNubCenter(nodeId: nodeId, kind: smartLightOutputKind(fromPortId: link.fromPortId) ?? "success")
-                }
-                if isWordTriggerNodeId(nodeId) {
-                    let rules = tab.graph?.wordTriggerConfigByNodeId[nodeId.uuidString]?.rules ?? []
-                    if let ruleId = wordTriggerRuleId(fromPortId: link.fromPortId),
-                       let idx = rules.firstIndex(where: { $0.id == ruleId }) {
-                        return wordTriggerRuleNubCenter(nodeId: nodeId, ruleIndex: idx, total: rules.count)
-                    }
-                    // Legacy link (node:<uuid> port): anchor to first rule nub so it doesn't float
-                    if !rules.isEmpty {
-                        return wordTriggerRuleNubCenter(nodeId: nodeId, ruleIndex: 0, total: rules.count)
-                    }
-                    return senderNubCenter(for: nodeId)
-                }
-                if isMultiButtonNodeId(nodeId) {
-                    let buttons = buttonsForButtonNode(nodeId)
-                    if let configId = buttonConfigId(fromPortId: link.fromPortId),
-                       let idx = buttons.firstIndex(where: { $0.id == configId }) {
-                        return buttonNubCenter(nodeId: nodeId, index: idx, total: buttons.count)
-                    }
-                    return senderNubCenter(for: nodeId)
+                // Legacy link (node:<uuid> port): anchor to first rule nub so it doesn't float
+                if !rules.isEmpty {
+                    return wordTriggerRuleNubCenter(nodeId: nodeId, ruleIndex: 0, total: rules.count)
                 }
                 return senderNubCenter(for: nodeId)
             }
-
-            func repeaterOutputIndex(fromPortId portId: String) -> Int? {
-                guard portId.hasPrefix("repeater:") else { return nil }
-                let parts = portId.split(separator: ":")
-                if let last = parts.last, let idx = Int(last) {
-                    return idx
+            if isMultiButtonNodeId(nodeId) {
+                let buttons = buttonsForButtonNode(nodeId)
+                if let configId = buttonConfigId(fromPortId: link.fromPortId),
+                   let idx = buttons.firstIndex(where: { $0.id == configId }) {
+                    return buttonNubCenter(nodeId: nodeId, index: idx, total: buttons.count)
                 }
-                return nil
+                return senderNubCenter(for: nodeId)
             }
+            return senderNubCenter(for: nodeId)
+        }
 
-            func repeaterNubCenter(nodeId: UUID, index: Int) -> CGPoint {
-                let center = nodePosition(for: nodeId)
-                let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
-                let x = center.x + (width / 2.0)
-
-                let total = max(1, repeaterOutputLimit(for: nodeId))
-                let stackSpacing: CGFloat = 14
-                let nubHeight: CGFloat = 10
-                let stackHeight = CGFloat(total) * nubHeight + CGFloat(total - 1) * stackSpacing
-                let yOffset = -stackHeight / 2 + nubHeight / 2 + CGFloat(index) * (nubHeight + stackSpacing)
-                return CGPoint(x: x, y: center.y + yOffset)
+        func repeaterOutputIndex(fromPortId portId: String) -> Int? {
+            guard portId.hasPrefix("repeater:") else { return nil }
+            let parts = portId.split(separator: ":")
+            if let last = parts.last, let idx = Int(last) {
+                return idx
             }
+            return nil
+        }
 
-            func conditionOutputBranch(fromPortId portId: String) -> GraphAutomationTraversal.UtilityBranch? {
-                guard portId.hasPrefix("condition:") else { return nil }
-                let parts = portId.split(separator: ":")
-                guard let rawBranch = parts.last else { return nil }
-                return GraphAutomationTraversal.UtilityBranch(rawValue: String(rawBranch))
+        func repeaterNubCenter(nodeId: UUID, index: Int) -> CGPoint {
+            let center = CGPoint.zero  // offsets are node-center-relative
+            let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
+            let x = center.x + (width / 2.0)
+
+            let total = max(1, repeaterOutputLimit(for: nodeId))
+            let stackSpacing: CGFloat = 14
+            let nubHeight: CGFloat = 10
+            let stackHeight = CGFloat(total) * nubHeight + CGFloat(total - 1) * stackSpacing
+            let yOffset = -stackHeight / 2 + nubHeight / 2 + CGFloat(index) * (nubHeight + stackSpacing)
+            return CGPoint(x: x, y: center.y + yOffset)
+        }
+
+        func conditionOutputBranch(fromPortId portId: String) -> GraphAutomationTraversal.UtilityBranch? {
+            guard portId.hasPrefix("condition:") else { return nil }
+            let parts = portId.split(separator: ":")
+            guard let rawBranch = parts.last else { return nil }
+            return GraphAutomationTraversal.UtilityBranch(rawValue: String(rawBranch))
+        }
+
+        func conditionNubCenter(nodeId: UUID, branch: GraphAutomationTraversal.UtilityBranch) -> CGPoint {
+            let yOffset: CGFloat = branch == .true ? -12 : 12
+            return senderNubCenter(for: nodeId).applying(.init(translationX: 0, y: yOffset))
+        }
+
+        func toggleNubCenter(nodeId: UUID, isOn: Bool) -> CGPoint {
+            let yOffset: CGFloat = isOn ? -12 : 12
+            return senderNubCenter(for: nodeId).applying(.init(translationX: 0, y: yOffset))
+        }
+
+        func sequenceOutputStep(fromPortId portId: String) -> Int? {
+            guard portId.hasPrefix("sequence:") else { return nil }
+            let parts = portId.split(separator: ":")
+            if let last = parts.last, let step = Int(last) { return step }
+            return nil
+        }
+
+        func sequenceNubCenter(nodeId: UUID, step: Int) -> CGPoint {
+            let center = CGPoint.zero  // offsets are node-center-relative
+            let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
+            let x = center.x + (width / 2.0)
+            let total = max(2, sequenceOutputLimit(for: nodeId))
+            let stackSpacing: CGFloat = 14
+            let nubHeight: CGFloat = 10
+            let stackHeight = CGFloat(total) * nubHeight + CGFloat(total - 1) * stackSpacing
+            let yOffset = -stackHeight / 2 + nubHeight / 2 + CGFloat(step) * (nubHeight + stackSpacing)
+            return CGPoint(x: x, y: center.y + yOffset)
+        }
+
+        func smartLightOutputKind(fromPortId portId: String) -> String? {
+            guard portId.hasPrefix("smartlight:") else { return nil }
+            let parts = portId.split(separator: ":")
+            guard let raw = parts.last else { return nil }
+            return String(raw)
+        }
+
+        func smartLightNubCenter(nodeId: UUID, kind: String) -> CGPoint {
+            let yOffset: CGFloat
+            switch kind {
+            case "success":
+                yOffset = -24
+            case "failure":
+                yOffset = 0
+            default:
+                yOffset = 24
             }
+            return senderNubCenter(for: nodeId).applying(.init(translationX: 0, y: yOffset))
+        }
 
-            func conditionNubCenter(nodeId: UUID, branch: GraphAutomationTraversal.UtilityBranch) -> CGPoint {
-                let yOffset: CGFloat = branch == .true ? -12 : 12
-                return senderNubCenter(for: nodeId).applying(.init(translationX: 0, y: yOffset))
-            }
+        func wordTriggerRuleId(fromPortId portId: String) -> UUID? {
+            // Format: "wordTrigger:<nodeId>:rule:<ruleId>"
+            guard portId.hasPrefix("wordTrigger:") else { return nil }
+            let parts = portId.split(separator: ":")
+            guard parts.count == 4, let ruleId = UUID(uuidString: String(parts[3])) else { return nil }
+            return ruleId
+        }
 
-            func toggleNubCenter(nodeId: UUID, isOn: Bool) -> CGPoint {
-                let yOffset: CGFloat = isOn ? -12 : 12
-                return senderNubCenter(for: nodeId).applying(.init(translationX: 0, y: yOffset))
-            }
+        func wordTriggerRuleNubCenter(nodeId: UUID, ruleIndex: Int, total: Int) -> CGPoint {
+            let center = CGPoint.zero  // offsets are node-center-relative
+            let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
+            let x = center.x + (width / 2.0)
+            let stackSpacing: CGFloat = 14
+            let itemHeight: CGFloat = 20  // ZStack height (Rectangle frame), not circle diameter
+            let totalCount = max(1, total)
+            let stackHeight = CGFloat(totalCount) * itemHeight + CGFloat(totalCount - 1) * stackSpacing
+            let yOffset = -stackHeight / 2 + itemHeight / 2 + CGFloat(ruleIndex) * (itemHeight + stackSpacing)
+            return CGPoint(x: x, y: center.y + yOffset)
+        }
 
-            func sequenceOutputStep(fromPortId portId: String) -> Int? {
-                guard portId.hasPrefix("sequence:") else { return nil }
-                let parts = portId.split(separator: ":")
-                if let last = parts.last, let step = Int(last) { return step }
-                return nil
-            }
+        func buttonConfigId(fromPortId portId: String) -> UUID? {
+            // Format: "button:<nodeId>:<configId>"
+            guard portId.hasPrefix("button:") else { return nil }
+            let parts = portId.split(separator: ":")
+            guard parts.count == 3, let configId = UUID(uuidString: String(parts[2])) else { return nil }
+            return configId
+        }
 
-            func sequenceNubCenter(nodeId: UUID, step: Int) -> CGPoint {
-                let center = nodePosition(for: nodeId)
-                let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
-                let x = center.x + (width / 2.0)
-                let total = max(2, sequenceOutputLimit(for: nodeId))
-                let stackSpacing: CGFloat = 14
-                let nubHeight: CGFloat = 10
-                let stackHeight = CGFloat(total) * nubHeight + CGFloat(total - 1) * stackSpacing
-                let yOffset = -stackHeight / 2 + nubHeight / 2 + CGFloat(step) * (nubHeight + stackSpacing)
-                return CGPoint(x: x, y: center.y + yOffset)
-            }
+        func buttonNubCenter(nodeId: UUID, index: Int, total: Int) -> CGPoint {
+            let center = CGPoint.zero  // offsets are node-center-relative
+            let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
+            let x = center.x + (width / 2.0) + 5
+            let itemHeight: CGFloat = 20
+            let stackSpacing: CGFloat = 14
+            let totalCount = max(1, total)
+            let totalHeight = CGFloat(totalCount) * itemHeight + CGFloat(totalCount - 1) * stackSpacing
+            let topY = center.y - totalHeight / 2 + CGFloat(index) * (itemHeight + stackSpacing) + itemHeight / 2
+            return CGPoint(x: x, y: topY)
+        }
 
-            func smartLightOutputKind(fromPortId portId: String) -> String? {
-                guard portId.hasPrefix("smartlight:") else { return nil }
-                let parts = portId.split(separator: ":")
-                guard let raw = parts.last else { return nil }
-                return String(raw)
-            }
+        func receiverNubCenter(for nodeId: UUID) -> CGPoint {
+            let center = CGPoint.zero  // offsets are node-center-relative
+            let width = measuredNodeSizes[nodeId]?.width ?? consoleNodeWidth
+            let nubOffset: CGFloat = 5
+            return CGPoint(x: center.x - (width / 2.0) - nubOffset, y: center.y)
+        }
 
-            func smartLightNubCenter(nodeId: UUID, kind: String) -> CGPoint {
-                let yOffset: CGFloat
-                switch kind {
-                case "success":
-                    yOffset = -24
-                case "failure":
-                    yOffset = 0
-                default:
-                    yOffset = 24
+
+        var specs: [GraphLinkSpec] = []
+        var positions: [UUID: CGPoint] = [:]
+        if let graph = tab.graph {
+            let hidden = hiddenGraphNodeIds
+            specs.reserveCapacity(graph.links.count)
+            for link in graph.links where link.isEnabled {
+                let fromId = nodeIdFromPortId(link.fromPortId) ?? link.fromTileId
+                let toId = nodeIdFromPortId(link.toPortId) ?? link.toTileId
+
+                if hidden.contains(fromId) || hidden.contains(toId) {
+                    continue
                 }
-                return senderNubCenter(for: nodeId).applying(.init(translationX: 0, y: yOffset))
-            }
 
-            func wordTriggerRuleId(fromPortId portId: String) -> UUID? {
-                // Format: "wordTrigger:<nodeId>:rule:<ruleId>"
-                guard portId.hasPrefix("wordTrigger:") else { return nil }
-                let parts = portId.split(separator: ":")
-                guard parts.count == 4, let ruleId = UUID(uuidString: String(parts[3])) else { return nil }
-                return ruleId
-            }
-
-            func wordTriggerRuleNubCenter(nodeId: UUID, ruleIndex: Int, total: Int) -> CGPoint {
-                let center = nodePosition(for: nodeId)
-                let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
-                let x = center.x + (width / 2.0)
-                let stackSpacing: CGFloat = 14
-                let itemHeight: CGFloat = 20  // ZStack height (Rectangle frame), not circle diameter
-                let totalCount = max(1, total)
-                let stackHeight = CGFloat(totalCount) * itemHeight + CGFloat(totalCount - 1) * stackSpacing
-                let yOffset = -stackHeight / 2 + itemHeight / 2 + CGFloat(ruleIndex) * (itemHeight + stackSpacing)
-                return CGPoint(x: x, y: center.y + yOffset)
-            }
-
-            func buttonConfigId(fromPortId portId: String) -> UUID? {
-                // Format: "button:<nodeId>:<configId>"
-                guard portId.hasPrefix("button:") else { return nil }
-                let parts = portId.split(separator: ":")
-                guard parts.count == 3, let configId = UUID(uuidString: String(parts[2])) else { return nil }
-                return configId
-            }
-
-            func buttonNubCenter(nodeId: UUID, index: Int, total: Int) -> CGPoint {
-                let center = nodePosition(for: nodeId)
-                let width = measuredNodeSizes[nodeId]?.width ?? senderNodeWidth
-                let x = center.x + (width / 2.0) + 5
-                let itemHeight: CGFloat = 20
-                let stackSpacing: CGFloat = 14
-                let totalCount = max(1, total)
-                let totalHeight = CGFloat(totalCount) * itemHeight + CGFloat(totalCount - 1) * stackSpacing
-                let topY = center.y - totalHeight / 2 + CGFloat(index) * (itemHeight + stackSpacing) + itemHeight / 2
-                return CGPoint(x: x, y: topY)
-            }
-
-            func receiverNubCenter(for nodeId: UUID) -> CGPoint {
-                let center = nodePosition(for: nodeId)
-                let width = measuredNodeSizes[nodeId]?.width ?? consoleNodeWidth
-                let nubOffset: CGFloat = 5
-                return CGPoint(x: center.x - (width / 2.0) - nubOffset, y: center.y)
-            }
-
-            if let graph = tab.graph {
-                let hidden = hiddenGraphNodeIds
-                for link in graph.links where link.isEnabled {
-                    let fromId = nodeIdFromPortId(link.fromPortId) ?? link.fromTileId
-                    let toId = nodeIdFromPortId(link.toPortId) ?? link.toTileId
-
-                    if hidden.contains(fromId) || hidden.contains(toId) {
-                        continue
-                    }
-
-                    guard
-                        tab.graph?.tileLayouts[fromId] != nil,
-                        tab.graph?.tileLayouts[toId] != nil
-                    else {
-                        continue // Skip stale/ghost links
-                    }
-
-                    let p0 = senderNubCenter(for: link, nodeId: fromId)
-                    let p3 = receiverNubCenter(for: toId)
-
-                    let path = bezierPath(from: shift(p0), to: shift(p3))
-                    context.stroke(path, with: .color(.white.opacity(0.45)), lineWidth: 2.0)
+                guard
+                    let fromLayout = graph.tileLayouts[fromId],
+                    let toLayout = graph.tileLayouts[toId]
+                else {
+                    continue // Skip stale/ghost links
                 }
-            }
 
-            if let fromNode = linkingFromNodeId, let cur = linkingCurrentPoint {
-                let start = linkingFromPoint ?? senderNubCenter(for: fromNode)
-                let path = bezierPath(from: shift(start), to: shift(cur))
-                let color: Color
-                if hoverInvalidReceiverNodeId != nil {
-                    color = Color.red.opacity(0.75)
-                } else if hoverReceiverNodeId != nil {
-                    color = Color.accentColor.opacity(0.75)
-                } else {
-                    color = Color.white.opacity(0.35)
-                }
-                context.stroke(path, with: .color(color), lineWidth: 2.0)
+                positions[fromId] = fromLayout.position.cgPoint
+                positions[toId] = toLayout.position.cgPoint
+                specs.append(GraphLinkSpec(
+                    fromNodeId: fromId,
+                    fromOffset: senderNubCenter(for: link, nodeId: fromId),
+                    toNodeId: toId,
+                    toOffset: receiverNubCenter(for: toId)
+                ))
             }
         }
-        .frame(width: w, height: h)
-        .offset(x: -pad, y: -pad)
-        .allowsHitTesting(false)
-    }
-    
 
-private func bezierPath(from p0: CGPoint, to p3: CGPoint) -> Path {
-    var path = Path()
-    path.move(to: p0)
-    let dxRaw = (p3.x - p0.x) * 0.45
-    let dx = max(80, abs(dxRaw))
-    let c1 = CGPoint(x: p0.x + dx, y: p0.y)
-    let c2 = CGPoint(x: p3.x - dx, y: p3.y)
-    path.addCurve(to: p3, control1: c1, control2: c2)
-    return path
-}
+        var pending: GraphPendingLinkSpec? = nil
+        if let fromNode = linkingFromNodeId {
+            positions[fromNode] = persistedNodePosition(for: fromNode)
+            let color: Color
+            if hoverInvalidReceiverNodeId != nil {
+                color = Color.red.opacity(0.75)
+            } else if hoverReceiverNodeId != nil {
+                color = Color.accentColor.opacity(0.75)
+            } else {
+                color = Color.white.opacity(0.35)
+            }
+            pending = GraphPendingLinkSpec(
+                fromNodeId: fromNode,
+                fallbackFromOffset: senderNubCenter(for: fromNode),
+                color: color
+            )
+        }
+
+        return GraphLinksCanvasView(
+            links: specs,
+            pendingLink: pending,
+            persistedPositions: positions,
+            store: interaction,
+            size: size,
+            drawPadding: canvasDrawPadding
+        )
+        .equatable()
+    }
+
 
 /// If we encode node ids into port ids, recover them. Otherwise nil.
 private func nodeIdFromPortId(_ portId: String) -> UUID? {
@@ -7822,20 +8019,17 @@ private struct LinkReceiverHit {
 }
 
 private func clearLinkHoverState() {
-    hoverReceiverNodeId = nil
-    hoverInvalidReceiverNodeId = nil
+    if hoverReceiverNodeId != nil { hoverReceiverNodeId = nil }
+    if hoverInvalidReceiverNodeId != nil { hoverInvalidReceiverNodeId = nil }
 }
 
 private func setLinkHoverState(_ hit: LinkReceiverHit?) {
-    hoverReceiverNodeId = nil
-    hoverInvalidReceiverNodeId = nil
-
-    guard let hit else { return }
-    if hit.validation.isAllowed {
-        hoverReceiverNodeId = hit.nodeId
-    } else {
-        hoverInvalidReceiverNodeId = hit.nodeId
-    }
+    // Called on every mouse move during a link drag. Only write when the hover target
+    // actually changes; these are body-read @State and each write re-renders the graph.
+    let newValid: UUID? = (hit?.validation.isAllowed == true) ? hit?.nodeId : nil
+    let newInvalid: UUID? = (hit != nil && hit?.validation.isAllowed == false) ? hit?.nodeId : nil
+    if hoverReceiverNodeId != newValid { hoverReceiverNodeId = newValid }
+    if hoverInvalidReceiverNodeId != newInvalid { hoverInvalidReceiverNodeId = newInvalid }
 }
 
 @ViewBuilder
@@ -9361,10 +9555,41 @@ private func groupNodeId(for groupKey: String) -> UUID {
     return UUID(uuid: uuidBytes)
 }
 
+/// Current position including any live drag. Safe to call anywhere: the store read is
+/// untracked. Don't use it for on-screen placement (it won't follow a drag); use
+/// `nodePositioner(_:)` for that.
 private func nodePosition(for tileId: UUID) -> CGPoint {
-    if let transient = transientNodePositions[tileId] { return transient }
-    if tab.graph == nil { tab.graph = DashboardGraph() }
-    return tab.graph?.tileLayouts[tileId]?.position.cgPoint ?? .zero
+    if let transient = interaction.untrackedDragPosition(for: tileId) { return transient }
+    return persistedNodePosition(for: tileId)
+}
+
+/// Committed position from `tab.graph`. Never mutates the graph, so it's safe in body.
+private func persistedNodePosition(for tileId: UUID) -> CGPoint {
+    tab.graph?.tileLayouts[tileId]?.position.cgPoint ?? .zero
+}
+
+/// Places a node view at its position and follows live drags without re-running this body.
+/// Use as `.modifier(nodePositioner(nodeId))` in place of `.position(...)`.
+private func nodePositioner(_ nodeId: UUID) -> GraphNodePositioner {
+    GraphNodePositioner(
+        nodeId: nodeId,
+        persistedPosition: persistedNodePosition(for: nodeId),
+        store: interaction
+    )
+}
+
+/// Commits several node positions in one graph write (one re-render and one autosave
+/// instead of one per node), then drops their live drag positions.
+private func setNodePositions(_ positions: [UUID: CGPoint]) {
+    guard !positions.isEmpty else { return }
+    var graph = tab.graph ?? DashboardGraph()
+    for (id, p) in positions {
+        var layout = graph.tileLayouts[id] ?? TileGraphLayout(position: .zero)
+        layout.position = CGPointCodable(p)
+        graph.tileLayouts[id] = layout
+    }
+    tab.graph = graph
+    interaction.clearDragPositions(Array(positions.keys))
 }
 
 private func setNodePosition(_ p: CGPoint, for tileId: UUID) {
@@ -9372,39 +9597,7 @@ private func setNodePosition(_ p: CGPoint, for tileId: UUID) {
     var layout = tab.graph?.tileLayouts[tileId] ?? TileGraphLayout(position: .zero)
     layout.position = CGPointCodable(p)
     tab.graph?.tileLayouts[tileId] = layout
-    transientNodePositions.removeValue(forKey: tileId)
-}
-
-private func dottedGridLayer(in size: CGSize, zoom: CGFloat) -> some View {
-    let pad = canvasDrawPadding
-    return Canvas { context, canvasSize in
-        context.blendMode = .plusLighter
-
-        let step: CGFloat = 40
-        let majorEvery: Int = 4
-        let minorDot: CGFloat = 2.0
-        let majorDot: CGFloat = 3.0
-        let cols = Int(canvasSize.width / step) + 2
-        let rows = Int(canvasSize.height / step) + 2
-        let minorColor = Color.white.opacity(0.10)
-        let majorColor = Color.white.opacity(0.16)
-
-        for row in 0...rows {
-            for col in 0...cols {
-                let x = CGFloat(col) * step
-                let y = CGFloat(row) * step
-                let isMajor = row % majorEvery == 0 && col % majorEvery == 0
-                let size = isMajor ? majorDot : minorDot
-                let color = isMajor ? majorColor : minorColor
-                let rect = CGRect(x: x, y: y, width: size, height: size)
-                context.fill(Path(ellipseIn: rect), with: .color(color))
-            }
-        }
-    }
-    .frame(width: size.width + pad * 2, height: size.height + pad * 2)
-    .offset(x: -pad, y: -pad)
-    .allowsHitTesting(false)
-    .blendMode(.plusLighter)
+    interaction.setDragPosition(nil, for: tileId)
 }
 
 // MARK: - Collision avoidance (prevent nodes overlapping)
@@ -9608,6 +9801,17 @@ private func nodeDragGesture(tileId: UUID) -> some Gesture {
             let start = dragStartByTileId[tileId] ?? nodePosition(for: tileId)
             if dragStartByTileId[tileId] == nil {
                 dragStartByTileId[tileId] = start
+                // Dragging a node that's part of a multi-selection moves the whole selection.
+                if selectedGraphNodeIds.count > 1, selectedGraphNodeIds.contains(tileId) {
+                    let hidden = hiddenGraphNodeIds
+                    var companions: [UUID: CGPoint] = [:]
+                    for id in selectedGraphNodeIds where id != tileId && !hidden.contains(id) {
+                        companions[id] = nodePosition(for: id)
+                    }
+                    dragCompanionStartsByTileId = companions
+                } else {
+                    dragCompanionStartsByTileId = [:]
+                }
             }
 
             let safeZoom = max(0.0001, zoom)
@@ -9630,26 +9834,32 @@ private func nodeDragGesture(tileId: UUID) -> some Gesture {
             )
             let newPos = graphPoint(fromViewPoint: desiredViewPoint)
 
-            transientNodePositions[tileId] = newPos
+            var updates: [UUID: CGPoint] = [tileId: newPos]
+            let dx = newPos.x - start.x
+            let dy = newPos.y - start.y
+            for (id, companionStart) in dragCompanionStartsByTileId {
+                updates[id] = CGPoint(x: companionStart.x + dx, y: companionStart.y + dy)
+            }
+            interaction.setDragPositions(updates)
         }
         .onEnded { _ in
             if isNodeDragging {
                 isNodeDragging = false
             }
-            let finalPos = transientNodePositions[tileId] ?? nodePosition(for: tileId)
-            setNodePosition(finalPos, for: tileId)
+            let movedIds = [tileId] + Array(dragCompanionStartsByTileId.keys)
+            var finalPositions: [UUID: CGPoint] = [:]
+            for id in movedIds {
+                finalPositions[id] = nodePosition(for: id)
+            }
+            setNodePositions(finalPositions)
 
             dragStartByTileId[tileId] = nil
             dragGrabOffsetByTileId[tileId] = nil
-            transientNodePositions.removeValue(forKey: tileId)
+            dragCompanionStartsByTileId = [:]
         }
 }
 
 // MARK: - Viewport transforms
-
-private func applyViewport(to graphPoint: CGPoint) -> CGPoint {
-    graphPoint
-}
 
 private func graphPoint(fromViewPoint viewPoint: CGPoint) -> CGPoint {
     let safeZoom = zoom == 0 ? 1.0 : zoom
@@ -9958,75 +10168,6 @@ private func fireSendAllToConsoles(
 }
 // MARK: - Trigger -> Action execution (executor wired)
 
-private func runActionsDownstream(of triggerNodeId: UUID, userInfo: [AnyHashable: Any]) {
-    guard var graph = tab.graph else { return }
-
-    let sourcePortId: String? = {
-        guard let configId = userInfo["buttonConfigId"] as? UUID else { return nil }
-        return GraphAutomationTraversal.buttonOutputPortId(nodeId: triggerNodeId, buttonConfigId: configId)
-    }()
-
-    let variableNodeIds = GraphAutomationTraversal.downstreamNodeIds(
-        graph: graph,
-        triggerNodeId: triggerNodeId,
-        matchingGroupKeys: ["utility.variable"],
-        sourcePortId: sourcePortId,
-        resolveNodeIdFromPortId: { nodeIdFromPortId($0) }
-    )
-
-    if !variableNodeIds.isEmpty {
-        let payloadText = userInfo[TriggerNodeUserInfoKeys.payloadText] as? String
-        let payloadNumber = userInfo[TriggerNodeUserInfoKeys.payloadNumber] as? Double
-        let payloadBoolean = userInfo[TriggerNodeUserInfoKeys.payloadBoolean] as? Bool
-        for variableNodeId in variableNodeIds {
-            GraphRuntime.updateVariableNodeValue(
-                graph: &graph,
-                nodeId: variableNodeId,
-                payloadText: payloadText,
-                payloadNumber: payloadNumber,
-                payloadBoolean: payloadBoolean,
-                sourceNodeId: triggerNodeId
-            )
-        }
-        tab.graph = graph
-    }
-
-    let downstream = GraphAutomationTraversal.downstreamActionInstances(
-        graph: graph,
-        triggerNodeId: triggerNodeId,
-        sourcePortId: sourcePortId,
-        resolveNodeIdFromPortId: { nodeIdFromPortId($0) }
-    )
-
-    for action in downstream {
-        runActionNode(nodeId: action.nodeId, key: action.key)
-    }
-
-    GraphAutomationRuntime.shared.runQuConsoleActionsFromTrigger(graph: graph, triggerNodeId: triggerNodeId)
-    GraphAutomationRuntime.shared.runDigiCoConsoleActionsFromTrigger(graph: graph, triggerNodeId: triggerNodeId)
-    GraphAutomationRuntime.shared.runStandardConsoleActionsFromTrigger(graph: graph, triggerNodeId: triggerNodeId)
-
-    let repeaterNodes = downstreamRepeaterNodeIds(graph: graph, triggerNodeId: triggerNodeId, sourcePortId: sourcePortId)
-    for repeaterNodeId in repeaterNodes {
-        runRepeaterNode(nodeId: repeaterNodeId)
-    }
-
-    let delayNodes = downstreamDelayNodeIds(graph: graph, triggerNodeId: triggerNodeId, sourcePortId: sourcePortId)
-    for delayNodeId in delayNodes {
-        runDelayNode(nodeId: delayNodeId)
-    }
-}
-
-private func shouldHandleTrigger(nodeId: UUID) -> Bool {
-    let now = Date().timeIntervalSince1970
-    let last = lastTriggerFireAtByNodeId[nodeId] ?? 0
-    if (now - last) < 0.15 {
-        return false
-    }
-    lastTriggerFireAtByNodeId[nodeId] = now
-    return true
-}
-
 private func runActionNode(nodeId: UUID, key: String) {
     guard let graph = tab.graph else { return }
 
@@ -10074,48 +10215,6 @@ private func runActionNode(nodeId: UUID, key: String) {
 
 
     GraphActionExecutor.execute(actionKey: key, nodeId: nodeId, graph: graph, context: ctx)
-}
-
-private func downstreamRepeaterNodeIds(graph: DashboardGraph, triggerNodeId: UUID, sourcePortId: String? = nil) -> [UUID] {
-    let repeaterIds = Set(graph.moduleGroupNodeInstances
-        .filter { $0.groupKey == "utility.repeater" }
-        .map { $0.id }
-    )
-
-    guard !repeaterIds.isEmpty else { return [] }
-
-    var results: [UUID] = []
-    for link in graph.links where link.isEnabled {
-        let fromId = nodeIdFromPortId(link.fromPortId) ?? link.fromTileId
-        guard fromId == triggerNodeId else { continue }
-        if let sourcePortId, link.fromPortId != sourcePortId { continue }
-        let toId = nodeIdFromPortId(link.toPortId) ?? link.toTileId
-        if repeaterIds.contains(toId) {
-            results.append(toId)
-        }
-    }
-    return results
-}
-
-private func downstreamDelayNodeIds(graph: DashboardGraph, triggerNodeId: UUID, sourcePortId: String? = nil) -> [UUID] {
-    let delayIds = Set(graph.moduleGroupNodeInstances
-        .filter { $0.groupKey == "utility.delay" }
-        .map { $0.id }
-    )
-
-    guard !delayIds.isEmpty else { return [] }
-
-    var results: [UUID] = []
-    for link in graph.links where link.isEnabled {
-        let fromId = nodeIdFromPortId(link.fromPortId) ?? link.fromTileId
-        guard fromId == triggerNodeId else { continue }
-        if let sourcePortId, link.fromPortId != sourcePortId { continue }
-        let toId = nodeIdFromPortId(link.toPortId) ?? link.toTileId
-        if delayIds.contains(toId) {
-            results.append(toId)
-        }
-    }
-    return results
 }
 
 private func actionsDownstream(ofRepeater repeaterNodeId: UUID, graph: DashboardGraph) -> [(nodeId: UUID, key: String)] {

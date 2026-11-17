@@ -440,6 +440,19 @@ struct ProPresenterSlideStatus: Equatable {
 
 // MARK: - Service (poll loop per module)
 
+/// One module's state, observed by that module's tile alone. The service rewrites its
+/// state dictionary several times per poll and holds every module, so tiles observing the
+/// service redrew on every write, for every module.
+@MainActor
+@Observable
+final class ProPresenterModuleStateCell {
+    var state: ProPresenterService.State
+
+    init(state: ProPresenterService.State) {
+        self.state = state
+    }
+}
+
 @MainActor
 final class ProPresenterService: ObservableObject {
     struct ProPresenterGroupRange: Equatable {
@@ -594,7 +607,41 @@ final class ProPresenterService: ObservableObject {
         var nextAllowedAttemptAt: Date? = nil
     }
 
-    @Published private(set) var stateByModuleID: [UUID: State] = [:]
+    /// Not `@Published`: tiles observe their own `stateCell(for:)`. Writes sync the cells,
+    /// except for a module mid-poll, whose cell updates once when its poll ends.
+    private(set) var stateByModuleID: [UUID: State] = [:] {
+        didSet { syncStateCells() }
+    }
+    private var stateCells: [UUID: ProPresenterModuleStateCell] = [:]
+    private var modulesPolling: Set<UUID> = []
+
+    func stateCell(for moduleID: UUID) -> ProPresenterModuleStateCell {
+        if let cell = stateCells[moduleID] { return cell }
+        let cell = ProPresenterModuleStateCell(state: stateByModuleID[moduleID] ?? State())
+        stateCells[moduleID] = cell
+        return cell
+    }
+
+    private func syncStateCells() {
+        for (moduleID, cell) in stateCells where !modulesPolling.contains(moduleID) {
+            syncStateCell(cell, to: stateByModuleID[moduleID] ?? State())
+        }
+    }
+
+    private func syncStateCell(_ cell: ProPresenterModuleStateCell, to state: State) {
+        guard Self.cellNeedsUpdate(cell.state, to: state) else { return }
+        cell.state = state
+    }
+
+    /// Whether a tile showing `current` needs `next`. Tiles use `lastUpdated` only for
+    /// whether a poll has ever succeeded, and it changes on every poll, so a change to it
+    /// alone doesn't count.
+    nonisolated static func cellNeedsUpdate(_ current: State, to next: State) -> Bool {
+        if (current.lastUpdated == nil) != (next.lastUpdated == nil) { return true }
+        var comparable = current
+        comparable.lastUpdated = next.lastUpdated
+        return comparable != next
+    }
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var pollingOwnerByModuleID: [UUID: UUID] = [:]
     private var pollBackoffBySourceKey: [String: PollBackoffState] = [:]
@@ -1446,6 +1493,13 @@ final class ProPresenterService: ObservableObject {
     }
 
     private func tick(moduleID: UUID, config: ProPresenterModuleConfig) async {
+        modulesPolling.insert(moduleID)
+        defer {
+            modulesPolling.remove(moduleID)
+            if let cell = stateCells[moduleID] {
+                syncStateCell(cell, to: stateByModuleID[moduleID] ?? State())
+            }
+        }
         guard let selectedProfileID = config.connectionProfileID else {
             var state = stateByModuleID[moduleID] ?? State()
             clearCachedPresentationState(&state, isConnected: false)
@@ -2806,7 +2860,9 @@ private struct ProPresenterInfoCard: View {
 struct ProPresenterModuleView: View {
     let moduleID: UUID
     @Binding var config: ProPresenterModuleConfig
-    @ObservedObject var service: ProPresenterService
+    /// Not observed: the body reads `stateCell(for:)`, so this tile redraws only when its
+    /// own module's state changes.
+    let service: ProPresenterService
     let isLiveMode: Bool
 
     @State private var hasSeededConfig: Bool = false
@@ -3118,7 +3174,7 @@ struct ProPresenterModuleView: View {
         return parts.isEmpty ? (t.name ?? t.uuid ?? "Timer") : parts.joined(separator: "  •  ")
     }
 	var body: some View {
-		let state = service.stateByModuleID[moduleID] ?? .init()
+		let state = service.stateCell(for: moduleID).state
 		let connected = state.status.isConnected || (state.lastUpdated != nil && state.lastError == nil)
 		let arrangementSuffix: String = {
 			guard config.showPresentationName, config.showArrangementName else { return "" }
@@ -3831,7 +3887,7 @@ struct ProPresenterModuleView: View {
 
 struct ProPresenterModuleEditView: View {
     let moduleID: UUID
-    @ObservedObject var service: ProPresenterService
+    let service: ProPresenterService
     @Binding var config: ProPresenterModuleConfig
 
     init(moduleID: UUID, service: ProPresenterService = ProPresenterModulePlugin.sharedService, config: Binding<ProPresenterModuleConfig>) {
@@ -3990,7 +4046,7 @@ struct ProPresenterModuleEditView: View {
 
 				// Timers picker (only in settings UI)
 				if config.dataMode == .timersCurrent {
-                    let timers = service.stateByModuleID[moduleID]?.lastTimers ?? []
+                    let timers = service.stateCell(for: moduleID).state.lastTimers
 
                     HStack {
                         Text("Timer")

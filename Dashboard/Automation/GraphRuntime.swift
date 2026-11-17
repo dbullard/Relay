@@ -688,11 +688,60 @@ struct GraphRuntime {
             return wirelessValue
         }
 
-        if let graphVariable = variableValuesByName(tab: tab)[normalizeGraphVariableName(trimmed)] {
+        if let graphVariable = variableValue(forKey: normalizeGraphVariableName(trimmed), tab: tab) {
             return graphVariable
         }
 
         return SharedValueResolver().resolveText(token: trimmed)
+    }
+
+    /// Same result as `variableValuesByName(tab:)[key]`, without building that dictionary.
+    /// Text tiles resolve tokens on every render; building the full dictionary read every
+    /// shared value (observing the whole snapshot) for each token.
+    static func variableValue(forKey key: String, tab: DashboardTab) -> String? {
+        // Graph variables are written last in `variableValuesByName`, so they win.
+        if isGraphVariablesFeatureEnabled, let graph = tab.graph {
+            var match: String?
+            for config in graph.variableNodeConfigByNodeId.values.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+                let normalized = normalizeGraphVariableName(config.name)
+                guard !normalized.isEmpty, key == normalized || key == "graph:\(normalized)" else { continue }
+                match = resolvedVariableCurrentValue(nodeId: config.id, tab: tab)
+            }
+            if let match { return match }
+        }
+        return universalVariableValue(forKey: key, tab: tab)
+    }
+
+    /// Same result as `universalVariableValuesByName(tab:)[key]`, applying its sources in the
+    /// same order (later sources override earlier ones): shared values, linked devices, synced
+    /// tabs, then linked people.
+    static func universalVariableValue(forKey key: String, tab: DashboardTab) -> String? {
+        var result: String?
+
+        let sharedName = key.hasPrefix("shared:") ? String(key.dropFirst("shared:".count)) : key
+        if let value = SharedValueStore.shared.value(named: sharedName), !value.displayValue.isEmpty {
+            result = value.displayValue
+        }
+
+        for entry in LinkedDeviceVariableStore.shared.entries where entry.tokenName == key {
+            guard let payload = entry.value.payload else { continue }
+            result = payload.displayValue
+        }
+
+        if let groupID = tab.syncGroupID, !tab.syncIsOwner,
+           let synced = SyncedTabVariableStore.shared.values(for: groupID)[key] {
+            result = synced
+        }
+
+        for person in LinkedComputerPersonVariableStore.shared.variables.sorted(by: { $0.sourceID < $1.sourceID }) {
+            if key == normalizeSharedValueName("person_\(person.name)"), result == nil {
+                result = person.name
+            }
+            if key == person.variableName || key == "person:\(person.variableName)" {
+                result = person.name
+            }
+        }
+        return result
     }
 
     static func textInterpolationCompletionCandidates(query rawQuery: String) -> [TextInterpolationCompletionCandidate] {

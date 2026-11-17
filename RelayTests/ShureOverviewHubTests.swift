@@ -66,6 +66,30 @@ final class ShureOverviewHubTests: XCTestCase {
         XCTAssertEqual(mode, .meter)
     }
 
+    func testWantedDevicesIsUnionOfTileScopes() {
+        let tileA = UUID(), tileB = UUID()
+        let mic1 = UUID(), mic2 = UUID(), iem1 = UUID()
+        let wanted = ShureOverviewHub.wantedDeviceIDs(
+            registeredInstances: [tileA, tileB],
+            deviceScopes: [tileA: [mic1, mic2], tileB: [mic2, iem1]]
+        )
+        XCTAssertEqual(wanted, [mic1, mic2, iem1])
+    }
+
+    func testWantedDevicesIsAllWhenAnyTileShowsAll() {
+        let tileA = UUID(), tileB = UUID()
+        let wanted = ShureOverviewHub.wantedDeviceIDs(
+            registeredInstances: [tileA, tileB],
+            deviceScopes: [tileA: [UUID()]]
+        )
+        XCTAssertNil(wanted)
+    }
+
+    func testWantedDevicesIsEmptyWithoutTiles() {
+        let wanted = ShureOverviewHub.wantedDeviceIDs(registeredInstances: [], deviceScopes: [:])
+        XCTAssertEqual(wanted, [])
+    }
+
     @MainActor
     func testHubReconcilesEffectiveModeAcrossRegisteredInstances() {
         let hub = ShureOverviewHub.shared
