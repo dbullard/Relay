@@ -24,7 +24,9 @@ The core app works without these services. This repository does not include the 
 
 ## Bundle identifiers
 
-The app uses `app.relay.Relay`, the transcription helper `app.relay.Relay.TranscriptionHelper`, and tests `app.relay.RelayTests`. Sparkle's installer services and the helper's XPC service name derive from these, so change them together (project build settings, `Relay/RelayRelease.entitlements`, and the XPC name in `Dashboard/Modules/XPCSpeechTranscriberAdapter.swift`). Forks that ship their own builds should use their own identifiers so macOS permissions, Keychain items, and settings don't collide with the upstream app.
+The app uses `app.relay.Relay`, the transcription helpers `app.relay.Relay.TranscriptionHelper`, `app.relay.Relay.TranscriptionHelper2` and `app.relay.Relay.TranscriptionHelper3`, and tests `app.relay.RelayTests`. Sparkle's installer services and the helpers' XPC service names derive from these, so change them together (project build settings, `Relay/RelayRelease.entitlements`, and `TranscriptionEngineHost.helperServiceNames` in `Dashboard/Modules/TranscriptionPipelinePlanning.swift`).
+
+The three helper targets build the same `TranscriptionHelper/` sources. Speech recognition allows one recognition task per process, so each simultaneously transcribing input needs its own process: the app plus three helpers gives four inputs. Forks that ship their own builds should use their own identifiers so macOS permissions, Keychain items, and settings don't collide with the upstream app.
 
 Earlier builds used a different identifier. Because settings, permissions, and Keychain items are tied to the bundle identifier, anyone moving from an earlier build starts with fresh settings and reconnects their integrations.
 

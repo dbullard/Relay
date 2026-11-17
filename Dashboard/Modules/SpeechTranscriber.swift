@@ -24,6 +24,10 @@ final class SpeechTranscriber {
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    /// Bumped for every recognition task and on stop, so a late callback from an old
+    /// task can't start a new one. Mutated only on `queue` (and once in `start()`).
+    private var recognitionGeneration = 0
+    private var isStopped = false
 
     var onPartial: ((String, Double?) -> Void)?
     var onFinal: ((String, Double?) -> Void)?
@@ -113,11 +117,26 @@ final class SpeechTranscriber {
         // proven stale-transcript-after-stop bug in its sibling throttler.)
         throttler.cancel()
         queue.async { [weak self] in
+            self?.isStopped = true
+            self?.recognitionGeneration += 1
             self?.request?.endAudio()
             self?.task?.cancel()
             self?.task = nil
             self?.request = nil
             self?.recognizer = nil
+        }
+    }
+
+    /// Starts a fresh task if `generation` is still the current one. A task ends after a
+    /// final result or a recoverable error; audio appended after that would go nowhere.
+    private func restartRecognition(ifCurrent generation: Int) {
+        queue.async { [weak self] in
+            guard let self, !self.isStopped, self.recognitionGeneration == generation else { return }
+            self.request?.endAudio()
+            self.task?.cancel()
+            self.task = nil
+            self.request = nil
+            self.startRecognition()
         }
     }
 
@@ -136,6 +155,8 @@ final class SpeechTranscriber {
             request.requiresOnDeviceRecognition = true
         }
         self.request = request
+        recognitionGeneration += 1
+        let generation = recognitionGeneration
 
         task = recognizer.recognitionTask(with: request) { [weak self] (result: SFSpeechRecognitionResult?, error: Error?) in
             guard let self else { return }
@@ -145,14 +166,10 @@ final class SpeechTranscriber {
                     code: .recognitionFailed,
                     message: "Speech error (\(nsError.domain) \(nsError.code)): \(nsError.localizedDescription)"
                 )
-                if self.shouldRestart(for: error) {
-                    self.queue.async { [weak self] in
-                        self?.request?.endAudio()
-                        self?.task?.cancel()
-                        self?.task = nil
-                        self?.request = nil
-                        self?.startRecognition()
-                    }
+                let restarting = self.shouldRestart(for: error)
+                print("[Speech In-Process] task error domain=\(nsError.domain) code=\(nsError.code) restarting=\(restarting) message=\(nsError.localizedDescription)")
+                if restarting {
+                    self.restartRecognition(ifCurrent: generation)
                     return
                 }
                 self.onError?(wrapped)
@@ -165,6 +182,7 @@ final class SpeechTranscriber {
                 self.throttler.publish(isFinal: true, targetHz: self.config.publishHz) { [weak self] in
                     self?.onFinal?(text, confidence)
                 }
+                self.restartRecognition(ifCurrent: generation)
             } else {
                 self.throttler.publish(isFinal: false, targetHz: self.config.publishHz) { [weak self] in
                     self?.onPartial?(text, confidence)

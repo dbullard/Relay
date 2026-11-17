@@ -112,10 +112,18 @@ final class HelperSpeechTranscriber {
     private var task: SFSpeechRecognitionTask?
     private var appendedBufferCount = 0
     private var partialResultCount = 0
+    /// Bumped for every recognition task and on stop, so a late callback from an old
+    /// task can't start a new one -- a stray task would hold this process's only
+    /// recognizer slot. Mutated only on `queue` (and once in `start()`).
+    private var recognitionGeneration = 0
+    private var isStopped = false
 
     var onPartial: ((String, Double?) -> Void)?
     var onFinal: ((String, Double?) -> Void)?
     var onError: ((TranscriptionFailure) -> Void)?
+    /// Receives every diagnostic line. `print` from an XPC service goes nowhere, so the
+    /// service forwards these to the app (and to the unified log).
+    var onLog: ((String) -> Void)?
 
     init(config: Config) {
         self.config = config
@@ -156,12 +164,28 @@ final class HelperSpeechTranscriber {
         throttler.cancel()
         queue.async { [weak self] in
             self?.log("stop appendedBuffers=\(self?.appendedBufferCount ?? 0)")
+            self?.isStopped = true
+            self?.recognitionGeneration += 1
             self?.request?.endAudio()
             self?.task?.cancel()
             self?.task = nil
             self?.request = nil
             self?.recognizer = nil
             self?.partialResultCount = 0
+        }
+    }
+
+    /// Starts a fresh task if `generation` is still the current one. A task ends after a
+    /// final result or a recoverable error; audio appended after that would go nowhere.
+    private func restartRecognition(ifCurrent generation: Int, reason: String) {
+        queue.async { [weak self] in
+            guard let self, !self.isStopped, self.recognitionGeneration == generation else { return }
+            self.log("task restarting after \(reason)")
+            self.request?.endAudio()
+            self.task?.cancel()
+            self.task = nil
+            self.request = nil
+            self.startRecognition()
         }
     }
 
@@ -183,6 +207,8 @@ final class HelperSpeechTranscriber {
         }
         self.request = request
         self.partialResultCount = 0
+        recognitionGeneration += 1
+        let generation = recognitionGeneration
         log("request configured requiresOnDevice=\(request.requiresOnDeviceRecognition)")
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
@@ -195,14 +221,7 @@ final class HelperSpeechTranscriber {
                 )
                 self.log("task error domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
                 if self.shouldRestart(for: error) {
-                    self.log("task restarting after recoverable error")
-                    self.queue.async { [weak self] in
-                        self?.request?.endAudio()
-                        self?.task?.cancel()
-                        self?.task = nil
-                        self?.request = nil
-                        self?.startRecognition()
-                    }
+                    self.restartRecognition(ifCurrent: generation, reason: "recoverable error")
                     return
                 }
                 self.onError?(wrapped)
@@ -223,6 +242,7 @@ final class HelperSpeechTranscriber {
                 self.throttler.publish(isFinal: true, targetHz: self.config.publishHz) { [weak self] in
                     self?.onFinal?(text, confidence)
                 }
+                self.restartRecognition(ifCurrent: generation, reason: "final result")
             } else {
                 self.throttler.publish(isFinal: false, targetHz: self.config.publishHz) { [weak self] in
                     self?.onPartial?(text, confidence)
@@ -251,7 +271,7 @@ final class HelperSpeechTranscriber {
     }
 
     private func log(_ message: String) {
-        print("[Helper Speech] \(message)")
+        onLog?(message)
     }
 
     private func describe(_ status: SFSpeechRecognizerAuthorizationStatus) -> String {
@@ -282,6 +302,10 @@ final class HelperSpeechTranscriberAdapter {
     var onPartial: ((String, Double?) -> Void)?
     var onFinal: ((String, Double?) -> Void)?
     var onError: ((TranscriptionFailure) -> Void)?
+    var onLog: ((String) -> Void)? {
+        get { transcriber.onLog }
+        set { transcriber.onLog = newValue }
+    }
 
     init(config: HelperSpeechTranscriber.Config) {
         transcriber = HelperSpeechTranscriber(config: config)
