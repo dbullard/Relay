@@ -116,6 +116,90 @@ final class SharedValueTriggerAdapter {
     }
 }
 
+/// Decides which wireless receivers shared values need connected. Relay suggests a value for
+/// every channel's battery, RF, audio and connected state; keeping every receiver live for
+/// values nothing reads costs a connection and a meter stream per receiver. A wireless value
+/// counts as used when someone made it (custom), or when its name appears in the document:
+/// a tile, an automation, or a computed value's expression.
+enum SharedValueWirelessUsage {
+    /// Names a document mentions: every run of letters, digits and underscores (how
+    /// `#{name}` tokens appear), plus the normalized contents of `{...}` tokens so a token
+    /// typed with other spacing or case still counts.
+    static func referencedNames(in text: String) -> Set<String> {
+        var names = Set<String>()
+        var word = ""
+        var braceContent: String?
+        func flushWord() {
+            if !word.isEmpty { names.insert(word.lowercased()) }
+            word = ""
+        }
+        for character in text {
+            if character.isLetter || character.isNumber || character == "_" {
+                word.append(character)
+            } else {
+                flushWord()
+            }
+            if character == "{" {
+                braceContent = ""
+            } else if character == "}" {
+                if let content = braceContent { insertTokenName(content, into: &names) }
+                braceContent = nil
+            } else if braceContent != nil {
+                braceContent?.append(character)
+                if (braceContent?.count ?? 0) > 200 { braceContent = nil }
+            }
+        }
+        flushWord()
+        return names
+    }
+
+    private static func insertTokenName(_ content: String, into names: inout Set<String>) {
+        var raw = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.hasPrefix("#") { raw.removeFirst() }
+        if raw.lowercased().hasPrefix("shared:") { raw = String(raw.dropFirst("shared:".count)) }
+        let name = normalizeSharedValueName(String(raw.split(separator: ".").first ?? ""))
+        if !name.isEmpty { names.insert(name) }
+    }
+
+    static func isUsed(_ value: SharedValue, referencedNames: Set<String>) -> Bool {
+        !value.isSuggested || referencedNames.contains(value.name)
+    }
+
+    /// Shure receivers with at least one used value.
+    static func shureDeviceIDs(values: [SharedValue], referencedNames: Set<String>) -> Set<UUID> {
+        Set(values.compactMap { value -> UUID? in
+            guard case let .shure(deviceID, _, _) = value.binding,
+                  isUsed(value, referencedNames: referencedNames) else { return nil }
+            return deviceID
+        })
+    }
+
+    static func needsSennheiser(values: [SharedValue], referencedNames: Set<String>) -> Bool {
+        values.contains { value in
+            guard case .sennheiser = value.binding else { return false }
+            return isUsed(value, referencedNames: referencedNames)
+        }
+    }
+
+    /// Text that can mention a value: the tabs (tiles and per-tab automations), the
+    /// universal automation graph, and every computed value's expression.
+    static func referenceText(tabs: [DashboardTab], universalGraph: DashboardGraph?, values: [SharedValue]) -> String {
+        let encoder = JSONEncoder()
+        var parts: [String] = []
+        if let data = try? encoder.encode(tabs), let text = String(data: data, encoding: .utf8) {
+            parts.append(text)
+        }
+        if let universalGraph, let data = try? encoder.encode(universalGraph),
+           let text = String(data: data, encoding: .utf8) {
+            parts.append(text)
+        }
+        for value in values {
+            if case let .computed(expression, _) = value.binding { parts.append(expression) }
+        }
+        return parts.joined(separator: "\n")
+    }
+}
+
 @MainActor
 final class SharedValueSourceCoordinator {
     static let shared = SharedValueSourceCoordinator()
@@ -130,10 +214,24 @@ final class SharedValueSourceCoordinator {
     private var disconnectedGroupIDs: Set<String> = []
     private var transcriptionPayloads: [UUID: TranscriptOutputPayload] = [:]
     private let wirelessConsumerID = UUID()
+    private var universalGraph: DashboardGraph?
+    /// Names the document mentions; nil when tabs, the universal graph or computed
+    /// expressions changed and the next reconcile must rescan.
+    private var referencedNames: Set<String>?
+    private var lastComputedExpressions: [String] = []
+    /// Shure receivers this coordinator put into Live mode, so it can release them.
+    private var liveShureDeviceIDs: Set<UUID> = []
 
     func updateTabs(_ tabs: [DashboardTab], disconnectedGroupIDs: Set<String>) {
+        if tabs != self.tabs { referencedNames = nil }
         self.tabs = tabs
         self.disconnectedGroupIDs = disconnectedGroupIDs
+    }
+
+    func updateUniversalGraph(_ graph: DashboardGraph?) {
+        guard graph != universalGraph else { return }
+        universalGraph = graph
+        referencedNames = nil
     }
 
     func syncedTabName(for value: SharedValue) -> String? {
@@ -265,17 +363,44 @@ final class SharedValueSourceCoordinator {
     private func reconcileWirelessServices() {
         let isLive = UserDefaults.standard.bool(forKey: "dashboard_live_mode_enabled")
         let values = SharedValueStore.shared.snapshot.values
-        let shureDeviceIDs = Set(values.compactMap { value -> UUID? in
-            guard case let .shure(deviceID, _, _) = value.binding else { return nil }
-            return deviceID
-        })
+        let names = currentReferencedNames(values: values)
+        let shureDeviceIDs = isLive
+            ? SharedValueWirelessUsage.shureDeviceIDs(values: values, referencedNames: names)
+            : []
         for deviceID in shureDeviceIDs {
             let service = ShureWirelessService.shared(for: deviceID)
-            service.setLiveModeEnabled(isLive)
-            service.setOverviewConsumerVisible(wirelessConsumerID, visible: isLive)
+            service.setLiveModeEnabled(true)
+            service.setOverviewConsumerVisible(wirelessConsumerID, visible: true)
         }
-        if values.contains(where: { if case .sennheiser = $0.binding { true } else { false } }) {
+        // Release receivers no longer needed (Live mode off, or their values went unused),
+        // unless a tile still uses them.
+        for deviceID in liveShureDeviceIDs.subtracting(shureDeviceIDs) {
+            let service = ShureWirelessService.shared(for: deviceID)
+            service.setOverviewConsumerVisible(wirelessConsumerID, visible: false)
+            if !isLive || !service.hasConsumers {
+                service.setLiveModeEnabled(false)
+            }
+        }
+        liveShureDeviceIDs = shureDeviceIDs
+        print("DIAGSHARED live=\(isLive) sharedLiveReceivers=\(shureDeviceIDs.count) referencedNames=\(names.count)") // TEMP-DIAG
+        if SharedValueWirelessUsage.needsSennheiser(values: values, referencedNames: names) {
             SennheiserWirelessService.shared.setLiveModeEnabled(isLive)
         }
+    }
+
+    private func currentReferencedNames(values: [SharedValue]) -> Set<String> {
+        let expressions = values.compactMap { value -> String? in
+            if case let .computed(expression, _) = value.binding { return expression }
+            return nil
+        }
+        if expressions != lastComputedExpressions {
+            lastComputedExpressions = expressions
+            referencedNames = nil
+        }
+        if let referencedNames { return referencedNames }
+        let text = SharedValueWirelessUsage.referenceText(tabs: tabs, universalGraph: universalGraph, values: values)
+        let names = SharedValueWirelessUsage.referencedNames(in: text)
+        referencedNames = names
+        return names
     }
 }

@@ -1450,6 +1450,7 @@ var body: some View {
             }
             .onChange(of: universalGraph, initial: false) { _, newGraph in
                 graphAutomationRuntime.setUniversalGraph(newGraph)
+                SharedValueSourceCoordinator.shared.updateUniversalGraph(newGraph)
             }
             .onReceive(SharedSecondTicker.shared.publisher) { _ in
                 SharedValueSourceCoordinator.shared.updateTabs(
@@ -1459,6 +1460,7 @@ var body: some View {
                 evaluateTabSchedule()
             }
             .onAppear {
+                SharedValueSourceCoordinator.shared.updateUniversalGraph(universalGraph)
                 configurePCOAutoAdvanceCoordinator()
                 evaluateTabSchedule()
             }
