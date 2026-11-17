@@ -865,6 +865,14 @@ extension TranscriptionChannelPipeline: AVCaptureAudioDataOutputSampleBufferDele
 }
 #endif
 
+/// The live input level, observed only by the diagnostics line. As a `@Published` controller
+/// property it redrew the whole tile (and its transcript list) ~10 times a second per channel.
+@MainActor
+@Observable
+final class LiveTranscriptionLevelCell {
+    var level: Double = 0
+}
+
 @MainActor
 final class LiveTranscriptionController: ObservableObject {
     private final class WeakControllerBox {
@@ -880,7 +888,13 @@ final class LiveTranscriptionController: ObservableObject {
 
     @Published private(set) var state: LiveTranscriptionState = .idle
     @Published private(set) var entries: [TranscriptEntry] = []
-    @Published private(set) var inputLevel: Double = 0
+    let levelCell = LiveTranscriptionLevelCell()
+    /// Not `@Published`; see `LiveTranscriptionLevelCell`. Still feeds the output payload.
+    private(set) var inputLevel: Double = 0 {
+        didSet {
+            if levelCell.level != inputLevel { levelCell.level = inputLevel }
+        }
+    }
     @Published private(set) var debugInfo: String = ""
     @Published private(set) var inputWarning: String?
 
@@ -1366,9 +1380,12 @@ final class LiveTranscriptionController: ObservableObject {
         recomputeModuleWarning()
     }
 
+    /// Runs on every stats callback (several a second per channel). `inputWarning` is
+    /// `@Published`, which notifies even for an unchanged value, so only write a change.
     private func updateInputWarning() {
         let hasHotInput = channelStats.values.contains { $0.peak >= 0.98 || $0.rms >= 0.25 }
-        inputWarning = hasHotInput ? "Input is hot. Reduce device gain." : nil
+        let warning: String? = hasHotInput ? "Input is hot. Reduce device gain." : nil
+        if inputWarning != warning { inputWarning = warning }
     }
 
     private func recomputeModuleWarning() {
@@ -1816,7 +1833,7 @@ final class LiveTranscriptionController: ObservableObject {
         }
 
         let trimmed = LiveTranscriptionController.trimmedEntries(updated, retention: retention)
-        entries = trimmed.sorted { $0.timestamp < $1.timestamp }
+        entries = Self.sortedByTimestamp(trimmed)
         if isFinal {
             // The word history and committed prefix are compared against raw recognizer text
             // (stripLeadingFinalText / stripCommittedPrefix), so they must be stored raw. Storing
@@ -1882,6 +1899,13 @@ final class LiveTranscriptionController: ObservableObject {
             }
         }
         return 0
+    }
+
+    /// Entries arrive in order almost always (a new line is appended; an updated line keeps its
+    /// timestamp), so check before copying and sorting the whole transcript on every partial.
+    nonisolated static func sortedByTimestamp(_ entries: [TranscriptEntry]) -> [TranscriptEntry] {
+        let inOrder = zip(entries, entries.dropFirst()).allSatisfy { $0.timestamp <= $1.timestamp }
+        return inOrder ? entries : entries.sorted { $0.timestamp < $1.timestamp }
     }
 
     nonisolated private static func trimmedEntries(
@@ -2095,6 +2119,17 @@ struct LiveTranscriptionTileView: View {
         )
     }
 
+    /// The tile lists at most this many recent lines. With "Limit transcript history" off the
+    /// transcript keeps every line for Copy and Export, and listing all of them made each update
+    /// re-check the whole session. A higher entry limit, if set, is shown in full.
+    nonisolated static func displayedEntryLimit(retention: LiveTranscriptionRetentionSettings) -> Int {
+        let base = 400
+        guard retention.limitsEnabled == true, let maxEntries = retention.maxEntries, maxEntries > base else {
+            return base
+        }
+        return maxEntries
+    }
+
     var body: some View {
         let model = LiveTranscriptionTileView.resolveModel(module: module)
         let tileId = tile.id
@@ -2115,7 +2150,7 @@ struct LiveTranscriptionTileView: View {
                         }
                         .frame(height: 0)
                         LazyVStack(alignment: .leading, spacing: 6) {
-                            ForEach(controller.entries) { entry in
+                            ForEach(controller.entries.suffix(Self.displayedEntryLimit(retention: model.retention))) { entry in
                                 TranscriptRow(
                                     entry: entry,
                                     color: colorForSource(entry.sourceId, model: model),
@@ -2322,7 +2357,8 @@ struct LiveTranscriptionTileView: View {
                 #endif
             }
             .onReceive(SharedSecondTicker.shared.publisher) { date in
-                guard model.usesRelativeTimestamps == true else { return }
+                // Nothing to re-label until there's a line.
+                guard model.usesRelativeTimestamps == true, !controller.entries.isEmpty else { return }
                 relativeTimestampRefreshDate = date
             }
         }
@@ -2472,9 +2508,7 @@ struct LiveTranscriptionTileView: View {
 
                 if model.showsDiagnostics {
                     if controller.state == .listening {
-                        Text("Input level: \(String(format: "%.3f", controller.inputLevel))")
-                            .font(.caption2)
-                            .foregroundStyle(chromeTextColor)
+                        LiveTranscriptionInputLevelText(cell: controller.levelCell, color: chromeTextColor)
                     }
                     if !controller.debugInfo.isEmpty {
                         Text(controller.debugInfo)
@@ -2709,6 +2743,17 @@ struct LiveTranscriptionTileView: View {
             return model
         }
         return LiveTranscriptionModuleModel()
+    }
+}
+
+private struct LiveTranscriptionInputLevelText: View {
+    let cell: LiveTranscriptionLevelCell
+    let color: Color
+
+    var body: some View {
+        Text("Input level: \(String(format: "%.3f", cell.level))")
+            .font(.caption2)
+            .foregroundStyle(color)
     }
 }
 

@@ -292,12 +292,39 @@ audio meters) that stays smooth across many receivers. Judge wireless items by t
     another tab, status passes 10/s → 0, resuming on return.
   - **Not checked live:** MTC/HUI input and plugging a MIDI device in or out (no DAW sending here).
 
-- [ ] **Live Transcription redraws at 10 Hz and the transcript grows forever** — S/M
-  - **Where:** `LiveTranscriptionModule.swift`: `inputLevel` (~232) published per channel;
-    `limitsEnabled: false` by default (~91); full re-sort per partial result.
-  - **Fix:** publish `inputLevel` only when diagnostics are shown; insert entries in order; turn on
-    a default `maxEntries` (the 400 already defined).
-  - **Check:** an hour-long transcription keeps memory flat; tile body count drops at idle speech.
+- [x] **Live Transcription redraws at 10 Hz and the transcript grows forever** — fixed
+  - **Cause:** with audio flowing, every stats callback (~5/s per channel) re-set `@Published
+    inputWarning` ("Input is hot") and every level callback re-set `@Published inputLevel`;
+    `@Published` notifies even for an unchanged value, so the whole tile, transcript list
+    included, redrew ~7 times a second. Only the diagnostics line shows the level. With "Limit
+    transcript history" off (the default) the tile listed every line of the session, so each
+    update re-checked all of them, and each partial result copied and re-sorted the transcript.
+    The relative-timestamp tick also redrew the tile every second with no lines to re-label.
+  - **Fix (user's choice: keep everything for Copy/Export, show the latest 400):** the warning is
+    written only when it changes; the level lives in `LiveTranscriptionLevelCell` (`@Observable`),
+    observed only by the diagnostics line (the payload still carries it); the tile lists the latest
+    400 lines (or the entry limit, if set higher) while Copy and Export use the full transcript;
+    entries are only re-sorted when out of order; the per-second tick skips an empty transcript.
+    Unit-tested.
+  - **Live** (transcription-only copy of FOH NEW, no automation, audio on the inputs, old and new
+    side by side with a temporary counter): tile redraws ~7.3/s → ~0.5/s, app CPU 5.3 s → 4.1 s
+    per 40 s. The first attempt (level only) measured no change, which is how the warning write was
+    found. That run had no recognized lines (see below), so the 400-line window and the
+    diagnostics level line are covered by tests only.
+  - **Recognition check:** with only the MacBook mic enabled (one input: on-device, in-app), this
+    branch transcribed (7 partials, 4 lines in the tile), as did `main`.
+
+- [ ] **Live Transcription with 2+ inputs returns no text** — M, found while testing; predates
+  this branch
+  - With more than one input enabled, `setupPipelines` switches every input to server-based
+    recognition and routes inputs after the first through the XPC helper. With MD and COMMS
+    (Dante Virtual Soundcard) enabled plus the MacBook mic, neither `main` nor this branch returned
+    a single result in a minute of speech; the stall watchdog restarted every ~8 s. Unknown
+    whether the cause is server recognition on this Mac, the helper path, or the two Dante inputs
+    whose device was missing. The helper's `print` logs go nowhere, so its errors are invisible.
+  - Related: the tile showed "Listening" while both Dante inputs never started capturing (no
+    Dante Virtual Soundcard device), with no warning.
+
 
 - [ ] **Session log file grows without limit** — S/M
   - **Where:** `RelayLogManager.swift` (~212, stdout redirect `readabilityHandler`); old logs only
