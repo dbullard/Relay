@@ -111,6 +111,28 @@ struct ShureOverviewModuleConfig: Codable, Equatable {
     }
 }
 
+/// Tracks how long a per-channel condition has held, so alerts can wait until it's certain.
+struct ShureOverviewSustainedCondition {
+    private var since: [String: Date] = [:]
+
+    /// Records whether the condition holds now and returns whether it has held continuously
+    /// for at least `duration`.
+    mutating func isSustained(id: String, active: Bool, now: Date, for duration: TimeInterval) -> Bool {
+        guard active else {
+            since.removeValue(forKey: id)
+            return false
+        }
+        let start = since[id] ?? now
+        since[id] = start
+        return now.timeIntervalSince(start) >= duration
+    }
+
+    /// Drops entries for channels that are no longer listed.
+    mutating func prune(keeping ids: Set<String>) {
+        since = since.filter { ids.contains($0.key) }
+    }
+}
+
 enum ShureOverviewSeverity: Int {
     case healthy = 0
     case warning = 1
@@ -142,6 +164,9 @@ struct ShureOverviewChannelSnapshot: Identifiable, Equatable {
     let isSyncing: Bool
     let isStale: Bool
     let isOffline: Bool
+    /// Offline after having connected this Live session: a real problem, unlike a receiver
+    /// that never connected (likely powered down or unused).
+    var isConnectionLost: Bool = false
     let warningReasons: [String]
     let severity: ShureOverviewSeverity
     let assignedPersonName: String?
@@ -173,6 +198,12 @@ final class ShureOverviewViewModel: ObservableObject {
 
     private let hub: ShureOverviewHub
     private var token: AnyCancellable?
+    /// RF alerts wait out the transmitter-presence hold: when a mic is switched off its RF
+    /// drops at once while presence still reads "on" for up to this long, which used to flag
+    /// "RF critical" on every power-off.
+    static let rfAlertSustainSeconds: TimeInterval = ShureAxientPresenceResolver.positiveEvidenceHoldSeconds
+    private var rfCriticalCondition = ShureOverviewSustainedCondition()
+    private var rfLowCondition = ShureOverviewSustainedCondition()
     private var config: ShureOverviewModuleConfig = .default()
 
     init(hub: ShureOverviewHub? = nil) {
@@ -208,7 +239,9 @@ final class ShureOverviewViewModel: ObservableObject {
             let transmitterOff = raw.isTransmitterOff
             let lastTelemetry = raw.lastTelemetry
             let baseWarmupActive = raw.isWarmupActive
-            let stale = transmitterOff
+            let offline = !raw.isConnected
+            let connectionLost = offline && raw.wasConnectedThisSession
+            let stale = transmitterOff || (offline && !connectionLost)
                 ? false
                 : (baseWarmupActive
                     ? false
@@ -224,7 +257,6 @@ final class ShureOverviewViewModel: ObservableObject {
 
             var reasons: [String] = []
             var severity: ShureOverviewSeverity = .healthy
-            let offline = !raw.isConnected
             let warmupActive = baseWarmupActive || (!offline && !transmitterOff && !hasLiveTelemetryEvidence)
             // Presence resolution takes time (up to the full 12s Axient
             // positive-evidence hold) to positively conclude a transmitter
@@ -246,14 +278,26 @@ final class ShureOverviewViewModel: ObservableObject {
             } else if !warmupActive, transmitterConfirmedOn, !offline, let battery, battery <= config.lowBatteryWarningPercent {
                 reasons.append("Battery low")
             }
-            if !warmupActive, transmitterConfirmedOn, !offline, let rf, rf <= config.criticalRFThreshold {
+            let rfCheckApplies = !warmupActive && transmitterConfirmedOn && !offline
+            let rfIsCritical = rfCheckApplies && rf.map { $0 <= config.criticalRFThreshold } == true
+            let rfIsLow = rfCheckApplies && rf.map { $0 <= config.lowRFWarningThreshold } == true
+            let rfCriticalSustained = rfCriticalCondition.isSustained(
+                id: raw.id, active: rfIsCritical, now: now, for: Self.rfAlertSustainSeconds
+            )
+            let rfLowSustained = rfLowCondition.isSustained(
+                id: raw.id, active: rfIsLow, now: now, for: Self.rfAlertSustainSeconds
+            )
+            if rfCriticalSustained {
                 reasons.append("RF critical")
-            } else if !warmupActive, transmitterConfirmedOn, !offline, let rf, rf <= config.lowRFWarningThreshold {
+            } else if rfLowSustained {
                 reasons.append("RF low")
             }
 
-            if offline {
+            if connectionLost {
                 severity = .critical
+            } else if offline {
+                // Never connected this session: shown as Offline, not an alert.
+                severity = .healthy
             } else if transmitterOff {
                 severity = .healthy
             } else if reasons.contains(where: { $0 == "Battery critical" || $0 == "RF critical" }) {
@@ -305,12 +349,17 @@ final class ShureOverviewViewModel: ObservableObject {
                     isSyncing: warmupActive && !offline && !transmitterOff,
                     isStale: stale,
                     isOffline: offline,
+                    isConnectionLost: connectionLost,
                     warningReasons: reasons,
                     severity: severity,
                     assignedPersonName: assignedPersonName
                 )
             )
         }
+
+        let listedIDs = Set(rawChannels.map(\.id))
+        rfCriticalCondition.prune(keeping: listedIDs)
+        rfLowCondition.prune(keeping: listedIDs)
 
         let sorted = sort(channels: built, order: config.sortOrder)
         channels = sorted
@@ -322,7 +371,7 @@ final class ShureOverviewViewModel: ObservableObject {
         onlineCount = sorted.filter { !$0.isOffline }.count
         warningCount = sorted.filter { $0.severity == .warning }.count
         criticalCount = sorted.filter { $0.severity == .critical }.count
-        staleCount = sorted.filter { ($0.isOffline || $0.isStale) && $0.transmitterState != .off }.count
+        staleCount = sorted.filter { ($0.isConnectionLost || $0.isStale) && $0.transmitterState != .off }.count
         lastUpdated = hub.lastUpdated
     }
 
@@ -335,7 +384,7 @@ final class ShureOverviewViewModel: ObservableObject {
     }
 
     private func severitySortRank(for channel: ShureOverviewChannelSnapshot) -> Int {
-        if channel.transmitterState == .off {
+        if channel.transmitterState == .off || (channel.isOffline && !channel.isConnectionLost) {
             return 4
         }
         if channel.severity == .critical {
@@ -776,8 +825,8 @@ struct ShureOverviewModuleView: View {
         let label: String
         let color: Color
         let useSolidFill: Bool
-        if row.isOffline, row.isReconnecting { label = "Reconnecting"; color = .orange }
-        else if row.isOffline { label = "Offline"; color = .red }
+        if row.isOffline, row.isReconnecting, row.isConnectionLost { label = "Reconnecting"; color = .orange }
+        else if row.isOffline { label = "Offline"; color = row.isConnectionLost ? .red : secondaryTextColor }
         else if row.transmitterState == .off { label = "Off"; color = secondaryTextColor }
         else if row.isSyncing { label = "Syncing"; color = .blue }
         else if row.isStale { label = "Stale"; color = .orange }
@@ -972,7 +1021,7 @@ struct ShureOverviewModuleView: View {
 
     private func alertTint(for row: ShureOverviewChannelSnapshot) -> Color? {
         if row.isSyncing || row.transmitterState == .off || row.isOffline {
-            return row.isOffline ? .red : nil
+            return row.isConnectionLost ? .red : nil
         } else if row.warningReasons.contains("Battery critical") || row.warningReasons.contains("RF critical") {
             return .red
         } else if row.isStale {

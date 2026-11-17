@@ -243,6 +243,10 @@ struct ShureOverviewRawChannel: Identifiable, Equatable {
     let isReconnecting: Bool
     let isTransmitterOff: Bool
     let isWarmupActive: Bool
+    /// Whether the receiver has been connected at any point since Live mode last turned on.
+    /// An offline receiver that never connected is likely powered down or unused; one that
+    /// dropped after connecting is a real problem.
+    var wasConnectedThisSession: Bool = true
     let lastTelemetry: Date?
 }
 
@@ -298,6 +302,9 @@ final class ShureOverviewHub: ObservableObject {
     private var instanceDeviceScopes: [UUID: Set<UUID>] = [:]
     private var liveInstances: Set<UUID> = []
     private var liveModeActivatedAt: Date?
+    /// Receivers seen connected since Live mode last turned on (see
+    /// `ShureOverviewRawChannel.wasConnectedThisSession`).
+    private var connectedThisSession: Set<UUID> = []
     private var requestedAudioModes: [UUID: ShureOverviewAudioActivityMode] = [:]
     private let telemetryWarmupInterval: TimeInterval = 4
     private var blinkTimer: AnyCancellable?
@@ -411,6 +418,7 @@ final class ShureOverviewHub: ObservableObject {
 
     private func setHubLive(_ live: Bool) {
         liveModeActivatedAt = live ? Date() : nil
+        connectedThisSession.removeAll()
         // A fresh Live Mode activation (or turning it off) is the one clean
         // "new episode" boundary for the strain latch below -- see
         // updatePerformanceStrain for why it otherwise never auto-clears.
@@ -619,6 +627,10 @@ final class ShureOverviewHub: ObservableObject {
         var built: [ShureOverviewRawChannel] = []
         for device in eligibleDevices {
             guard let snapshot = deviceSnapshots[device.id] else { continue }
+            if snapshot.isConnected {
+                connectedThisSession.insert(device.id)
+            }
+            let wasConnectedThisSession = connectedThisSession.contains(device.id)
             let channelCount = max(device.effectiveShureChannelCount, 1)
             let kind: ShureOverviewChannelKind = Self.isIEMDevice(device) ? .iem : .mic
 
@@ -665,6 +677,7 @@ final class ShureOverviewHub: ObservableObject {
                         isReconnecting: snapshot.isReconnecting,
                         isTransmitterOff: transmitterState == .off,
                         isWarmupActive: warmupActive,
+                        wasConnectedThisSession: wasConnectedThisSession,
                         lastTelemetry: lastTelemetry
                     )
                 )

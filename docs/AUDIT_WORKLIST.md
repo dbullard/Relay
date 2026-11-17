@@ -155,7 +155,7 @@ state lost on persist, keystroke trigger data race, compact-card size pop.
 Goal for Shure and Sennheiser: a Wireless Workbench-like live view (battery, frequency, RF and
 audio meters) that stays smooth across many receivers. Judge wireless items by that, not only CPU.
 
-- [x] **Shure tiles redraw on every network packet** — fixed, uncommitted
+- [x] **Shure tiles redraw on every network packet** — fixed (`dde7fe6`)
   - **Cause:** tiles hold `ShureWirelessService` as an `ObservableObject`, and the service
     published ~25 per-packet maps (levels, battery, RF, presence, mute, timestamps), so every
     write redrew the tile; names and frequencies were also rewritten every update. In the tile, a
@@ -177,54 +177,69 @@ audio meters) that stays smooth across many receivers. Judge wireless items by t
     | tile redraws (all 4) | ~340 | ~23 |
     | app CPU | ~74% of a core | ~35% |
 
-  - **Found on the way** (toward the Wireless Workbench-style goal):
-    - Snapshots publish ~20 times a second per receiver, faster than the 0.15 s throttle
-      suggests, so some path publishes immediately per update.
-    - All packet parsing runs on the main actor (`startReceiveLoop` → `handleIncoming`, ~20% of
-      main-thread time for 3 receivers). With ~400 frames/s per 3 receivers, a 23-receiver
-      overview would saturate the main thread; parsing should move off it.
-    - Meter data reaches tiles through the same snapshot as battery/RF/frequency, so a faster
-      meter would redraw the whole tile. A per-channel meter path (only the meter redraws) is the
-      next step.
+  - **Correction:** these runs (and the Overview runs below) had ~18 receivers connected, not the
+    3–4 the dashboards showed: shared values connect every receiver in Live mode (see the open
+    item below). The per-receiver costs are about 6× smaller than first stated, and the "~20
+    snapshots a second per receiver" finding was wrong (~60/s across 18 receivers ≈ 3.3 each,
+    within the throttle).
 
-- [ ] **Shure Overview: cost and update rate** — M (activity check fixed; the rest open)
-  - **Measured** (Preview enabled for the test, then restored; Overview limited to MIC3.101,
-    MIC3.105, IEM3.101 and IEM3.105; Live mode, 30 s; no transmitters on at the time):
-    - ~31% of a CPU core, the same with and without the tile fix above: the Overview never
-      observed the services directly (their change notifications still dropped ~2,900/s → ~14/s).
-    - The Overview redrew ~1.3 times a second. With nothing on, the hub runs on its slow tier
-      (`baseThrottleInterval`); it only switches to 0.15 s when a channel is on. On-state meter
-      cadence is still to measure with a transmitter powered on.
-  - **Hot spots on the main thread:**
-    - Fixed: `ShureOverviewHub.refreshThrottleIntervalForActivity()` ran on every snapshot from
-      every receiver and asked every service to re-resolve every channel's transmitter state
-      (`hasAnyOnChannel` → `resolvedTelemetryTransmitterState`, `shouldTrustFastUdpPresenceEvidence`,
-      `isAxientDeviceModel`); so did each service's `snapshotPublishInterval()` whenever a publish
-      was scheduled. Both now read `ShureTelemetryDeviceSnapshot.hasChannelOn`, state the snapshot
-      build already resolved, and `hasAnyOnChannel` is gone. Those functions dropped out of the
-      main-thread samples (they were ~10% together); total CPU on the 4-receiver idle test stayed
-      ~30%, so the gain shows at scale and with channels on. Telemetry checked after the change,
-      matching the baseline build: tiles show names, frequencies and IEM meters; the Overview
-      shows the same online/critical/stale counts and frequencies.
-    - Checked with transmitters on (Mark, WL 1, WL 6; Overview over 7 receivers): the Overview
-      switched to its fast tier (~1.3 → ~7 redraws a second, same as the baseline build) and showed
-      live battery, RF and On state (Mark 100%/5 bars, WL 6 battery arriving after ~45 s and RF
-      moving 3 → 4). Mark's single-channel tile showed battery 7:48 and RF 5 bars. Not checked:
-      audio meters with speech, WL 1's battery (blank on the fixed build; the baseline window
-      couldn't be captured to compare), and the switch back to the slow tier when mics turn off.
-    - Not a bug: ANX4 packet tracing (`logAnx4PacketSummary`, `recordShureTrace`, ~2.5%) only runs
-      with verbose Shure logging on (`wireless_log_shure_master`, which defaults on in beta/debug
-      builds and is on here).
-    - Packet handling on the main actor, as above.
-  - **For the Workbench goal:** the Overview's default audio mode is a signal light, not a meter,
-    and rows rebuild as one list; per-channel meter state would let meters update without
-    rebuilding every row.
-  - **Found:** the hub connects to every eligible Shure receiver in the device list
-    (`ShureOverviewHub.refreshServices`), not just the tile's selected devices, so an Overview
-    limited to a few receivers still polls all of them. The "4-receiver" Overview measurements
-    above were therefore taken with every configured receiver connected.
+- [x] **Shure Overview: cost, scope and meters** — fixed, uncommitted (activity check in `636b194`)
+  - **Activity check** (`636b194`): the hub and each service re-resolved every channel's
+    transmitter state on every snapshot; both read `ShureTelemetryDeviceSnapshot.hasChannelOn` now.
+  - **Scope:** the hub connected to every Shure receiver in the device list. Each Overview tile
+    now registers the receivers it shows (`registerInstance(_:deviceScope:)`,
+    `setInstanceDeviceScope`), the hub connects to their union
+    (`ShureOverviewHub.wantedDeviceIDs`, unit-tested), and a receiver leaving scope with no other
+    consumer leaves Live mode. Its meter-rate tier is now sized from the shown receivers, so a
+    small Overview gets faster meters.
+  - **Per-frame main-thread work:** packet parsing already ran off the main thread
+    (`prepareIncomingData`); what remained per frame was bookkeeping. Model traits (Axient,
+    UDP-only, ULX-D) were recomputed from five strings plus a defaults read on every packet and
+    are now cached when `device` changes; two always-on per-sample prints (`SAMPLE audio level`,
+    `MIC AUDIO`, hundreds of log lines a second) are debug-only; a per-chunk `channelNames` debug
+    print is gone. Moving the whole service off the main actor was not done.
+  - **Live meters:** `ShureChannelMeter` per watched channel, fed from the same values as the
+    snapshot (mic level, overload, mute, PSM left/right), with instant rise, ~0.2 s release and an
+    8 s staleness cutoff, driven by one ~30 Hz `ShureMeterClock` that stops when all meters rest.
+    The tile's mic and stereo meters and the Overview's meter/signal light observe only their
+    channel's meter, so audio moves without redrawing the tile or rebuilding the row list. The
+    tile's own 10 Hz timer and smoothing state are gone. `ShureChannelMeterTests` cover it.
+  - **Measured** (same document: 4 single-channel tiles plus an Overview of 4 receivers in meter
+    mode, Live, 30 s; ~18 receivers connected either way because of shared values):
+    tile redraws ~235/s → ~23/s, service change notifications ~3,600/s → ~58/s, app CPU ~46% →
+    ~35% of a core, while receiving more frames (~280/s → ~400/s, the faster meter tier). Meter
+    views redrew ~45 times a second on their own. On screen: the IEM's steady input shows on L/R.
+  - **Not checked:** meters with speech (the mics were off); the hub's own service count (the
+    frame counter can't separate it from shared values).
 
-- [x] **Shure battery blanked between receiver bursts** — fixed, uncommitted
+- [x] **Shure Overview flagged critical when nothing was wrong** — fixed, uncommitted
+  - **Offline:** every offline receiver counted as critical and stale, so a powered-down or
+    unreachable rack (IEM3.105 here) showed "Critical 2 / Stale 2" permanently. The hub now
+    remembers which receivers connected since Live mode last turned on
+    (`ShureOverviewRawChannel.wasConnectedThisSession`). A receiver that drops after connecting is
+    critical (red "Offline"/"Reconnecting", counted in Critical and Stale); one that never
+    connected shows a grey "Offline", isn't counted, and sorts to the bottom.
+  - **RF:** switching a mic off drops its RF at once while presence reads "on" for up to the 12 s
+    hold, which met "RF critical". RF critical/low now count only after the condition has held
+    for `ShureOverviewViewModel.rfAlertSustainSeconds` (the presence hold) with the transmitter
+    still on (`ShureOverviewSustainedCondition`, unit-tested). A real dropout flags after ~12 s
+    instead of at once. Battery critical is unchanged.
+  - **Not checked live:** the power-off case (from reading the code; not reproduced on screen).
+
+- [ ] **Shared values keep every Shure receiver live** — needs a decision
+  - `SharedValueSourceAdapters.reconcileWirelessServices` puts every receiver that has a Shure
+    shared value into Live mode as a polling consumer, and suggested battery/RF/audio/connected
+    values are created for every receiver, so Live mode connects all of them (~18 here) whatever
+    the dashboard shows. Options: keep it (every receiver's values stay live for tokens,
+    automation and the Shared Values window), or connect only receivers whose values something
+    actually reads.
+
+- [ ] **Overview "Meter mode may be affecting performance" banner** — S, needs a look
+  - Shows in meter mode on the baseline build too. The strain check counts coalesced snapshot
+    requests, and every mirror update schedules one, so the count may say more about traffic than
+    about strain.
+
+- [x] **Shure battery blanked between receiver bursts** — fixed (`9971d77`)
   - **Cause:** receivers report transmitter data in bursts and reset it to unknown in between,
     even with the transmitter on and a solid RF link (seen with raw `GET`s on MIC3.102 and
     MIC3.103). Unknown runtime (`65535`) and charge (`255`) were already ignored, but
