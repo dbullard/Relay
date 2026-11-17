@@ -688,7 +688,8 @@ private struct ShureReportContextSnapshot: Sendable {
 
 private struct ShureReportReduction: Sendable {
     enum BatteryUpdate: Sendable {
-        case clear(reason: String)
+        /// The receiver reported the battery as unknown; the last good reading is kept.
+        case unknown(reason: String)
         case set(label: String, percentage: Int?, isApproximate: Bool, priority: Int)
         case ignoredSentinel(Int)
         case unparsed
@@ -713,6 +714,8 @@ private struct ShureReportReduction: Sendable {
     var frequencyDisplay: String?
     var batteryKey: String?
     var batteryUpdate: BatteryUpdate?
+    /// BATT_TYPE / TX_BATT_TYPE value, e.g. "LION", "ALKA", "UNKN".
+    var batteryType: String?
     var audioMute: Bool?
     var meterRate: Int?
     var rfBarCount: Int?
@@ -743,14 +746,76 @@ private struct ShurePreparedIncomingData: Sendable {
     let reportWorkItems: [ShurePreparedReportWorkItem]
 }
 
+/// One channel's battery reading and the rules for keeping it.
+///
+/// Receivers report transmitter data in bursts and reset it to "unknown" in between, even
+/// while the transmitter is on and the RF link is solid (seen live on ULX-D: valid
+/// BATT_RUN_TIME/BATT_CHARGE, then BATT_BARS 255 / BATT_RUN_TIME 65535 a second later).
+/// Clearing on every unknown made battery blank out or never appear. The last good reading
+/// is kept until the transmitter goes away (`clear()`, called when the channel resolves
+/// off) or a different battery type is reported (`applyBatteryType`).
+struct ShureBatteryState: Equatable, Sendable {
+    enum Update: Equatable, Sendable {
+        /// The receiver reported the battery as unknown. Keeps the last good reading.
+        case unknown
+        /// `priority` decides which source owns the label: runtime 3, exact % 2, bars 1,
+        /// health 0.
+        case set(label: String, percentage: Int?, isApproximate: Bool, priority: Int)
+    }
+
+    var label: String?
+    var percentage: Int?
+    var isApproximate: Bool?
+    var priority: Int?
+    /// Last known battery chemistry reported by the receiver (e.g. "LION", "ALKA").
+    var batteryType: String?
+
+    var hasReading: Bool { label != nil || percentage != nil }
+
+    mutating func apply(_ update: Update) {
+        switch update {
+        case .unknown:
+            break
+        case .set(let newLabel, let newPercentage, let newIsApproximate, let newPriority):
+            if newPriority >= (priority ?? 0) {
+                label = newLabel
+                priority = newPriority
+            }
+            // The percentage updates independently of the label priority: runtime keys
+            // (highest priority) carry no percentage, so gating on priority froze it.
+            // An exact percentage always wins; an approximate one (from bars) only applies
+            // when there's no exact reading, so "100%" from 5/5 bars can't overwrite 86%.
+            if let newPercentage {
+                let currentIsExact = isApproximate == false
+                if !newIsApproximate || !currentIsExact {
+                    percentage = newPercentage
+                    isApproximate = newIsApproximate
+                }
+            }
+        }
+    }
+
+    /// A different known battery type means a new battery: drop the old reading. Unknown or
+    /// empty types are ignored like any other unknown report.
+    mutating func applyBatteryType(_ rawType: String) {
+        let type = rawType.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !type.isEmpty, type != "UNKN", type != "UNKNOWN" else { return }
+        if let batteryType, batteryType != type {
+            clear()
+        }
+        batteryType = type
+    }
+
+    mutating func clear() {
+        self = ShureBatteryState()
+    }
+}
+
 private struct ShureTcpChannelState: Sendable {
     var channelName: String?
     var rfTxLevel: Int?
     var frequencyDisplay: String?
-    var batteryLabel: String?
-    var batteryPercentage: Int?
-    var batteryIsApproximate: Bool?
-    var batteryPriority: Int?
+    var battery = ShureBatteryState()
     var audioMute: Bool?
     var meterRate: Int?
     var rfBarCount: Int?
@@ -919,6 +984,7 @@ private struct ShureStandardReportStateUpdate: Sendable {
     let shouldClearMicAudioLevel: Bool
     let micAudioOverload: Bool?
     let now: Date
+    var batteryType: String? = nil
 }
 
 private struct ShureUdpStateUpdate: Sendable {
@@ -951,61 +1017,15 @@ private actor ShureStandardReportStateStore {
             state.frequencyDisplay = frequencyDisplay
         }
 
+        if let batteryType = update.batteryType {
+            state.battery.applyBatteryType(batteryType)
+        }
         if let batteryUpdate = update.batteryUpdate {
             switch batteryUpdate {
-            case .clear:
-                state.batteryLabel = nil
-                state.batteryPercentage = nil
-                state.batteryIsApproximate = nil
-                state.batteryPriority = nil
+            case .unknown:
+                state.battery.apply(.unknown)
             case .set(let label, let percentage, let isApproximate, let priority):
-                let existingPriority = state.batteryPriority ?? 0
-                if priority >= existingPriority {
-                    state.batteryLabel = label
-                    state.batteryPriority = priority
-                }
-                // Percentage updates independently of the label-priority
-                // race above, not just gated inside it. Runtime-remaining
-                // keys (TX_BATT_MINS/BATT_MINS/BATT_RUN_TIME) have the
-                // highest priority of any battery key and carry no
-                // percentage of their own -- once one of those has ever
-                // won the race and latched batteryPriority to that high
-                // value, every later TX_BATT_CHARGE_PERCENT/BATT_CHARGE
-                // update (lower priority) used to fail `priority >=
-                // existingPriority` and never reach here at all, freezing
-                // batteryPercentage forever at whatever it last was before
-                // that happened -- confirmed live: Overview's % display got
-                // stuck within the first couple minutes of a device
-                // connecting while the single-tile's time-remaining label
-                // (which only needs to beat its own priority) kept updating
-                // correctly the entire time, making it look like an
-                // Overview-only bug when the real cause was upstream. The
-                // label text and the percentage are logically independent
-                // fields -- percentage should refresh whenever a report
-                // actually provides one, regardless of which key currently
-                // owns display priority for the label.
-                // Exact percentage (TX_BATT_CHARGE_PERCENT/BATT_CHARGE/
-                // TX_BATT_PERCENT/BATT_PERCENT, priority 2) always wins.
-                // Approximate percentage (derived from TX_BATT_BARS/
-                // BATT_BARS's 5-level reading, priority 1 -- e.g. a full
-                // 5/5 bars rounds to "100%") only applies when there isn't
-                // already an exact reading in hand, so it can't clobber it.
-                // Decoupling percentage from the label-priority race above
-                // (this same block, moments earlier) fixed one bug but
-                // introduced this one: without any ordering between the two
-                // percentage *sources* themselves, whichever happened to
-                // arrive most recently won outright -- confirmed live, a
-                // precise 86%/94% reading would show for a moment then get
-                // overwritten by "100%" the next time a full-bars report
-                // came in, which happens often since 81-100% all round to
-                // 5/5 bars.
-                if let percentage {
-                    let currentIsExact = state.batteryIsApproximate == false
-                    if !isApproximate || !currentIsExact {
-                        state.batteryPercentage = percentage
-                        state.batteryIsApproximate = isApproximate
-                    }
-                }
+                state.battery.apply(.set(label: label, percentage: percentage, isApproximate: isApproximate, priority: priority))
             case .ignoredSentinel, .unparsed:
                 break
             }
@@ -1087,10 +1107,10 @@ private actor ShureStandardReportStateStore {
             channelName: tcpState?.channelName,
             rfTxLevel: rfTxLevel,
             frequencyDisplay: tcpState?.frequencyDisplay,
-            batteryLabel: tcpState?.batteryLabel,
-            batteryPercentage: tcpState?.batteryPercentage,
-            batteryIsApproximate: tcpState?.batteryIsApproximate,
-            batteryPriority: tcpState?.batteryPriority,
+            batteryLabel: tcpState?.battery.label,
+            batteryPercentage: tcpState?.battery.percentage,
+            batteryIsApproximate: tcpState?.battery.isApproximate,
+            batteryPriority: tcpState?.battery.priority,
             audioMute: tcpState?.audioMute,
             meterRate: tcpState?.meterRate,
             rfBarCount: rfBarCount,
@@ -1103,6 +1123,19 @@ private actor ShureStandardReportStateStore {
     func clear() {
         tcpChannelStates.removeAll()
         udpChannelStates.removeAll()
+    }
+
+    /// Drops a channel's held battery reading (its transmitter went away).
+    func clearBattery(
+        channelIndex: Int,
+        composition: ShureSnapshotCompositionPolicy
+    ) -> ShureStandardReportChannelSnapshot? {
+        guard tcpChannelStates[channelIndex]?.battery.hasReading == true
+            || tcpChannelStates[channelIndex]?.battery.batteryType != nil else {
+            return snapshot(channelIndex: channelIndex, composition: composition)
+        }
+        tcpChannelStates[channelIndex]?.battery.clear()
+        return snapshot(channelIndex: channelIndex, composition: composition)
     }
 }
 
@@ -1165,6 +1198,10 @@ private enum ShureReportReducer {
            Int(parts[1]) != nil {
             let key = parts[2].uppercased()
             switch key {
+            case "BATT_TYPE", "TX_BATT_TYPE":
+                if parts.count >= 4 {
+                    reduction.batteryType = String(parts[3])
+                }
             case "AUDIO_MUTE":
                 if parts.count >= 4 {
                     let value = parts[3].uppercased()
@@ -1268,7 +1305,7 @@ private enum ShureReportReducer {
 
         case "TX_BATT_BARS", "BATT_BARS":
             if value == 255 {
-                return .clear(reason: "bars_unknown")
+                return .unknown(reason: "bars_unknown")
             }
             guard (0...5).contains(value) else { return .unparsed }
             let percent = Int((Double(value) / 5.0) * 100.0)
@@ -5569,9 +5606,18 @@ final class ShureWirelessService: ObservableObject {
         channels.formUnion(channelTransmitterPresent.keys)
         channels.formUnion(channelTransmitterDeviceIDPresent.keys)
 
+        var channelsWithBatteryToClear: [Int] = []
         let snapshots = channels.sorted().map { channelIndex in
             let standard = currentStandardReportSnapshot(channelIndex: channelIndex)
             let lowFrequency = currentStandardReportLowFrequencySnapshot(channelIndex: channelIndex)
+            let transmitterState = resolvedTelemetryTransmitterState(for: channelIndex, now: now)
+            // A held battery reading (see ShureBatteryState) lasts until the transmitter goes
+            // away: hide it as soon as the channel resolves off, and drop it from the store.
+            let transmitterIsOff = transmitterState == .off
+            let hasHeldBattery = standard.batteryPercentage != nil || lowFrequency.batteryLabel != nil
+            if transmitterIsOff, hasHeldBattery {
+                channelsWithBatteryToClear.append(channelIndex)
+            }
             let stereo = psmAudioLevels[channelIndex]
             let channelLastHeardAt = [
                 micAudioLastUpdated[channelIndex],
@@ -5588,9 +5634,9 @@ final class ShureWirelessService: ObservableObject {
                 channelIndex: channelIndex,
                 channelName: lowFrequency.channelName,
                 frequencyLabel: lowFrequency.frequencyDisplay,
-                batteryPercent: standard.batteryPercentage,
-                batteryLabel: lowFrequency.batteryLabel,
-                batteryIsApproximate: lowFrequency.batteryIsApproximate ?? false,
+                batteryPercent: transmitterIsOff ? nil : standard.batteryPercentage,
+                batteryLabel: transmitterIsOff ? nil : lowFrequency.batteryLabel,
+                batteryIsApproximate: transmitterIsOff ? false : (lowFrequency.batteryIsApproximate ?? false),
                 rfBars: standard.rfBarCount,
                 rfOverload: standard.rfOverload ?? false,
                 rfTxLevel: standard.rfTxLevel,
@@ -5600,10 +5646,9 @@ final class ShureWirelessService: ObservableObject {
                 audioRightLevel: stereo?.right,
                 isMuted: lowFrequency.audioMute,
                 meterRate: lowFrequency.meterRate,
-                transmitterState: resolvedTelemetryTransmitterState(for: channelIndex, now: now),
+                transmitterState: transmitterState,
                 transmitterPresent: {
-                    let resolved = resolvedTelemetryTransmitterState(for: channelIndex, now: now)
-                    switch resolved {
+                    switch transmitterState {
                     case .on:
                         return true
                     case .off:
@@ -5617,6 +5662,10 @@ final class ShureWirelessService: ObservableObject {
                 lastRFAt: channelRfLastUpdated[channelIndex] ?? rfTxLastUpdated[channelIndex],
                 lastAudioAt: micAudioLastUpdated[channelIndex]
             )
+        }
+
+        for channelIndex in channelsWithBatteryToClear {
+            clearHeldBatteryAfterTransmitterOff(channelIndex: channelIndex)
         }
 
         snapshotBuildDurationTotal += CFAbsoluteTimeGetCurrent() - buildStart
@@ -5670,6 +5719,47 @@ final class ShureWirelessService: ObservableObject {
         RelayDiagnosticsStore.shared.recordShureTrace(
             "telemetry device=\(snapshot.deviceName) services=\(diagnostics.activeServiceCount) devices=\(diagnostics.connectedPhysicalDeviceCount) overview_subscribers=\(diagnostics.overviewSubscriberCount) channel_subscribers=\(diagnostics.channelSubscriberCount) poll=\(diagnostics.pollingIntervalDescription) publish_hz=\(String(format: "%.2f", diagnostics.snapshotPublishRateHz)) parse_ms=\(String(format: "%.2f", diagnostics.averageParseTimeMilliseconds)) snapshot_ms=\(String(format: "%.2f", diagnostics.averageSnapshotBuildTimeMilliseconds)) dropped=\(diagnostics.droppedCoalescedUpdateCount)"
         )
+    }
+
+    /// Channels whose held battery is being cleared in the state store right now.
+    private var batteryClearsInFlight: Set<Int> = []
+
+    /// The channel's transmitter went away: drop its held battery reading (store, mirrors and
+    /// bookkeeping) so a new battery starts clean.
+    private func clearHeldBatteryAfterTransmitterOff(channelIndex: Int) {
+        guard batteryClearsInFlight.insert(channelIndex).inserted else { return }
+        channelBatteryPriority.removeValue(forKey: channelIndex)
+        channelBatteryCalculationPendingAt.removeValue(forKey: channelIndex)
+        channelBatteryHasSmartTelemetry.removeValue(forKey: channelIndex)
+        channelBatteryLastUpdated.removeValue(forKey: channelIndex)
+        recordBatteryTrace("clear ch=\(channelIndex) reason=transmitter_off")
+        let composition = snapshotCompositionPolicy(channelIndex: channelIndex, now: Date())
+        Task { [weak self] in
+            guard let self else { return }
+            let mirrored = await self.standardReportStateStore.clearBattery(
+                channelIndex: channelIndex,
+                composition: composition
+            )
+            await MainActor.run {
+                self.batteryClearsInFlight.remove(channelIndex)
+                guard let mirrored else {
+                    // The store has no state for this channel, so the mirrors are stale;
+                    // drop them rather than retrying on every publish.
+                    self.shadowStandardReportSnapshots.removeValue(forKey: channelIndex)
+                    self.shadowStandardReportLowFrequencySnapshots.removeValue(forKey: channelIndex)
+                    self.channelBatteryLabels.removeValue(forKey: channelIndex)
+                    self.channelBatteryPercentages.removeValue(forKey: channelIndex)
+                    self.channelBatteryIsApproximate.removeValue(forKey: channelIndex)
+                    self.scheduleTelemetrySnapshotPublish()
+                    return
+                }
+                self.applyShadowStandardReportLowFrequencySnapshot(
+                    channelIndex: channelIndex,
+                    mirrored: mirrored,
+                    line: "transmitter_off"
+                )
+            }
+        }
     }
 
     /// Set while building the snapshot, so state the build itself touches doesn't schedule
@@ -7398,11 +7488,9 @@ final class ShureWirelessService: ObservableObject {
         if let key = reduction.batteryKey {
             recordBatteryTrace("line ch=\(chIndex) key=\(key) raw=\(line)")
             switch reduction.batteryUpdate {
-            case .clear(let reason):
-                channelBatteryPriority.removeValue(forKey: chIndex)
-                channelBatteryCalculationPendingAt.removeValue(forKey: chIndex)
-                channelBatteryLastUpdated.removeValue(forKey: chIndex)
-                recordBatteryTrace("clear ch=\(chIndex) key=\(key) reason=\(reason)")
+            case .unknown(let reason):
+                // Kept until the transmitter goes away (see clearHeldBatteryAfterTransmitterOff).
+                recordBatteryTrace("hold_unknown ch=\(chIndex) key=\(key) reason=\(reason)")
             case .set(let label, let percentage, let isApproximate, let priority):
                 let existingSnapshot = currentStandardReportSnapshot(channelIndex: chIndex)
                 let existingPriority = existingSnapshot.batteryPriority ?? channelBatteryPriority[chIndex] ?? 0
@@ -7570,7 +7658,8 @@ final class ShureWirelessService: ObservableObject {
             micAudioAccepted: acceptedMicLevel != nil,
             shouldClearMicAudioLevel: shouldClearStoredMicLevel,
             micAudioOverload: channelMicAudioOverload[chIndex],
-            now: now
+            now: now,
+            batteryType: reduction.batteryType
         )
         let composition = snapshotCompositionPolicy(channelIndex: chIndex, now: now)
         Task { [weak self] in

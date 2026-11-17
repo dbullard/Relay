@@ -187,7 +187,7 @@ audio meters) that stays smooth across many receivers. Judge wireless items by t
       meter would redraw the whole tile. A per-channel meter path (only the meter redraws) is the
       next step.
 
-- [ ] **Shure Overview: cost and update rate** — M
+- [ ] **Shure Overview: cost and update rate** — M (activity check fixed; the rest open)
   - **Measured** (Preview enabled for the test, then restored; Overview limited to MIC3.101,
     MIC3.105, IEM3.101 and IEM3.105; Live mode, 30 s; no transmitters on at the time):
     - ~31% of a CPU core, the same with and without the tile fix above: the Overview never
@@ -196,17 +196,47 @@ audio meters) that stays smooth across many receivers. Judge wireless items by t
       (`baseThrottleInterval`); it only switches to 0.15 s when a channel is on. On-state meter
       cadence is still to measure with a transmitter powered on.
   - **Hot spots on the main thread:**
-    - `ShureOverviewHub.refreshThrottleIntervalForActivity()` runs on every snapshot from every
-      receiver and calls `hasAnyOnChannel` on all services, which re-resolves transmitter state
-      per channel (`resolvedTelemetryTransmitterState`, `shouldTrustFastUdpPresenceEvidence`,
-      `isAxientDeviceModel`). Cost grows with receivers × channels × publish rate; the snapshot
-      already carries `transmitterState`, so the check can read that, at most a few times a second.
-    - ANX4 diagnostic logging (`logAnx4PacketSummary`, `RelayDiagnosticsStore.recordShureTrace`)
-      runs in Release builds, ~2.5% of main-thread time.
+    - Fixed: `ShureOverviewHub.refreshThrottleIntervalForActivity()` ran on every snapshot from
+      every receiver and asked every service to re-resolve every channel's transmitter state
+      (`hasAnyOnChannel` → `resolvedTelemetryTransmitterState`, `shouldTrustFastUdpPresenceEvidence`,
+      `isAxientDeviceModel`); so did each service's `snapshotPublishInterval()` whenever a publish
+      was scheduled. Both now read `ShureTelemetryDeviceSnapshot.hasChannelOn`, state the snapshot
+      build already resolved, and `hasAnyOnChannel` is gone. Those functions dropped out of the
+      main-thread samples (they were ~10% together); total CPU on the 4-receiver idle test stayed
+      ~30%, so the gain shows at scale and with channels on. Telemetry checked after the change,
+      matching the baseline build: tiles show names, frequencies and IEM meters; the Overview
+      shows the same online/critical/stale counts and frequencies.
+    - Checked with transmitters on (Mark, WL 1, WL 6; Overview over 7 receivers): the Overview
+      switched to its fast tier (~1.3 → ~7 redraws a second, same as the baseline build) and showed
+      live battery, RF and On state (Mark 100%/5 bars, WL 6 battery arriving after ~45 s and RF
+      moving 3 → 4). Mark's single-channel tile showed battery 7:48 and RF 5 bars. Not checked:
+      audio meters with speech, WL 1's battery (blank on the fixed build; the baseline window
+      couldn't be captured to compare), and the switch back to the slow tier when mics turn off.
+    - Not a bug: ANX4 packet tracing (`logAnx4PacketSummary`, `recordShureTrace`, ~2.5%) only runs
+      with verbose Shure logging on (`wireless_log_shure_master`, which defaults on in beta/debug
+      builds and is on here).
     - Packet handling on the main actor, as above.
   - **For the Workbench goal:** the Overview's default audio mode is a signal light, not a meter,
     and rows rebuild as one list; per-channel meter state would let meters update without
     rebuilding every row.
+  - **Found:** the hub connects to every eligible Shure receiver in the device list
+    (`ShureOverviewHub.refreshServices`), not just the tile's selected devices, so an Overview
+    limited to a few receivers still polls all of them. The "4-receiver" Overview measurements
+    above were therefore taken with every configured receiver connected.
+
+- [x] **Shure battery blanked between receiver bursts** — fixed, uncommitted
+  - **Cause:** receivers report transmitter data in bursts and reset it to unknown in between,
+    even with the transmitter on and a solid RF link (seen with raw `GET`s on MIC3.102 and
+    MIC3.103). Unknown runtime (`65535`) and charge (`255`) were already ignored, but
+    `BATT_BARS 255` cleared the whole reading, so WL 1 never showed a battery and others blanked.
+  - **Fix:** `ShureBatteryState` holds the reading on unknown and clears it only when the channel
+    resolves off (`clearHeldBatteryAfterTransmitterOff`, also hidden from that snapshot at once) or
+    when a different `BATT_TYPE` is reported (new battery). The snapshot build now resolves each
+    channel's transmitter state once. Relay doesn't read `TX_TYPE`, so there was no transmitter
+    type to hold. `ShureBatteryStateTests` cover the rules, including the receiver's sequence.
+  - **Live:** with WL 1 and Mark on, both the tiles and the Overview showed battery (WL 1 9:09 /
+    100%, Mark 7:34 / 100%) through 9 unknown bursts in a minute; turning both off cleared the
+    battery in both views (`reason=transmitter_off`).
 
 - [ ] **ProPresenter tiles redraw 3–5 times per poll** — S/M
   - **Where:** `ProPresenterModule.swift`: `@Published stateByModuleID` (~597) written several times
