@@ -294,6 +294,8 @@ final class ShureOverviewHub: ObservableObject {
     private static let minimumStrainEvaluationInterval: TimeInterval = 2.0
 
     private var registeredInstances: Set<UUID> = []
+    /// Receivers each registered tile shows. A tile with no entry shows every Shure receiver.
+    private var instanceDeviceScopes: [UUID: Set<UUID>] = [:]
     private var liveInstances: Set<UUID> = []
     private var liveModeActivatedAt: Date?
     private var requestedAudioModes: [UUID: ShureOverviewAudioActivityMode] = [:]
@@ -328,13 +330,52 @@ final class ShureOverviewHub: ObservableObject {
     /// Mode enabled. The hub connects/streams telemetry iff this is true.
     var isHubLive: Bool { isLive }
 
-    func registerInstance(_ id: UUID) {
+    /// The live meter for a channel on a receiver the hub is connected to, or nil.
+    func meter(deviceID: UUID, channelIndex: Int) -> ShureChannelMeter? {
+        services[deviceID]?.meter(for: channelIndex)
+    }
+
+    /// Registers an Overview tile. `deviceScope` is the set of receivers it shows, or nil
+    /// for every Shure receiver; the hub only connects to receivers some tile shows.
+    func registerInstance(_ id: UUID, deviceScope: Set<UUID>? = nil) {
         registeredInstances.insert(id)
+        if let deviceScope {
+            instanceDeviceScopes[id] = deviceScope
+        } else {
+            instanceDeviceScopes.removeValue(forKey: id)
+        }
         refreshServices()
+    }
+
+    func setInstanceDeviceScope(_ id: UUID, deviceScope: Set<UUID>?) {
+        guard registeredInstances.contains(id) else { return }
+        guard instanceDeviceScopes[id] != deviceScope else { return }
+        if let deviceScope {
+            instanceDeviceScopes[id] = deviceScope
+        } else {
+            instanceDeviceScopes.removeValue(forKey: id)
+        }
+        refreshServices()
+        requestRecompute()
+    }
+
+    /// The receivers the hub should connect to: the union of what registered tiles show, or
+    /// nil for all receivers when any tile shows all of them. No tiles means none.
+    nonisolated static func wantedDeviceIDs(
+        registeredInstances: Set<UUID>,
+        deviceScopes: [UUID: Set<UUID>]
+    ) -> Set<UUID>? {
+        var wanted = Set<UUID>()
+        for instance in registeredInstances {
+            guard let scope = deviceScopes[instance] else { return nil }
+            wanted.formUnion(scope)
+        }
+        return wanted
     }
 
     func unregisterInstance(_ id: UUID) {
         registeredInstances.remove(id)
+        instanceDeviceScopes.removeValue(forKey: id)
         requestedAudioModes.removeValue(forKey: id)
         let wasLive = isLive
         liveInstances.remove(id)
@@ -421,13 +462,22 @@ final class ShureOverviewHub: ObservableObject {
     }
 
     private func refreshServices() {
+        // Only receivers some Overview tile shows: an Overview limited to a few receivers
+        // used to connect to, and poll, every receiver in the device list.
+        let wanted = Self.wantedDeviceIDs(registeredInstances: registeredInstances, deviceScopes: instanceDeviceScopes)
         let eligibleDevices = store.devices
             .filter { $0.kind == .shureWireless }
             .filter(Self.isTelemetryEligibleDevice(_:))
+            .filter { wanted?.contains($0.id) ?? true }
         let deviceIDs = Set(eligibleDevices.map(\.id))
 
         for removed in services.keys where !deviceIDs.contains(removed) {
             services[removed]?.removeConsumer(consumerID)
+            // Removing the consumer stops polling, but a live connection keeps streaming
+            // meter samples. Drop live mode too, unless something else still uses it.
+            if let service = services[removed], !service.hasConsumers {
+                service.setLiveModeEnabled(false)
+            }
             serviceTokens[removed]?.cancel()
             serviceTokens.removeValue(forKey: removed)
             services.removeValue(forKey: removed)
@@ -564,6 +614,7 @@ final class ShureOverviewHub: ObservableObject {
         let eligibleDevices = store.devices
             .filter { $0.kind == .shureWireless }
             .filter(Self.isTelemetryEligibleDevice(_:))
+            .filter { services[$0.id] != nil }
 
         var built: [ShureOverviewRawChannel] = []
         for device in eligibleDevices {

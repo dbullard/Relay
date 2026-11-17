@@ -746,6 +746,118 @@ private struct ShurePreparedIncomingData: Sendable {
     let reportWorkItems: [ShurePreparedReportWorkItem]
 }
 
+// MARK: - Live meters
+
+/// One channel's live audio meter. Meter views observe only this object, so levels can move
+/// at display rate without redrawing the rest of the tile or rebuilding the Overview list
+/// (which follow the throttled telemetry snapshot). Levels rise immediately and fall smoothly
+/// (`ShureMeterClock` drives the release), and drop to zero when no audio sample has
+/// arrived for `staleAfter` seconds.
+@MainActor
+@Observable
+final class ShureChannelMeter {
+    /// Displayed level, in the receiver's own units (0–20 for mic receivers; raw
+    /// AUDIO_IN_LVL for PSM transmitters, the louder side).
+    private(set) var level: Double = 0
+    private(set) var left: Double = 0
+    private(set) var right: Double = 0
+    private(set) var isOverloaded = false
+    private(set) var isMuted = false
+
+    @ObservationIgnored private var targetLevel: Double = 0
+    @ObservationIgnored private var targetLeft: Double = 0
+    @ObservationIgnored private var targetRight: Double = 0
+    @ObservationIgnored private var lastSampleAt: Date?
+
+    nonisolated static let staleAfter: TimeInterval = 8
+    /// Share of the gap to the target closed per clock tick while falling (~0.2 s release).
+    nonisolated static let releaseFactor = 0.18
+
+    init() {}
+
+    /// Feeds the latest receiver values. `sampleAt` is when the receiver last sent audio,
+    /// so other traffic on the channel doesn't keep a stale level alive.
+    func receive(
+        level newLevel: Double?,
+        stereo: (left: Double, right: Double)?,
+        isOverloaded overloaded: Bool,
+        isMuted muted: Bool,
+        sampleAt: Date?
+    ) {
+        targetLevel = max(0, newLevel ?? 0)
+        targetLeft = max(0, stereo?.left ?? 0)
+        targetRight = max(0, stereo?.right ?? 0)
+        lastSampleAt = sampleAt
+        if isOverloaded != overloaded { isOverloaded = overloaded }
+        if isMuted != muted { isMuted = muted }
+        // Rise immediately; falls are animated by the clock.
+        if targetLevel > level { level = targetLevel }
+        if targetLeft > left { left = targetLeft }
+        if targetRight > right { right = targetRight }
+        if needsTicks {
+            ShureMeterClock.shared.track(self)
+        }
+    }
+
+    private var needsTicks: Bool {
+        level > 0 || left > 0 || right > 0 || targetLevel > 0 || targetLeft > 0 || targetRight > 0
+    }
+
+    /// Advances the release one tick. Returns whether the meter still needs ticks.
+    func advance(now: Date) -> Bool {
+        if let lastSampleAt, now.timeIntervalSince(lastSampleAt) > Self.staleAfter {
+            targetLevel = 0
+            targetLeft = 0
+            targetRight = 0
+            if isOverloaded { isOverloaded = false }
+        }
+        let nextLevel = Self.step(level, toward: targetLevel)
+        if nextLevel != level { level = nextLevel }
+        let nextLeft = Self.step(left, toward: targetLeft)
+        if nextLeft != left { left = nextLeft }
+        let nextRight = Self.step(right, toward: targetRight)
+        if nextRight != right { right = nextRight }
+        return needsTicks
+    }
+
+    nonisolated static func step(_ current: Double, toward target: Double) -> Double {
+        if target >= current { return target }
+        let next = current + (target - current) * releaseFactor
+        let snapDistance = max(0.02, abs(target) * 0.01)
+        return next - target <= snapDistance ? target : next
+    }
+}
+
+/// Drives meter release for every active `ShureChannelMeter` from one ~30 Hz timer, which
+/// stops when every meter is at rest.
+@MainActor
+final class ShureMeterClock {
+    static let shared = ShureMeterClock()
+    nonisolated static let interval: TimeInterval = 1.0 / 30.0
+
+    private var meters: [ObjectIdentifier: ShureChannelMeter] = [:]
+    private var timer: Timer?
+
+    func track(_ meter: ShureChannelMeter) {
+        meters[ObjectIdentifier(meter)] = meter
+        guard timer == nil else { return }
+        let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func tick() {
+        let now = Date()
+        meters = meters.filter { $0.value.advance(now: now) }
+        if meters.isEmpty {
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+}
+
 /// One channel's battery reading and the rules for keeping it.
 ///
 /// Receivers report transmitter data in bursts and reset it to "unknown" in between, even
@@ -2888,7 +3000,9 @@ final class ShureWirelessService: ObservableObject {
 // redrew them at packet rate. Those properties schedule the throttled `telemetrySnapshot`
 // publish instead (`telemetryStateDidChange()`), which is what redraws the UI.
 
-    @Published var device: ExternalDeviceConfig?
+    @Published var device: ExternalDeviceConfig? {
+        didSet { refreshDeviceTraits() }
+    }
     @Published var isConnected: Bool = false
     @Published var lastError: String? = nil
     var lastHeardAt: Date? = nil {
@@ -3356,9 +3470,7 @@ final class ShureWirelessService: ObservableObject {
     }
 
     private func shouldTraceULXDTxDeviceID() -> Bool {
-        let model = (device?.shureModelIdentifier ?? "").uppercased()
-        let upperName = (device?.name ?? "").uppercased()
-        guard model.contains("ULXD") || upperName.contains("ULX-D") || upperName.contains("ULXD") else { return false }
+        guard deviceTraits.isULXD else { return false }
         return Self.shouldEmitConsoleLogs(for: device)
     }
 
@@ -5538,9 +5650,32 @@ final class ShureWirelessService: ObservableObject {
         }
     }
 
+    /// Model traits derived from `device`, cached because the per-frame paths (presence
+    /// evidence, sample handling, tracing) asked for them on every packet, and each lookup
+    /// resolved the network model from five strings plus a defaults read.
+    private struct DeviceTraits {
+        var isAxient = false
+        var isUdpOnly = false
+        var isULXD = false
+    }
+    private var deviceTraits = DeviceTraits()
+
+    private func refreshDeviceTraits() {
+        guard let device else {
+            deviceTraits = DeviceTraits()
+            return
+        }
+        let model = (device.shureModelIdentifier ?? "").uppercased()
+        let name = device.name.uppercased()
+        deviceTraits = DeviceTraits(
+            isAxient: Self.isAxientDeviceModel(device),
+            isUdpOnly: Self.isUdpOnlyShureDevice(device),
+            isULXD: model.contains("ULXD") || name.contains("ULX-D") || name.contains("ULXD")
+        )
+    }
+
     private func isAxientDeviceModel() -> Bool {
-        guard let device else { return false }
-        return Self.isAxientDeviceModel(device)
+        deviceTraits.isAxient
     }
 
     /// How often this device's `@Published telemetrySnapshot` -- the sole
@@ -5718,6 +5853,38 @@ final class ShureWirelessService: ObservableObject {
         let diagnostics = snapshot.diagnostics
         RelayDiagnosticsStore.shared.recordShureTrace(
             "telemetry device=\(snapshot.deviceName) services=\(diagnostics.activeServiceCount) devices=\(diagnostics.connectedPhysicalDeviceCount) overview_subscribers=\(diagnostics.overviewSubscriberCount) channel_subscribers=\(diagnostics.channelSubscriberCount) poll=\(diagnostics.pollingIntervalDescription) publish_hz=\(String(format: "%.2f", diagnostics.snapshotPublishRateHz)) parse_ms=\(String(format: "%.2f", diagnostics.averageParseTimeMilliseconds)) snapshot_ms=\(String(format: "%.2f", diagnostics.averageSnapshotBuildTimeMilliseconds)) dropped=\(diagnostics.droppedCoalescedUpdateCount)"
+        )
+    }
+
+    /// Live meters for channels some view is showing (see `ShureChannelMeter`).
+    private var meterCells: [Int: ShureChannelMeter] = [:]
+
+    /// The live meter for a channel, created on first use.
+    func meter(for channelIndex: Int) -> ShureChannelMeter {
+        if let meter = meterCells[channelIndex] { return meter }
+        let meter = ShureChannelMeter()
+        meterCells[channelIndex] = meter
+        // Seed it after the current view update; writing observed state mid-render is not
+        // allowed.
+        DispatchQueue.main.async { [weak self] in
+            self?.feedMeter(channelIndex: channelIndex)
+        }
+        return meter
+    }
+
+    /// Pushes a channel's current audio state into its live meter, if one exists. Same
+    /// sources as the snapshot's audio fields.
+    private func feedMeter(channelIndex: Int, sampleAt: Date? = nil) {
+        guard let meter = meterCells[channelIndex] else { return }
+        let standard = currentStandardReportSnapshot(channelIndex: channelIndex)
+        let stereo = psmAudioLevels[channelIndex]
+        let level = standard.micAudioLevel ?? micAudioLevels[channelIndex] ?? stereo.map { max($0.left, $0.right) }
+        meter.receive(
+            level: level,
+            stereo: stereo,
+            isOverloaded: standard.micAudioOverload ?? false,
+            isMuted: currentStandardReportLowFrequencySnapshot(channelIndex: channelIndex).audioMute ?? false,
+            sampleAt: sampleAt ?? micAudioLastUpdated[channelIndex]
         )
     }
 
@@ -6614,6 +6781,11 @@ final class ShureWirelessService: ObservableObject {
         scheduleTelemetrySnapshotPublish()
     }
 
+    /// Whether any tile (single-channel or Overview) currently consumes this service.
+    var hasConsumers: Bool {
+        !overviewConsumerIDs.isEmpty || !channelConsumerSelections.isEmpty
+    }
+
     func removeConsumer(_ consumerID: UUID) {
         overviewConsumerIDs.remove(consumerID)
         channelConsumerSelections.removeValue(forKey: consumerID)
@@ -6748,13 +6920,15 @@ final class ShureWirelessService: ObservableObject {
     }
 
     private func shouldTrustFastUdpPresenceEvidence() -> Bool {
-        guard let device else { return false }
-        return Self.isUdpOnlyShureDevice(device)
+        deviceTraits.isUdpOnly
     }
 
     private func resetLiveTelemetryState() {
         resetReconnectState()
         recentReports.removeAll()
+        for meter in meterCells.values {
+            meter.receive(level: nil, stereo: nil, isOverloaded: false, isMuted: false, sampleAt: nil)
+        }
         lastHeardAt = nil
         lastError = nil
         lastAxientOverviewMeterPollAt.removeAll()
@@ -7018,9 +7192,12 @@ final class ShureWirelessService: ObservableObject {
         }
 
         micAudioLastUpdated[channelIndex] = now
+        // Per-sample line; debug builds only (see processSampleFrame).
+        #if DEBUG
         if Self.isVerboseMicLogging {
             print("[ShureWirelessService] \(deviceLogTag) MIC AUDIO \(keyUpper) ch \(channelIndex): \(level)")
         }
+        #endif
     }
 
     private func updatePSMAudioLevel(_ level: Double, keyUpper: String, channelIndex: Int) {
@@ -7032,6 +7209,7 @@ final class ShureWirelessService: ObservableObject {
         }
         psmAudioLevels[channelIndex] = current
         scheduleTelemetrySnapshotPublish()
+        feedMeter(channelIndex: channelIndex, sampleAt: Date())
         if Self.isVerbosePsmLogging {
             print("[ShureWirelessService] \(deviceLogTag) PSM AUDIO_IN \(keyUpper == "AUDIO_IN_LVL_L" ? "L" : "R") ch \(channelIndex): \(level)")
         }
@@ -7335,6 +7513,7 @@ final class ShureWirelessService: ObservableObject {
         applyShadowStandardReportSnapshot(channelIndex: channelIndex, mirrored: mirrored)
         let shadow = lowFrequencySnapshot(from: mirrored)
         shadowStandardReportLowFrequencySnapshots[channelIndex] = shadow
+        feedMeter(channelIndex: channelIndex)
         scheduleTelemetrySnapshotPublish()
 #if DEBUG
         guard Self.isVerboseLogging else { return }
@@ -7736,9 +7915,13 @@ final class ShureWirelessService: ObservableObject {
             }
             acceptedMicLevel = level
             micAudioLastUpdated[chIndex] = now
+            // One line per meter sample (hundreds a second across receivers) went to the
+            // console and the session log in every build; debug builds only now.
+            #if DEBUG
             if Self.isVerboseMicLogging {
                 print("[ShureWirelessService] \(deviceLogTag) SAMPLE audio level ch \(chIndex): \(level)")
             }
+            #endif
         }
 
         let update = ShureStandardReportStateUpdate(
@@ -7994,12 +8177,6 @@ final class ShureWirelessService: ObservableObject {
             }
         }
 
-        // Optional: debug
-        if Self.isVerboseLogging, liveModeEnabled {
-            if (isPsmTransmitter && Self.isVerbosePsmLogging) || (!isPsmTransmitter && Self.isVerboseMicLogging) {
-                print("[ShureWirelessService] \(deviceLogTag) channelNames = \(self.channelNames)")
-            }
-        }
     }
 }
 
@@ -8012,7 +8189,6 @@ struct ShureWirelessModuleView: View {
     }
 
     @StateObject private var service: ShureWirelessService
-    @State private var micSmoothedLevels: [Int: Double] = [:]
     @State private var visibilityConsumerID = UUID()
     @Binding var selectedChannel: ExternalDevicesStore.ShureSelectedChannel?
     @ObservedObject private var externalStore = ExternalDevicesStore.shared
@@ -8083,7 +8259,6 @@ struct ShureWirelessModuleView: View {
     @Environment(\.tileCornerRadius) private var tileCornerRadius
     @Environment(\.dashboardIsTextInputActive) private var isTextInputActive
 
-    private let meterTick = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 #if DEBUG
     private let demoTick = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     @State private var demoPhase: Double = 0
@@ -8240,45 +8415,6 @@ struct ShureWirelessModuleView: View {
         }
         .onDisappear {
             service.removeConsumer(visibilityConsumerID)
-        }
-        .onReceive(meterTick) { _ in
-            guard !isDemoModeActive else { return }
-            guard !isTextInputActive else { return }
-            // Network sampling is the most expensive path; only run it in Live Mode.
-            guard effectiveLiveMode else { return }
-
-            if let descriptor = selectedChannelDescriptor {
-                // This view no longer polls independently -- the shared
-                // per-device loop (see refreshSharedPollingTask) is now the
-                // sole poller for every channel, including this one,
-                // whenever a tile has it selected via setChannelConsumer.
-                // This tick is purely local smoothing/ballistics against
-                // whatever that loop most recently fetched. Two
-                // independently-paced pollers hitting the same connection
-                // (this view's old loop, and the shared one) is what
-                // actually caused REP ERR, dropped updates, and flapping
-                // presence status on a real AD4Q, even after several
-                // rounds of trying to make the two coexist more carefully.
-
-                // Update stats OUTSIDE render pass
-                let channelIndex = descriptor.channelIndex
-                if !isChannelPoweredOn(for: descriptor) {
-                    updateMicSmoothedLevel(channelIndex: channelIndex, level: 0.0, isRecent: false)
-                    return
-                }
-
-                let holdSeconds = service.micHoldWindowSeconds(for: channelIndex)
-                let recentUpdate = isRecent(service.micAudioLastUpdated[channelIndex], within: 8.0)
-                let lastNonZero = service.lastNonZeroMicAudioAt(for: channelIndex)
-                let isWithinHold = isRecent(lastNonZero, within: holdSeconds)
-
-                let micLevel = service.standardReportMicAudioLevel(for: channelIndex)
-                if let level = micLevel, (recentUpdate || isWithinHold) {
-                    updateMicSmoothedLevel(channelIndex: channelIndex, level: level, isRecent: true)
-                } else {
-                    updateMicSmoothedLevel(channelIndex: channelIndex, level: 0.0, isRecent: false)
-                }
-            }
         }
 #if DEBUG
         .onReceive(demoTick) { _ in
@@ -8742,36 +8878,10 @@ struct ShureWirelessModuleView: View {
                         guard effectiveLiveMode else { return false }
                         return channelSnapshot?.rfOverload ?? service.standardReportRfOverload(for: descriptor.channelIndex) ?? false
                     }()
-                    let micAudioOverload: Bool = {
-                        guard effectiveLiveMode else { return false }
-                        return channelSnapshot?.audioOverload ?? service.standardReportMicAudioOverload(for: descriptor.channelIndex) ?? false
-                    }()
-                    let psmAudio = effectiveLiveMode
-                        ? (
-                            channelSnapshot.flatMap { snapshot in
-                                guard let left = snapshot.audioLeftLevel, let right = snapshot.audioRightLevel else { return nil }
-                                return (left: left, right: right)
-                            } ?? service.psmAudioLevels[descriptor.channelIndex]
-                        )
-                        : nil
-                    let micAudioLevel: Double? = {
-                        guard effectiveLiveMode else { return nil }
-                        guard isPsmTransmitter || isChannelPoweredOn(for: descriptor) else { return nil }
-                        let channelIndex = descriptor.channelIndex
-                        if let smoothed = micSmoothedLevels[channelIndex], smoothed > 0 {
-                            return smoothed
-                        }
-
-                        let holdSeconds = service.micHoldWindowSeconds(for: channelIndex)
-                        let isRecentUpdate = isRecent(service.micAudioLastUpdated[channelIndex], within: 8.0)
-                        let lastNonZero = service.lastNonZeroMicAudioAt(for: channelIndex)
-                        let isWithinHold = isRecent(lastNonZero, within: holdSeconds)
-
-                        guard isRecentUpdate || isWithinHold else {
-                            return nil
-                        }
-                        return channelSnapshot?.audioLevel ?? service.standardReportMicAudioLevel(for: channelIndex)
-                    }()
+                    // Meters observe the channel's live meter in their own small views, so audio
+                    // moves at display rate without redrawing this whole tile.
+                    let channelMeter = service.meter(for: descriptor.channelIndex)
+                    let micMeterIsActive = effectiveLiveMode && (isPsmTransmitter || isChannelPoweredOn(for: descriptor))
 
                     VStack(alignment: .leading, spacing: 6) {
                         if showFrequency {
@@ -8834,27 +8944,13 @@ struct ShureWirelessModuleView: View {
                                         Text(applyCapitalization("L"))
                                             .font(captionFont)
                                             .foregroundStyle(resolvedSecondaryColor)
-                                        let leftBars = psmAudio.map { psmAudioBarCount(from: $0.left) } ?? 0
-                                        HStack(spacing: 2) {
-                                            ForEach(0..<8, id: \.self) { idx in
-                                                RoundedRectangle(cornerRadius: 2)
-                                                    .fill(idx < leftBars ? Color.accentColor : Color.secondary.opacity(0.2))
-                                                    .frame(width: 10, height: 6)
-                                            }
-                                        }
+                                        ShureTileStereoMeter(meter: channelMeter, side: .left, isActive: effectiveLiveMode)
                                     }
                                     HStack(spacing: 4) {
                                         Text(applyCapitalization("R"))
                                             .font(captionFont)
                                             .foregroundStyle(resolvedSecondaryColor)
-                                        let rightBars = psmAudio.map { psmAudioBarCount(from: $0.right) } ?? 0
-                                        HStack(spacing: 2) {
-                                            ForEach(0..<8, id: \.self) { idx in
-                                                RoundedRectangle(cornerRadius: 2)
-                                                    .fill(idx < rightBars ? Color.accentColor : Color.secondary.opacity(0.2))
-                                                    .frame(width: 10, height: 6)
-                                            }
-                                        }
+                                        ShureTileStereoMeter(meter: channelMeter, side: .right, isActive: effectiveLiveMode)
                                     }
                                 }
                             }
@@ -8928,39 +9024,7 @@ struct ShureWirelessModuleView: View {
                                             }
                                             Spacer()
 
-                                            let audioBars: Int = {
-                                                if let audioLevel = micAudioLevel {
-                                                    return micAudioBarCount(from: audioLevel, channelIndex: descriptor.channelIndex)
-                                                } else {
-                                                    return 0
-                                                }
-                                            }()
-
-                                            HStack(spacing: 2) {
-                                                ForEach(0..<ShureOverviewAudioBucket.segmentCount, id: \.self) { idx in
-                                                    // Last segment is a true clip/overage alert,
-                                                    // not just "the meter happens to be fully
-                                                    // pegged": driven by the receiver's own
-                                                    // AUDIO_LED_BITMAP bit 7 ("LED 8 - Red" per
-                                                    // Shure's Axient Digital reference), the same
-                                                    // way the RF meter's dedicated overload
-                                                    // segment above is driven by RSSI_LED_BITMAP
-                                                    // bit 5 rather than rfBars alone -- not
-                                                    // derived from our own level/bar-count math,
-                                                    // which can reach 8/8 at a different
-                                                    // threshold than the receiver's own clip
-                                                    // detection.
-                                                    let isOverageSegment = idx == ShureOverviewAudioBucket.segmentCount - 1
-                                                    let isLit = isOverageSegment ? micAudioOverload : (idx < audioBars)
-                                                    let fillColor: Color = {
-                                                        guard isLit else { return Color.secondary.opacity(0.2) }
-                                                        return isOverageSegment ? Color.red.opacity(0.8) : Color.accentColor
-                                                    }()
-                                                    RoundedRectangle(cornerRadius: 2)
-                                                        .fill(fillColor)
-                                                        .frame(width: 8, height: 6)
-                                                }
-                                            }
+                                            ShureTileMicMeter(meter: channelMeter, isActive: micMeterIsActive)
                                         }
                                     }
                                 }
@@ -8985,32 +9049,6 @@ struct ShureWirelessModuleView: View {
     }
     
 
-    /// Map a PSM audio input level into a 0–8 bar count for display.
-    ///
-    /// Different PSM 1000 / P10T firmware versions report AUDIO_IN_LVL_* in
-    /// slightly different numeric ranges (often in the tens of thousands).
-    /// To avoid the meter sitting either at 0 or pegged full, we normalize
-    /// over a wide log10 range and then clamp.
-    private func psmAudioBarCount(from level: Double) -> Int {
-        // Treat non-positive as no signal.
-        if level <= 0 { return 0 }
-
-        // Heuristic log-space bounds: assume useful values live somewhere
-        // between 10^2 and 10^6. This comfortably covers a wide range of
-        // observed PSM AUDIO_IN_LVL values without immediately saturating.
-        let logMin: Double = 2.0   // 10^2
-        let logMax: Double = 6.0   // 10^6
-
-        let logVal = log10(max(level, pow(10.0, logMin)))
-        let ratio = (logVal - logMin) / (logMax - logMin)
-        let normalized = min(max(ratio, 0.0), 1.0)
-
-        // Use rounding so mid-range values land in the middle of the bar
-        // range instead of being biased low.
-        let bars = Int(round(normalized * 8.0))
-        return max(0, min(bars, 8))
-    }
-
     private func rfBarFallbackCount(from rfTxLevel: Int) -> Int {
         let clamped = max(0, min(100, rfTxLevel))
         switch clamped {
@@ -9021,40 +9059,6 @@ struct ShureWirelessModuleView: View {
         case 1...20: return 1
         default: return 0
         }
-    }
-
-    /// Map a microphone receiver's AUDIO_LVL value into a 0–8 bar count.
-    ///
-    /// ULX-D/Axient report AUDIO_LVL in a small range, so we scale it
-    /// aggressively to keep the meter readable and stable.
-    private func micAudioBarCount(from level: Double, channelIndex: Int) -> Int {
-        guard level.isFinite else { return 0 }
-        if level <= 0 { return 0 }
-
-        if service.standardReportAudioMute(for: channelIndex) == true {
-            return 0
-        }
-
-        return ShureOverviewAudioBucket.micSegments(level: level)
-    }
-    private func updateMicSmoothedLevel(channelIndex: Int, level: Double, isRecent: Bool) {
-        let current = micSmoothedLevels[channelIndex] ?? 0.0
-        let target = isRecent ? max(level, 0.0) : 0.0
-        // Faster rise, slower fall for a more natural meter feel.
-        let alpha: Double
-        if isRecent {
-            alpha = target > current ? 0.7 : 0.45
-        } else {
-            // Slow decay so meters don't snap to zero between sparse updates.
-            alpha = 0.12
-        }
-        var next = current + (target - current) * alpha
-        // The decay never reaches zero on its own, and every @State write redraws the tile,
-        // so a silent channel kept redrawing at the tick rate. Snap to zero near the floor
-        // and skip changes too small to see (levels run 0–20).
-        if !isRecent, next < 0.05 { next = 0 }
-        guard abs(next - current) >= 0.01 || (next == 0 && current != 0) else { return }
-        micSmoothedLevels[channelIndex] = next
     }
 
     // MARK: - Helpers
@@ -9807,5 +9811,64 @@ struct ShureModuleSettingsInspector: View {
         let model = (device.shureModelIdentifier ?? "").uppercased()
         let name = device.name.uppercased()
         return model.contains("PSM900") || name.contains("PSM 900") || name.contains("PSM900")
+    }
+}
+
+
+// MARK: - Live meter views
+
+/// The tile's mic audio meter: 8 segments, the last one lit by the receiver's own clip bit.
+/// Observes only the channel's `ShureChannelMeter`.
+struct ShureTileMicMeter: View {
+    let meter: ShureChannelMeter
+    let isActive: Bool
+
+    var body: some View {
+        let segmentCount = ShureOverviewAudioBucket.segmentCount
+        let litSegments = isActive && !meter.isMuted ? ShureOverviewAudioBucket.micSegments(level: meter.level) : 0
+        let isOverloaded = isActive && meter.isOverloaded
+        HStack(spacing: 2) {
+            ForEach(0..<segmentCount, id: \.self) { index in
+                // The last segment is the receiver's clip alert (AUDIO_LED_BITMAP bit 7), not
+                // "fully pegged" by our own level math.
+                let isOverageSegment = index == segmentCount - 1
+                let isLit = isOverageSegment ? isOverloaded : (index < litSegments)
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(isLit ? (isOverageSegment ? Color.red.opacity(0.8) : Color.accentColor) : Color.secondary.opacity(0.2))
+                    .frame(width: 8, height: 6)
+            }
+        }
+    }
+}
+
+/// One side of a PSM transmitter's stereo input meter. Observes only the channel's meter.
+struct ShureTileStereoMeter: View {
+    enum Side { case left, right }
+
+    let meter: ShureChannelMeter
+    let side: Side
+    let isActive: Bool
+
+    var body: some View {
+        let level = side == .left ? meter.left : meter.right
+        let litSegments = isActive ? Self.segments(for: level) : 0
+        HStack(spacing: 2) {
+            ForEach(0..<8, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(index < litSegments ? Color.accentColor : Color.secondary.opacity(0.2))
+                    .frame(width: 10, height: 6)
+            }
+        }
+    }
+
+    /// PSM AUDIO_IN_LVL values vary by firmware (often tens of thousands), so they're
+    /// mapped over 10^2–10^6 on a log scale.
+    nonisolated static func segments(for level: Double) -> Int {
+        guard level > 0 else { return 0 }
+        let logMin = 2.0
+        let logMax = 6.0
+        let logValue = log10(max(level, pow(10.0, logMin)))
+        let normalized = min(max((logValue - logMin) / (logMax - logMin), 0.0), 1.0)
+        return max(0, min(Int((normalized * 8.0).rounded()), 8))
     }
 }
