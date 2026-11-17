@@ -2839,11 +2839,18 @@ final class ShureWirelessService: ObservableObject {
     }
 
 // MARK: Granular published state (Option B)
+//
+// Per-packet telemetry (levels, battery, RF, presence, mute, timestamps) is deliberately
+// not @Published. Tiles hold this service as an ObservableObject, so every @Published write
+// redrew them at packet rate. Those properties schedule the throttled `telemetrySnapshot`
+// publish instead (`telemetryStateDidChange()`), which is what redraws the UI.
 
     @Published var device: ExternalDeviceConfig?
     @Published var isConnected: Bool = false
     @Published var lastError: String? = nil
-    @Published var lastHeardAt: Date? = nil
+    var lastHeardAt: Date? = nil {
+        didSet { telemetryStateDidChange() }
+    }
     @Published var isReconnecting: Bool = false
 
     /// Channel names reported by the current device, keyed by channel index.
@@ -2851,25 +2858,43 @@ final class ShureWirelessService: ObservableObject {
     /// Last known tuned frequency per channel, already formatted for display.
     @Published var channelFrequencies: [Int: String] = [:]
     /// RF TX level reported by the current device, keyed by channel index.
-    @Published var rfTxLevels: [Int: Int] = [:]
+    var rfTxLevels: [Int: Int] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time we updated RF TX level per channel.
-    @Published var rfTxLastUpdated: [Int: Date] = [:]
+    var rfTxLastUpdated: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// For PSM devices (e.g. P10T), last reported audio input levels for L/R per channel.
-    @Published var psmAudioLevels: [Int: (left: Double, right: Double)] = [:]
+    var psmAudioLevels: [Int: (left: Double, right: Double)] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// For microphone receivers, last reported audio level per channel (mono).
-    @Published var micAudioLevels: [Int: Double] = [:]
+    var micAudioLevels: [Int: Double] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time we updated mic audio level per channel.
-    @Published var micAudioLastUpdated: [Int: Date] = [:]
+    var micAudioLastUpdated: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last reported meter rate per channel (0 means disabled/idle on some devices).
-    @Published var channelMeterRates: [Int: Int] = [:]
+    var channelMeterRates: [Int: Int] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time we saw a non-zero mic audio value per channel.
     private var micAudioLastNonZeroAt: [Int: Date] = [:]
     /// Last parsed human-readable battery label per channel (e.g. "85%", "1:20", "45m").
-    @Published var channelBatteryLabels: [Int: String] = [:]
+    var channelBatteryLabels: [Int: String] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last known battery percentage per channel (0–100) when available.
-    @Published var channelBatteryPercentages: [Int: Int] = [:]
+    var channelBatteryPercentages: [Int: Int] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Whether the displayed battery percentage is approximated from bar-only data.
-    @Published var channelBatteryIsApproximate: [Int: Bool] = [:]
+    var channelBatteryIsApproximate: [Int: Bool] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Priority of the current battery display source per channel.
     private var channelBatteryPriority: [Int: Int] = [:]
     /// Whether a channel has shown evidence of a smart Shure battery path.
@@ -2877,34 +2902,58 @@ final class ShureWirelessService: ObservableObject {
     /// Short-lived placeholder state while smart-battery runtime is still resolving.
     private var channelBatteryCalculationPendingAt: [Int: Date] = [:]
     /// Last time we updated battery data per channel.
-    @Published var channelBatteryLastUpdated: [Int: Date] = [:]
+    var channelBatteryLastUpdated: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time a battery field explicitly cleared for a channel.
     /// Latched evidence that a microphone transmitter is currently on.
-    @Published var channelPresenceLastSeenAt: [Int: Date] = [:]
+    var channelPresenceLastSeenAt: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Strong positive Axient-only evidence such as transmitter identity or
     /// non-sentinel transmitter telemetry. This wins over brief false frames.
-    @Published var channelAxientPositiveEvidenceLastSeenAt: [Int: Date] = [:]
+    var channelAxientPositiveEvidenceLastSeenAt: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// When the current unbroken run of negative Axient presence evidence
     /// began (cleared as soon as positive evidence returns). Lets sustained
     /// negative evidence override an in-progress positive hold in
     /// ShureAxientPresenceResolver without waiting for it to expire.
-    @Published var channelAxientNegativeEvidenceStreakStartAt: [Int: Date] = [:]
+    var channelAxientNegativeEvidenceStreakStartAt: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Family-specific explicit transmitter presence, when the receiver reports it.
-    @Published var channelTransmitterPresent: [Int: Bool] = [:]
+    var channelTransmitterPresent: [Int: Bool] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time explicit transmitter presence was updated per channel.
-    @Published var channelTransmitterPresentLastUpdated: [Int: Date] = [:]
+    var channelTransmitterPresentLastUpdated: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time receiver-reported transmitter presence was explicitly true.
-    @Published var channelTransmitterPresentLastTrueAt: [Int: Date] = [:]
+    var channelTransmitterPresentLastTrueAt: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time receiver-reported transmitter presence was explicitly false.
-    @Published var channelTransmitterPresentLastFalseAt: [Int: Date] = [:]
+    var channelTransmitterPresentLastFalseAt: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Explicit transmitter identity presence, based on TX_DEVICE_ID when available.
-    @Published var channelTransmitterDeviceIDPresent: [Int: Bool] = [:]
+    var channelTransmitterDeviceIDPresent: [Int: Bool] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time TX_DEVICE_ID presence was updated per channel.
-    @Published var channelTransmitterDeviceIDLastUpdated: [Int: Date] = [:]
+    var channelTransmitterDeviceIDLastUpdated: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last parsed RF strength as a 0–5 bar count per channel.
-    @Published var channelRFBarCounts: [Int: Int] = [:]
+    var channelRFBarCounts: [Int: Int] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Last time we updated RF data per channel.
-    @Published var channelRfLastUpdated: [Int: Date] = [:]
+    var channelRfLastUpdated: [Int: Date] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Axient-only RF bar hold/hysteresis state, see `ShureAxientRfBarHoldResolver`.
     private var channelRfBarHoldState: [Int: ShureAxientRfBarHoldState] = [:]
     /// Latest raw RSSI_LED_BITMAP bar count per antenna, per channel --
@@ -2915,11 +2964,17 @@ final class ShureWirelessService: ObservableObject {
     /// chasing unbounded growth in the outgoing command queues.
     private var lastQueueDepthTraceAt: Date?
     /// Last known audio mute state per channel (true = muted).
-    @Published var channelAudioMutes: [Int: Bool] = [:]
+    var channelAudioMutes: [Int: Bool] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Shadow cache populated by reading the raw standard-report actor state.
-    @Published private var shadowStandardReportSnapshots: [Int: ShureStandardReportChannelSnapshot] = [:]
+    private var shadowStandardReportSnapshots: [Int: ShureStandardReportChannelSnapshot] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     /// Low-frequency subset of the actor-backed shadow cache.
-    @Published private var shadowStandardReportLowFrequencySnapshots: [Int: ShureStandardReportLowFrequencySnapshot] = [:]
+    private var shadowStandardReportLowFrequencySnapshots: [Int: ShureStandardReportLowFrequencySnapshot] = [:] {
+        didSet { telemetryStateDidChange() }
+    }
     @Published private(set) var debugTelemetryProtocolLabel: String = DebugTelemetryProtocol.tcp2202.rawValue
     @Published private(set) var telemetrySnapshot: ShureTelemetryDeviceSnapshot = .empty
 
@@ -5622,12 +5677,26 @@ final class ShureWirelessService: ObservableObject {
         )
     }
 
+    /// Set while building the snapshot, so state the build itself touches doesn't schedule
+    /// another publish.
+    private var isBuildingTelemetrySnapshot = false
+
+    /// Called when per-packet telemetry state changes. Schedules the throttled snapshot
+    /// publish if none is pending. Unlike `scheduleTelemetrySnapshotPublish()`, it doesn't
+    /// count the coalesced call as dropped: that counter feeds the overview's strain check.
+    private func telemetryStateDidChange() {
+        guard !isBuildingTelemetrySnapshot, telemetryPublishTask == nil else { return }
+        scheduleTelemetrySnapshotPublish()
+    }
+
     private func publishTelemetrySnapshotNow() {
         telemetryPublishTask?.cancel()
         telemetryPublishTask = nil
 
         let now = Date()
+        isBuildingTelemetrySnapshot = true
         let snapshot = buildTelemetrySnapshot(now: now)
+        isBuildingTelemetrySnapshot = false
         guard !snapshot.hasSameContent(as: telemetrySnapshot) else { return }
 
         telemetrySnapshot = snapshot
@@ -7100,9 +7169,11 @@ final class ShureWirelessService: ObservableObject {
         mirrored: ShureStandardReportChannelSnapshot
     ) {
         shadowStandardReportSnapshots[channelIndex] = mirrored
+        // Still @Published (names and frequencies change rarely): write only on change, or
+        // this per-update mirror redraws every tile on every packet.
         if let channelName = mirrored.channelName {
-            channelNames[channelIndex] = channelName
-        } else {
+            if channelNames[channelIndex] != channelName { channelNames[channelIndex] = channelName }
+        } else if channelNames[channelIndex] != nil {
             channelNames.removeValue(forKey: channelIndex)
         }
         if let rfTxLevel = mirrored.rfTxLevel {
@@ -7110,9 +7181,11 @@ final class ShureWirelessService: ObservableObject {
         } else {
             rfTxLevels.removeValue(forKey: channelIndex)
         }
+        // Still @Published (names and frequencies change rarely): write only on change, or
+        // this per-update mirror redraws every tile on every packet.
         if let frequencyDisplay = mirrored.frequencyDisplay {
-            channelFrequencies[channelIndex] = frequencyDisplay
-        } else {
+            if channelFrequencies[channelIndex] != frequencyDisplay { channelFrequencies[channelIndex] = frequencyDisplay }
+        } else if channelFrequencies[channelIndex] != nil {
             channelFrequencies.removeValue(forKey: channelIndex)
         }
         if let batteryLabel = mirrored.batteryLabel {
@@ -7855,7 +7928,6 @@ struct ShureWirelessModuleView: View {
     }
 
     @StateObject private var service: ShureWirelessService
-    @State private var micLevelStats: [Int: (min: Double, max: Double)] = [:]
     @State private var micSmoothedLevels: [Int: Double] = [:]
     @State private var visibilityConsumerID = UUID()
     @Binding var selectedChannel: ExternalDevicesStore.ShureSelectedChannel?
@@ -8118,7 +8190,6 @@ struct ShureWirelessModuleView: View {
 
                 let micLevel = service.standardReportMicAudioLevel(for: channelIndex)
                 if let level = micLevel, (recentUpdate || isWithinHold) {
-                    updateMicLevelStats(channelIndex: channelIndex, level: level)
                     updateMicSmoothedLevel(channelIndex: channelIndex, level: level, isRecent: true)
                 } else {
                     updateMicSmoothedLevel(channelIndex: channelIndex, level: 0.0, isRecent: false)
@@ -8882,33 +8953,6 @@ struct ShureWirelessModuleView: View {
 
         return ShureOverviewAudioBucket.micSegments(level: level)
     }
-    private func updateMicLevelStats(channelIndex: Int, level: Double) {
-        guard level.isFinite else { return }
-
-        var stats = micLevelStats[channelIndex] ?? (min: level, max: level)
-
-        // Decay window so the meter keeps moving with real-time changes.
-        let decay: Double = 0.08
-        if level < stats.min {
-            stats.min = level
-        } else {
-            stats.min += (level - stats.min) * decay
-        }
-
-        if level > stats.max {
-            stats.max = level
-        } else {
-            stats.max -= (stats.max - level) * decay
-        }
-
-        if stats.max - stats.min < 0.1 {
-            stats.min = level - 0.05
-            stats.max = level + 0.05
-        }
-
-        micLevelStats[channelIndex] = stats
-    }
-
     private func updateMicSmoothedLevel(channelIndex: Int, level: Double, isRecent: Bool) {
         let current = micSmoothedLevels[channelIndex] ?? 0.0
         let target = isRecent ? max(level, 0.0) : 0.0
@@ -8920,7 +8964,12 @@ struct ShureWirelessModuleView: View {
             // Slow decay so meters don't snap to zero between sparse updates.
             alpha = 0.12
         }
-        let next = current + (target - current) * alpha
+        var next = current + (target - current) * alpha
+        // The decay never reaches zero on its own, and every @State write redraws the tile,
+        // so a silent channel kept redrawing at the tick rate. Snap to zero near the floor
+        // and skip changes too small to see (levels run 0–20).
+        if !isRecent, next < 0.05 { next = 0 }
+        guard abs(next - current) >= 0.01 || (next == 0 && current != 0) else { return }
         micSmoothedLevels[channelIndex] = next
     }
 

@@ -152,17 +152,61 @@ state lost on persist, keystroke trigger data race, compact-card size pop.
 
 ## 2. High impact
 
-- [ ] **Shure tiles redraw on every network packet** — M
-  - **Where:** `ShureWirelessModule.swift`: `ShureWirelessService` writes `@Published` per packet
-    (`lastHeardAt`, `micAudioLastUpdated`, `channelPresenceLastSeenAt`, `micAudioLevels`); tile
-    holds it as `@StateObject` (~line 7904); `meterTick` timer in the view struct; unused
-    `micLevelStats` (~7855).
-  - **What goes wrong:** the `telemetrySnapshot` throttle (~2924) is bypassed, so each tile redraws
-    at packet rate (~8 Hz per device or more), and the 10 Hz meter tick writes even while decaying
-    to zero.
-  - **Fix:** make per-packet bookkeeping non-published; tiles read only `telemetrySnapshot`; skip
-    meter writes under ~0.001 change; delete `micLevelStats`; move the timer to a shared publisher.
-  - **Check:** with a live Shure receiver, sample idle CPU and tile body counts before/after.
+Goal for Shure and Sennheiser: a Wireless Workbench-like live view (battery, frequency, RF and
+audio meters) that stays smooth across many receivers. Judge wireless items by that, not only CPU.
+
+- [x] **Shure tiles redraw on every network packet** — fixed, uncommitted
+  - **Cause:** tiles hold `ShureWirelessService` as an `ObservableObject`, and the service
+    published ~25 per-packet maps (levels, battery, RF, presence, mute, timestamps), so every
+    write redrew the tile; names and frequencies were also rewritten every update. In the tile, a
+    min/max stat was written each 10 Hz tick but never shown, and the smoothed meter decayed
+    toward zero forever, writing (and redrawing) at 10 Hz on a silent channel.
+  - **Fix:** the per-packet maps are plain properties whose `didSet` schedules the existing
+    throttled `telemetrySnapshot` publish (`telemetryStateDidChange()`: no-op while a publish is
+    pending or the snapshot is being built, and not counted as a dropped update, which feeds the
+    overview's strain check). Names and frequencies are written only on change. The unused stat is
+    gone; the meter snaps to zero near the floor and skips changes under 0.01 (levels run 0–20).
+  - **Measured** with live receivers (4 single-channel tiles on MIC3.101 ×2, MIC3.105 and IEM3.101,
+    Live mode, 30 s, temporary counters removed afterwards):
+
+    | per second | before | after |
+    |---|---|---|
+    | frames received | ~400 | ~400 |
+    | meter values applied | ~330 | ~330 |
+    | service change notifications | ~5,400 | ~60 |
+    | tile redraws (all 4) | ~340 | ~23 |
+    | app CPU | ~74% of a core | ~35% |
+
+  - **Found on the way** (toward the Wireless Workbench-style goal):
+    - Snapshots publish ~20 times a second per receiver, faster than the 0.15 s throttle
+      suggests, so some path publishes immediately per update.
+    - All packet parsing runs on the main actor (`startReceiveLoop` → `handleIncoming`, ~20% of
+      main-thread time for 3 receivers). With ~400 frames/s per 3 receivers, a 23-receiver
+      overview would saturate the main thread; parsing should move off it.
+    - Meter data reaches tiles through the same snapshot as battery/RF/frequency, so a faster
+      meter would redraw the whole tile. A per-channel meter path (only the meter redraws) is the
+      next step.
+
+- [ ] **Shure Overview: cost and update rate** — M
+  - **Measured** (Preview enabled for the test, then restored; Overview limited to MIC3.101,
+    MIC3.105, IEM3.101 and IEM3.105; Live mode, 30 s; no transmitters on at the time):
+    - ~31% of a CPU core, the same with and without the tile fix above: the Overview never
+      observed the services directly (their change notifications still dropped ~2,900/s → ~14/s).
+    - The Overview redrew ~1.3 times a second. With nothing on, the hub runs on its slow tier
+      (`baseThrottleInterval`); it only switches to 0.15 s when a channel is on. On-state meter
+      cadence is still to measure with a transmitter powered on.
+  - **Hot spots on the main thread:**
+    - `ShureOverviewHub.refreshThrottleIntervalForActivity()` runs on every snapshot from every
+      receiver and calls `hasAnyOnChannel` on all services, which re-resolves transmitter state
+      per channel (`resolvedTelemetryTransmitterState`, `shouldTrustFastUdpPresenceEvidence`,
+      `isAxientDeviceModel`). Cost grows with receivers × channels × publish rate; the snapshot
+      already carries `transmitterState`, so the check can read that, at most a few times a second.
+    - ANX4 diagnostic logging (`logAnx4PacketSummary`, `RelayDiagnosticsStore.recordShureTrace`)
+      runs in Release builds, ~2.5% of main-thread time.
+    - Packet handling on the main actor, as above.
+  - **For the Workbench goal:** the Overview's default audio mode is a signal light, not a meter,
+    and rows rebuild as one list; per-channel meter state would let meters update without
+    rebuilding every row.
 
 - [ ] **ProPresenter tiles redraw 3–5 times per poll** — S/M
   - **Where:** `ProPresenterModule.swift`: `@Published stateByModuleID` (~597) written several times
