@@ -278,13 +278,19 @@ audio meters) that stays smooth across many receivers. Judge wireless items by t
     tile bodies ~57/s → ~3/s (slides were being advanced during the new-build run), app CPU
     ~17% → ~15% of a core; polling and parsing are the rest.
 
-- [ ] **DAW Transport polls MIDI at 5 Hz forever** — S/M
-  - **Where:** `DAWTransportModule.swift`: `startStatusTimer` (~1944), `updateStatusSnapshot` (~1951);
-    `DAWTransportViewModelStore` keeps view models alive.
-  - **What goes wrong:** every DAW tile ever shown enumerates CoreMIDI and rewrites ~15
-    `@Published` values every 0.2 s, visible or not.
-  - **Fix:** refresh ports on CoreMIDI change notifications; write only changed values; pause
-    while the tile isn't visible.
+- [x] **DAW Transport polls MIDI at 5 Hz forever** — fixed
+  - **Cause:** every DAW view model ever created (the store keeps them alive) ran a 5 Hz status
+    pass that enumerated CoreMIDI sources and destinations and rewrote ~19 `@Published` values,
+    which notify even when unchanged, so each pass redrew the tile, on screen or not. Once any
+    signal arrived, "Last: 3.2s ago" changed on every pass even with the debug rows hidden.
+  - **Fix:** the values notify only on a real change; port lists are cached and refreshed on
+    CoreMIDI setup changes (`MIDIClientCreateWithBlock`, `msgSetupChanged`); the status timer runs
+    only while a tile is on screen (`tileDidAppear`/`tileDidDisappear`, ref-counted); the age text
+    updates only while the debug rows are on. MIDI input handling is unchanged. Unit-tested.
+  - **Live** (2 DAW tiles, Edit mode, DAW-only copy of FOH NEW, temporary counters, old and new
+    side by side): tile bodies ~11/s → ~0.6/s, app CPU 5.5 s → 3.1 s per 40 s; with the tiles on
+    another tab, status passes 10/s → 0, resuming on return.
+  - **Not checked live:** MTC/HUI input and plugging a MIDI device in or out (no DAW sending here).
 
 - [ ] **Live Transcription redraws at 10 Hz and the transcript grows forever** — S/M
   - **Where:** `LiveTranscriptionModule.swift`: `inputLevel` (~232) published per channel;
