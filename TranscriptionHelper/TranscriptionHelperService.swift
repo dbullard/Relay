@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 nonisolated final class TranscriptionHelperService: NSObject, TranscriptionHelperProtocol {
     private enum Constants {
@@ -9,6 +10,7 @@ nonisolated final class TranscriptionHelperService: NSObject, TranscriptionHelpe
     private var sessions: [String: HelperSpeechTranscriberAdapter] = [:]
     private var appendCounts: [String: Int] = [:]
     private let callbackConnection: NSXPCConnection
+    private static let logger = Logger(subsystem: "app.relay.Relay.TranscriptionHelper", category: "Transcription")
 
     init(connection: NSXPCConnection) {
         self.callbackConnection = connection
@@ -28,6 +30,9 @@ nonisolated final class TranscriptionHelperService: NSObject, TranscriptionHelpe
             localeIdentifier: localeIdentifier
         )
         let adapter = HelperSpeechTranscriberAdapter(config: config)
+        adapter.onLog = { [weak self] message in
+            self?.log(sessionID, "[Speech] \(message)")
+        }
 
         adapter.onPartial = { [weak self] text, confidence in
             self?.callbackProxy()?.session(sessionID, didReceivePartial: text, confidence: confidence ?? .nan)
@@ -36,6 +41,7 @@ nonisolated final class TranscriptionHelperService: NSObject, TranscriptionHelpe
             self?.callbackProxy()?.session(sessionID, didReceiveFinal: text, confidence: confidence ?? .nan)
         }
         adapter.onError = { [weak self] failure in
+            self?.log(sessionID, "reporting error code=\(failure.code.rawValue) message=\(failure.message)")
             self?.callbackProxy()?.session(sessionID, didEncounterError: failure.code.rawValue, message: failure.message)
         }
 
@@ -90,7 +96,11 @@ nonisolated final class TranscriptionHelperService: NSObject, TranscriptionHelpe
         return proxy as? TranscriptionHelperCallbackProtocol
     }
 
+    /// Writes to the unified log and forwards the line to the app, which records it in
+    /// RelayLogs. `print` alone is invisible: an XPC service has no attached stdout.
     private func log(_ sessionID: String, _ message: String) {
-        print("[Transcription Helper][\(sessionID.prefix(8))] \(message)")
+        let line = "[\(sessionID.prefix(8))] \(message)"
+        Self.logger.log("\(line, privacy: .public)")
+        callbackProxy()?.session(sessionID, didLog: message)
     }
 }

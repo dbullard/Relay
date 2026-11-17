@@ -3,14 +3,16 @@ import Foundation
 
 final class XPCSpeechTranscriberAdapter: NSObject, SpeechTranscribing {
     private enum Constants {
-        static let serviceName = "app.relay.Relay.TranscriptionHelper"
         static let appendLogInterval = 50
     }
 
     private static let connectionLock = NSLock()
-    private static var sharedConnection: NSXPCConnection?
+    /// One connection per helper service. Each service is a separate process, and the
+    /// Speech framework allows one recognition task per process.
+    private static var connections: [String: NSXPCConnection] = [:]
 
     private let config: SpeechTranscriber.Config
+    private let serviceName: String
     private let sessionID = UUID().uuidString
     private var hasStarted = false
     private var appendedChunkCount = 0
@@ -19,14 +21,15 @@ final class XPCSpeechTranscriberAdapter: NSObject, SpeechTranscribing {
     var onFinal: ((String, Double?) -> Void)?
     var onError: ((TranscriptionFailure) -> Void)?
 
-    init(config: SpeechTranscriber.Config) {
+    init(config: SpeechTranscriber.Config, serviceName: String = TranscriptionEngineHost.helperServiceNames[0]) {
         self.config = config
+        self.serviceName = serviceName
         super.init()
     }
 
     func start() throws {
-        log("start requested locale=\(config.localeIdentifier ?? "system") onDevice=\(config.requiresOnDevice) publishHz=\(String(format: "%.1f", config.publishHz))")
-        let connection = Self.connection()
+        log("start requested service=\(serviceName) locale=\(config.localeIdentifier ?? "system") onDevice=\(config.requiresOnDevice) publishHz=\(String(format: "%.1f", config.publishHz))")
+        let connection = Self.connection(serviceName: serviceName)
         guard let proxy = remoteProxy(for: connection) else {
             throw TranscriptionFailure(
                 code: .connectionUnavailable,
@@ -68,7 +71,7 @@ final class XPCSpeechTranscriberAdapter: NSObject, SpeechTranscribing {
         if appendedChunkCount == 1 || appendedChunkCount % Constants.appendLogInterval == 0 {
             log("append chunk=\(appendedChunkCount) bytes=\(pcmData.count) sampleRate=\(String(format: "%.0f", sampleRate))")
         }
-        remoteProxy(for: Self.connection())?.appendPCMData(pcmData, sampleRate: sampleRate, sessionID: sessionID)
+        remoteProxy(for: Self.connection(serviceName: serviceName))?.appendPCMData(pcmData, sampleRate: sampleRate, sessionID: sessionID)
     }
 
     func stop() {
@@ -79,7 +82,7 @@ final class XPCSpeechTranscriberAdapter: NSObject, SpeechTranscribing {
         }
 
         log("stop requested after \(appendedChunkCount) chunks")
-        remoteProxy(for: Self.connection())?.endSession(sessionID)
+        remoteProxy(for: Self.connection(serviceName: serviceName))?.endSession(sessionID)
         hasStarted = false
         TranscriptionHelperCallbackRouter.shared.unregister(sessionID: sessionID)
     }
@@ -102,44 +105,44 @@ final class XPCSpeechTranscriberAdapter: NSObject, SpeechTranscribing {
         return typedProxy
     }
 
-    private static func connection() -> NSXPCConnection {
+    private static func connection(serviceName: String) -> NSXPCConnection {
         connectionLock.lock()
         defer { connectionLock.unlock() }
 
-        if let sharedConnection {
-            return sharedConnection
+        if let existing = connections[serviceName] {
+            return existing
         }
 
-        let connection = makeConnection()
-        sharedConnection = connection
+        let connection = makeConnection(serviceName: serviceName)
+        connections[serviceName] = connection
         return connection
     }
 
-    private static func makeConnection() -> NSXPCConnection {
-        print("[Transcription XPC][Connection] creating service=\(Constants.serviceName)")
-        let connection = NSXPCConnection(serviceName: Constants.serviceName)
+    private static func makeConnection(serviceName: String) -> NSXPCConnection {
+        print("[Transcription XPC][Connection] creating service=\(serviceName)")
+        let connection = NSXPCConnection(serviceName: serviceName)
         connection.remoteObjectInterface = NSXPCInterface(with: TranscriptionHelperProtocol.self)
         connection.exportedInterface = NSXPCInterface(with: TranscriptionHelperCallbackProtocol.self)
         connection.exportedObject = TranscriptionHelperCallbackRouter.shared
-        connection.invalidationHandler = {
-            print("[Transcription XPC][Connection] invalidated")
-            connectionLock.lock()
-            if sharedConnection === connection {
-                sharedConnection = nil
-            }
-            connectionLock.unlock()
+        connection.invalidationHandler = { [weak connection] in
+            print("[Transcription XPC][Connection] invalidated service=\(serviceName)")
+            forget(connection, serviceName: serviceName)
         }
-        connection.interruptionHandler = {
-            print("[Transcription XPC][Connection] interrupted")
-            connectionLock.lock()
-            if sharedConnection === connection {
-                sharedConnection = nil
-            }
-            connectionLock.unlock()
+        connection.interruptionHandler = { [weak connection] in
+            print("[Transcription XPC][Connection] interrupted service=\(serviceName)")
+            forget(connection, serviceName: serviceName)
         }
         connection.resume()
         print("[Transcription XPC][Connection] resumed")
         return connection
+    }
+
+    private static func forget(_ connection: NSXPCConnection?, serviceName: String) {
+        connectionLock.lock()
+        if let connection, connections[serviceName] === connection {
+            connections[serviceName] = nil
+        }
+        connectionLock.unlock()
     }
 
     fileprivate func log(_ message: String) {

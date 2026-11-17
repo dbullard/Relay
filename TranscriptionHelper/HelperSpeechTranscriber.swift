@@ -120,6 +120,9 @@ final class HelperSpeechTranscriber {
     var onPartial: ((String, Double?) -> Void)?
     var onFinal: ((String, Double?) -> Void)?
     var onError: ((TranscriptionFailure) -> Void)?
+    /// Receives every diagnostic line. `print` from an XPC service goes nowhere, so the
+    /// service forwards these to the app (and to the unified log).
+    var onLog: ((String) -> Void)?
 
     init(config: Config) {
         self.config = config
@@ -287,7 +290,7 @@ final class HelperSpeechTranscriber {
     }
 
     private func log(_ message: String) {
-        print("[Helper Speech] \(message)")
+        onLog?(message)
     }
 
     private func describe(_ status: SFSpeechRecognizerAuthorizationStatus) -> String {
@@ -318,6 +321,10 @@ final class HelperSpeechTranscriberAdapter {
     var onPartial: ((String, Double?) -> Void)?
     var onFinal: ((String, Double?) -> Void)?
     var onError: ((TranscriptionFailure) -> Void)?
+    var onLog: ((String) -> Void)? {
+        get { transcriber.onLog }
+        set { transcriber.onLog = newValue }
+    }
 
     init(config: HelperSpeechTranscriber.Config) {
         transcriber = HelperSpeechTranscriber(config: config)

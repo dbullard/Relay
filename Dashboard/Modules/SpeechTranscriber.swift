@@ -154,6 +154,7 @@ final class SpeechTranscriber {
                 // Cancelling a task in stop() or during a restart reports an error for it;
                 // only the current task's errors are real.
                 guard self.isCurrent(request) else { return }
+                print("[Speech In-Process] task error domain=\(nsError.domain) code=\(nsError.code) restarting=\(self.shouldRestart(for: error)) message=\(nsError.localizedDescription)")
                 if self.shouldRestart(for: error) {
                     self.restartRecognition(after: request)
                     return
