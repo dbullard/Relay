@@ -264,13 +264,19 @@ audio meters) that stays smooth across many receivers. Judge wireless items by t
     100%, Mark 7:34 / 100%) through 9 unknown bursts in a minute; turning both off cleared the
     battery in both views (`reason=transmitter_off`).
 
-- [ ] **ProPresenter tiles redraw 3–5 times per poll** — S/M
-  - **Where:** `ProPresenterModule.swift`: `@Published stateByModuleID` (~597) written several times
-    per `tick`; `lastUpdated = Date()` always changes; `loadProfile` decodes the profile JSON ~3×
-    per tick.
-  - **Fix:** build each module's new `State` locally and assign once per tick, only if it changed
-    (excluding `lastUpdated` from what drives redraws); use `ProPresenterConnection.loadProfilesCached`.
-  - **Check:** 4 ProPresenter tiles at 0.5 s: body count per second drops from ~30–40 to ~8.
+- [x] **ProPresenter tiles redraw 3–5 times per poll** — fixed
+  - **Cause:** one shared `ProPresenterService` held every module's state in a `@Published`
+    dictionary that each poll rewrote several times (request description, audience messages,
+    timers, presentation, result), and every tile observed the whole service, so each write
+    redrew every ProPresenter tile. `lastUpdated` changed on every poll, so nothing ever compared
+    equal. `loadProfile` decoded the profiles JSON on each of its ~3 calls per poll.
+  - **Fix:** each tile observes its own `ProPresenterModuleStateCell` (`@Observable`). The
+    dictionary is no longer published; a module's cell updates once when its poll ends, and only if
+    something the tile shows changed (`lastUpdated` counts only for nil vs. set, which is all the
+    tile uses). `loadProfile` uses the existing `loadProfilesCached`. Unit-tested.
+  - **Live** (4 tiles on LYRICS at 0.5 s, ProPresenter-only copy of FOH NEW, temporary counter):
+    tile bodies ~57/s → ~3/s (slides were being advanced during the new-build run), app CPU
+    ~17% → ~15% of a core; polling and parsing are the rest.
 
 - [ ] **DAW Transport polls MIDI at 5 Hz forever** — S/M
   - **Where:** `DAWTransportModule.swift`: `startStatusTimer` (~1944), `updateStatusSnapshot` (~1951);

@@ -134,8 +134,9 @@ enum ProPresenterProfilesStore {
         return decoded
     }
 
+    /// Uses the decode cache: each ProPresenter poll looks a profile up several times.
     static func loadProfile(id: UUID, from defaults: UserDefaults = .standard) -> ProPresenterConnectionProfile? {
-        loadProfiles(from: defaults).first(where: { $0.id == id })
+        loadProfilesCached(from: defaults).first(where: { $0.id == id })
     }
 
     static func activeProfileID(from defaults: UserDefaults = .standard) -> UUID? {
