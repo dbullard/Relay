@@ -469,8 +469,10 @@ final class ShureOverviewHub: ObservableObject {
     /// device-list-lifecycle events, so a channel switching on/off updates
     /// this promptly instead of waiting for the next registration change.
     private func refreshThrottleIntervalForActivity() {
-        let now = Date()
-        let target = services.values.contains { $0.hasAnyOnChannel(now: now) }
+        // Uses the snapshots the hub already holds. It used to ask every service to
+        // re-resolve every channel's transmitter state, on every snapshot from any
+        // receiver: cost grew with receivers x channels x publish rate.
+        let target = deviceSnapshots.values.contains(where: \.hasChannelOn)
             ? 0.15
             : baseThrottleInterval
         guard target != currentThrottleInterval else { return }

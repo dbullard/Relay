@@ -877,6 +877,12 @@ struct ShureTelemetryDeviceSnapshot: Sendable, Equatable {
         diagnostics: .empty
     )
 
+    /// Whether any channel in this snapshot resolved "on". Cheap: reads state the snapshot
+    /// build already resolved, so rate decisions that run on every publish can use it.
+    var hasChannelOn: Bool {
+        channels.contains { $0.transmitterState == .on }
+    }
+
     func channelSnapshot(for channelIndex: Int) -> ShureTelemetryChannelSnapshot? {
         channels.first(where: { $0.channelIndex == channelIndex })
     }
@@ -5523,25 +5529,14 @@ final class ShureWirelessService: ObservableObject {
             return 0.15
         }
         if !overviewConsumerIDs.isEmpty {
-            if hasAnyOnChannel(now: Date()) {
+            // Reads the last published snapshot rather than re-resolving every channel's
+            // transmitter state: this runs each time a publish is scheduled.
+            if telemetrySnapshot.hasChannelOn {
                 return 0.15
             }
             return overviewPollingIntervalSeconds
         }
         return 0.75
-    }
-
-    /// Whether this device currently has any channel resolved "on".
-    /// Internal (not private) so ShureOverviewHub can check across every
-    /// service it owns when deciding whether to speed up its own
-    /// hub-wide recompute throttle -- see refreshThrottleIntervalForActivity().
-    func hasAnyOnChannel(now: Date) -> Bool {
-        guard let device else { return false }
-        let channelCount = inferredChannelCount(for: device)
-        guard channelCount > 0 else { return false }
-        return (1...channelCount).contains {
-            resolvedTelemetryTransmitterState(for: $0, now: now) == .on
-        }
     }
 
     private func averageMilliseconds(total: TimeInterval, samples: Int) -> Double {
