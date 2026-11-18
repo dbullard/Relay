@@ -154,6 +154,11 @@ struct DashboardRootView: View {
         LiveModeWindowBehavior(rawValue: liveModeWindowBehaviorRaw) ?? .keepCurrentSize
     }
     @State private var didEnterFullScreenForLiveMode: Bool = false
+#if os(macOS)
+    /// Hides the system menu bar during full-screen Live Mode so the top edge reaches
+    /// Relay's live menu (touch monitors) instead of revealing the macOS menu bar.
+    @State private var liveModeMenuBarController = LiveModeMenuBarController()
+#endif
     @State private var liveModeReloadToken: UUID = UUID()
     @State private var isLiveModeChromeVisible: Bool = false
     @State private var isHoveringLiveModeChrome: Bool = false
@@ -668,6 +673,9 @@ var body: some View {
     }
     .onDisappear {
         tileNudgeResetTask?.cancel()
+#if os(macOS)
+        liveModeMenuBarController.reset()
+#endif
     }
     .onReceive(documentController.$pendingRequest.compactMap { $0 }) { request in
         handleDocumentControllerRequest(request)
@@ -1325,6 +1333,11 @@ var body: some View {
                     object: nil,
                     userInfo: ["isLiveMode": newValue]
                 )
+#if os(macOS)
+                // Takes effect immediately when already full screen, otherwise once the
+                // (animated) full-screen transition for Live Mode finishes.
+                liveModeMenuBarController.update(isLiveMode: newValue, window: NSApp.keyWindow)
+#endif
                 liveModeChromeRevealWorkItem?.cancel()
                 liveModeChromeRevealWorkItem = nil
                 liveModeChromeHideWorkItem?.cancel()
