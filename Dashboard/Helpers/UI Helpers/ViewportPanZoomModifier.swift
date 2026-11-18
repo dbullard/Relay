@@ -649,6 +649,7 @@ private struct TrackpadPanZoomEventMonitor: NSViewRepresentable {
         private weak var view: NSView?
         private var scrollMonitor: Any?
         private var magnifyMonitor: Any?
+        private var diagnosticsMonitor: Any?
         private var interactionEndWorkItem: DispatchWorkItem?
 
         init(
@@ -699,13 +700,26 @@ private struct TrackpadPanZoomEventMonitor: NSViewRepresentable {
                 guard let self else { return event }
                 return self.handleMagnify(event) ? nil : event
             }
+
+            // Opt-in diagnostics: observe (never consume) the other gesture event types a
+            // touch driver might send, so an unsupported pinch shows up in the log.
+            if TouchInputDiagnostics.isEnabledForThisLaunch {
+                diagnosticsMonitor = NSEvent.addLocalMonitorForEvents(
+                    matching: [.gesture, .rotate, .beginGesture, .endGesture, .smartMagnify, .swipe]
+                ) { event in
+                    TouchInputDiagnostics.log(event, outcome: "observed")
+                    return event
+                }
+            }
         }
 
         func detach() {
             if let m = scrollMonitor { NSEvent.removeMonitor(m) }
             if let m = magnifyMonitor { NSEvent.removeMonitor(m) }
+            if let m = diagnosticsMonitor { NSEvent.removeMonitor(m) }
             scrollMonitor = nil
             magnifyMonitor = nil
+            diagnosticsMonitor = nil
             view = nil
             interactionEndWorkItem?.cancel()
             interactionEndWorkItem = nil
@@ -713,12 +727,29 @@ private struct TrackpadPanZoomEventMonitor: NSViewRepresentable {
 
         private func isEventInsideView(_ event: NSEvent) -> Bool {
             guard isEnabled, let view, let viewWindow = view.window else { return false }
+
+            // Synthetic gesture events from touch-screen drivers (e.g. UPDD's pinch) can
+            // arrive with no window attached. Fall back to the cursor's screen position,
+            // and only accept them when Relay is active and our window is the topmost
+            // window under the cursor (not a floating panel, sheet, or another app above us).
+            guard let eventWindow = event.window else {
+                let mouse = NSEvent.mouseLocation
+                let viewFrameOnScreen = viewWindow.convertToScreen(view.convert(view.bounds, to: nil))
+                let topmostWindowNumber = NSWindow.windowNumber(at: mouse, belowWindowWithWindowNumber: 0)
+                return ViewportZoomMath.acceptsWindowlessEvent(
+                    screenPoint: mouse,
+                    viewFrameOnScreen: viewFrameOnScreen,
+                    isAppActive: NSApp.isActive,
+                    isViewWindowTopmostUnderCursor: topmostWindowNumber == viewWindow.windowNumber
+                )
+            }
+
             // Only respond to events in our own window. Auxiliary windows owned
             // by the app (e.g. the Sparkle update / release-notes panel) deliver
             // events here too via the local monitor; without this guard we'd
             // both pan the dashboard and consume the event before the other
             // window's scroll views could react to it.
-            guard let eventWindow = event.window, eventWindow === viewWindow else { return false }
+            guard eventWindow === viewWindow else { return false }
             let locInWindow = event.locationInWindow
 
             var ancestor: NSView? = view.superview
@@ -742,8 +773,8 @@ private struct TrackpadPanZoomEventMonitor: NSViewRepresentable {
 
             // IMPORTANT: `event.locationInWindow` is already in the window/contentView coordinate space
             // for hit-testing. Converting it again can break hit-testing and cause the canvas to scroll
-            // underneath overlays.
-            let locInWindow = event.locationInWindow
+            // underneath overlays. Window-less events (touch drivers) use the cursor position instead.
+            let locInWindow = locationInWindow(for: event, window: window)
             let hit = contentView.hitTest(locInWindow)
 
             // Treat the floating top toolbar pill HUD as a scroll-blocking region so scroll wheel
@@ -835,44 +866,76 @@ private struct TrackpadPanZoomEventMonitor: NSViewRepresentable {
             return canScrollVertically || canScrollHorizontally
         }
 
+        /// The event's location in `window` coordinates. Window-less events (synthetic
+        /// gestures from touch drivers) use the cursor's current screen position.
+        private func locationInWindow(for event: NSEvent, window: NSWindow) -> CGPoint {
+            if event.window != nil { return event.locationInWindow }
+            return window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        }
+
+        /// The zoom anchor for `event`, in our view's coordinates.
+        private func anchorInView(for event: NSEvent) -> CGPoint? {
+            guard let view, let window = view.window else { return nil }
+            return view.convert(locationInWindow(for: event, window: window), from: nil)
+        }
+
+        /// Applies an anchored zoom toward `proposedZoom` on the bindings (main thread).
+        private func applyAnchoredZoom(proposedZoom: CGFloat, anchor: CGPoint?) {
+            let oldZ = zoomBinding.wrappedValue
+            if let anchor {
+                guard let result = ViewportZoomMath.anchoredZoom(
+                    currentZoom: oldZ,
+                    currentPan: panBinding.wrappedValue,
+                    proposedZoom: proposedZoom,
+                    anchorInView: anchor,
+                    range: zoomRange
+                ) else { return }
+                zoomBinding.wrappedValue = result.zoom
+                panBinding.wrappedValue = result.pan
+            } else {
+                let newZ = clamp(proposedZoom, zoomRange.lowerBound, zoomRange.upperBound)
+                guard oldZ > 0, abs(newZ - oldZ) > 0.00001 else { return }
+                zoomBinding.wrappedValue = newZ
+            }
+        }
+
         private func handleScroll(_ event: NSEvent) -> Bool {
-            guard isEventInsideView(event) else { return false }
+            guard isEventInsideView(event) else {
+                TouchInputDiagnostics.log(event, outcome: "dropped:outside")
+                return false
+            }
 
             // If the cursor is over a scrollable control (like a node's internal list),
             // do not treat scroll as viewport pan/zoom.
-            if isEventOverScrollableView(event) { return false }
+            if isEventOverScrollableView(event) {
+                TouchInputDiagnostics.log(event, outcome: "dropped:scrollable")
+                return false
+            }
 
             let dx = event.scrollingDeltaX
             let dy = event.scrollingDeltaY
 
-            // Mouse+keyboard friendly controls:
-            // - Option/Alt + scroll => zoom
+            // Mouse+keyboard friendly controls (and touch drivers that send pinch as a
+            // modified scroll):
+            // - Option/Command/Control + scroll => zoom
             // - Otherwise scroll => pan
-            let isOptionZoom = event.modifierFlags.contains(.option)
+            let flags = event.modifierFlags
+            let intent = ViewportZoomMath.scrollIntent(
+                option: flags.contains(.option),
+                command: flags.contains(.command),
+                control: flags.contains(.control)
+            )
+            let anchor = intent == .zoom ? anchorInView(for: event) : nil
+            TouchInputDiagnostics.log(event, outcome: intent == .zoom ? "handled:zoom" : "handled:pan")
 
             DispatchQueue.main.async {
                 self.markInteracting()
-                if isOptionZoom {
-                    let oldZ = self.zoomBinding.wrappedValue
-                    // Tune sensitivity: ~0.001 feels good for most wheel deltas.
-                    let proposed = oldZ * (1.0 + (-dy * 0.001))
-                    let newZ = clamp(proposed, self.zoomRange.lowerBound, self.zoomRange.upperBound)
-                    guard oldZ > 0, abs(newZ - oldZ) > 0.00001 else { return }
-
-                    if let view = self.view {
-                        let anchor = view.convert(event.locationInWindow, from: nil)
-                        let s = newZ / oldZ
-                        let p = self.panBinding.wrappedValue
-                        let newPanW = (p.width * s) + ((1.0 - s) * anchor.x)
-                        let newPanH = (p.height * s) + ((1.0 - s) * anchor.y)
-                        self.zoomBinding.wrappedValue = newZ
-                        self.panBinding.wrappedValue = CGSize(width: newPanW, height: newPanH)
-                    } else {
-                        self.zoomBinding.wrappedValue = newZ
-                    }
-                } else {
+                switch intent {
+                case .zoom:
+                    let proposed = self.zoomBinding.wrappedValue * ViewportZoomMath.scrollZoomFactor(deltaY: dy)
+                    self.applyAnchoredZoom(proposedZoom: proposed, anchor: anchor)
+                case .pan:
                     let p = self.panBinding.wrappedValue
-
                     // Basic mouse wheels often only provide dy; some mice provide dx.
                     // Support Shift+wheel horizontal pan implicitly through dx if present.
                     self.panBinding.wrappedValue = CGSize(width: p.width + dx, height: p.height + dy)
@@ -882,28 +945,25 @@ private struct TrackpadPanZoomEventMonitor: NSViewRepresentable {
         }
 
         private func handleMagnify(_ event: NSEvent) -> Bool {
-            guard isEventInsideView(event) else { return false }
-            if isEventOverScrollableView(event) { return false }
+            guard isEventInsideView(event) else {
+                TouchInputDiagnostics.log(event, outcome: "dropped:outside")
+                return false
+            }
+            if isEventOverScrollableView(event) {
+                TouchInputDiagnostics.log(event, outcome: "dropped:scrollable")
+                return false
+            }
 
             let delta = event.magnification // delta (e.g. 0.02)
+            // Resolve the anchor now: for window-less events it comes from the live cursor
+            // position, which may move before the async block runs.
+            let anchor = anchorInView(for: event)
+            TouchInputDiagnostics.log(event, outcome: "handled:zoom")
+
             DispatchQueue.main.async {
                 self.markInteracting()
-                let oldZ = self.zoomBinding.wrappedValue
-                let proposed = oldZ * (1.0 + delta)
-                let newZ = clamp(proposed, self.zoomRange.lowerBound, self.zoomRange.upperBound)
-                guard oldZ > 0, abs(newZ - oldZ) > 0.00001 else { return }
-
-                if let view = self.view {
-                    let anchor = view.convert(event.locationInWindow, from: nil)
-                    let s = newZ / oldZ
-                    let p = self.panBinding.wrappedValue
-                    let newPanW = (p.width * s) + ((1.0 - s) * anchor.x)
-                    let newPanH = (p.height * s) + ((1.0 - s) * anchor.y)
-                    self.zoomBinding.wrappedValue = newZ
-                    self.panBinding.wrappedValue = CGSize(width: newPanW, height: newPanH)
-                } else {
-                    self.zoomBinding.wrappedValue = newZ
-                }
+                let proposed = self.zoomBinding.wrappedValue * (1.0 + delta)
+                self.applyAnchoredZoom(proposedZoom: proposed, anchor: anchor)
             }
             return true
         }

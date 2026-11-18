@@ -154,6 +154,11 @@ struct DashboardRootView: View {
         LiveModeWindowBehavior(rawValue: liveModeWindowBehaviorRaw) ?? .keepCurrentSize
     }
     @State private var didEnterFullScreenForLiveMode: Bool = false
+#if os(macOS)
+    /// Hides the system menu bar during full-screen Live Mode so the top edge reaches
+    /// Relay's live menu (touch monitors) instead of revealing the macOS menu bar.
+    @State private var liveModeMenuBarController = LiveModeMenuBarController()
+#endif
     @State private var liveModeReloadToken: UUID = UUID()
     @State private var isLiveModeChromeVisible: Bool = false
     @State private var isHoveringLiveModeChrome: Bool = false
@@ -661,6 +666,15 @@ var body: some View {
                 Text("Lost connection to \(lostLANDeviceName)")
             }
     }
+#if os(macOS)
+    .background(
+        HostingWindowReader { window in
+            liveModeMenuBarController.setWindow(window)
+            // Also covers launching straight into Live Mode with a restored full-screen window.
+            liveModeMenuBarController.update(isLiveMode: isLiveMode)
+        }
+    )
+#endif
     .onAppear {
         applyRestoredDocumentStateIfNeeded()
         reconcileJoinedSyncGroupIDs()
@@ -668,6 +682,9 @@ var body: some View {
     }
     .onDisappear {
         tileNudgeResetTask?.cancel()
+#if os(macOS)
+        liveModeMenuBarController.reset()
+#endif
     }
     .onReceive(documentController.$pendingRequest.compactMap { $0 }) { request in
         handleDocumentControllerRequest(request)
@@ -1325,6 +1342,12 @@ var body: some View {
                     object: nil,
                     userInfo: ["isLiveMode": newValue]
                 )
+#if os(macOS)
+                // Takes effect immediately when already full screen, otherwise once the
+                // (animated) full-screen transition for Live Mode finishes. The controller
+                // tracks the dashboard's own window (see HostingWindowReader below).
+                liveModeMenuBarController.update(isLiveMode: newValue)
+#endif
                 liveModeChromeRevealWorkItem?.cancel()
                 liveModeChromeRevealWorkItem = nil
                 liveModeChromeHideWorkItem?.cancel()
@@ -2414,7 +2437,8 @@ var body: some View {
                             }
                         }
 #if os(macOS)
-                        if liveModeWindowBehavior == .fullScreen, let window = NSApp.keyWindow {
+                        if liveModeWindowBehavior == .fullScreen,
+                           let window = liveModeMenuBarController.window ?? NSApp.keyWindow {
                             let alreadyFullScreen = window.styleMask.contains(.fullScreen)
                             didEnterFullScreenForLiveMode = !alreadyFullScreen
                             if !alreadyFullScreen {
@@ -2431,7 +2455,8 @@ var body: some View {
                             }
                         }
 #if os(macOS)
-                        if didEnterFullScreenForLiveMode, let window = NSApp.keyWindow {
+                        if didEnterFullScreenForLiveMode,
+                           let window = liveModeMenuBarController.window ?? NSApp.keyWindow {
                             didEnterFullScreenForLiveMode = false
                             if window.styleMask.contains(.fullScreen) {
                                 window.toggleFullScreen(nil)
@@ -3013,7 +3038,7 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
                 Color.clear
-                    .frame(width: liveModeChromeHotZoneWidth, height: 14)
+                    .frame(width: liveModeChromeHotZoneWidth, height: LiveModeRevealHandlePolicy.hotZoneHeight)
                     .contentShape(Rectangle())
                     .onHover { hovering in
                         if hovering {
@@ -3028,6 +3053,31 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                             .onChanged(handleLiveModeChromeDragChanged)
                             .onEnded(handleLiveModeChromeDragEnded)
                     )
+                    // Touch-friendly grabber: touch monitors have no hover, and the macOS
+                    // menu bar is hidden in full-screen Live Mode, so tap/drag it instead.
+                    .overlay(alignment: .top) {
+                        // Mounted for all of Live Mode; it hides itself while the chrome is
+                        // showing (but never mid-drag, which would cancel the reveal gesture).
+                        if isLiveMode {
+                            LiveModeRevealHandle(
+                                isChromeVisible: isLiveModeChromeVisible,
+                                onTap: {
+                                    showLiveModeChrome()
+                                    scheduleLiveModeChromeHide(delay: 4.0, respectsHover: false)
+                                },
+                                onDragChanged: handleLiveModeChromeDragChanged,
+                                onDragEnded: handleLiveModeChromeDragEnded,
+                                onHoverChanged: { hovering in
+                                    if hovering {
+                                        beginLiveModeChromeHoverDwell()
+                                    } else {
+                                        liveModeChromeRevealWorkItem?.cancel()
+                                        liveModeChromeRevealWorkItem = nil
+                                    }
+                                }
+                            )
+                        }
+                    }
 
                 if isLiveModeChromeVisible {
                     DashboardLiveModeChromeView(

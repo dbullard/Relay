@@ -18,6 +18,47 @@ Live Mode is the operating mode designed for real use during a show, service, or
 
 Examples of modules that are commonly useful in Live Mode: Time, SPL Meter, Live Transcription, Button, and supported interactive webpage modules.
 
+## Open the live menu
+
+The live menu holds tab switching, settings, and the button to leave Live Mode. It stays hidden until you ask for it. To open it:
+
+- Tap or click the small handle at the top center of the screen. It dims after a few seconds but is always there.
+- Drag down from the top center of the screen.
+- Rest the pointer at the top center of the screen.
+
+The menu hides again on its own after a few seconds.
+
+## Full screen and the macOS menu bar
+
+When **Settings → General → Live Mode → Window** is set to **Full Screen**, Relay hides the macOS menu bar and Dock while Live Mode is on. That way, reaching for the top of the screen opens Relay's live menu instead of the macOS menu bar. The menu bar comes back when you leave Live Mode.
+
+While the menu bar is hidden, the window's title bar and green full-screen button don't appear either. To leave full screen:
+
+- Leave Live Mode from the live menu, or press `Command-L`.
+- Or press `Control-Command-F` to leave full screen and stay in Live Mode.
+
+Keyboard shortcuts keep working the whole time.
+
+## Use a touch screen
+
+Relay works with touch monitors on the Mac, such as screens that use the UPDD driver:
+
+- Pinch with two fingers to zoom the dashboard. Zooming centers on your fingers.
+- Drag with two fingers to pan.
+- Tap the handle at the top center to open the live menu.
+
+If pinching does nothing, check that your touch driver's gesture settings send pinch as a zoom gesture. To see exactly what Relay receives, turn on touch-input logging in Terminal, then quit and reopen Relay:
+
+```sh
+defaults write app.relay.Relay RelayTouchInputDiagnostics -bool YES
+```
+
+Pinch once on the dashboard, then open Console.app and search for `touch-input`. Include those lines when you report a problem. Turn logging off again with:
+
+```sh
+defaults delete app.relay.Relay RelayTouchInputDiagnostics
+```
+
 ## Recommended workflow
 
 1. Build and test in Canvas View first.
