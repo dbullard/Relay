@@ -3044,19 +3044,26 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                     // Touch-friendly grabber: touch monitors have no hover, and the macOS
                     // menu bar is hidden in full-screen Live Mode, so tap/drag it instead.
                     .overlay(alignment: .top) {
-                        if LiveModeRevealHandlePolicy.isVisible(
-                            isLiveMode: isLiveMode,
-                            isChromeVisible: isLiveModeChromeVisible
-                        ) {
+                        // Mounted for all of Live Mode; it hides itself while the chrome is
+                        // showing (but never mid-drag, which would cancel the reveal gesture).
+                        if isLiveMode {
                             LiveModeRevealHandle(
+                                isChromeVisible: isLiveModeChromeVisible,
                                 onTap: {
                                     showLiveModeChrome()
                                     scheduleLiveModeChromeHide(delay: 4.0, respectsHover: false)
                                 },
                                 onDragChanged: handleLiveModeChromeDragChanged,
-                                onDragEnded: handleLiveModeChromeDragEnded
+                                onDragEnded: handleLiveModeChromeDragEnded,
+                                onHoverChanged: { hovering in
+                                    if hovering {
+                                        beginLiveModeChromeHoverDwell()
+                                    } else {
+                                        liveModeChromeRevealWorkItem?.cancel()
+                                        liveModeChromeRevealWorkItem = nil
+                                    }
+                                }
                             )
-                            .transition(.opacity)
                         }
                     }
 
