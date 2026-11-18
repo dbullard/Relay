@@ -3,21 +3,28 @@ import Foundation
 import Combine
 import Darwin
 
+/// Samples Relay's own CPU and memory use, matching Activity Monitor's row for Relay:
+/// CPU is a percent of one core (so it can go past 100% when several threads are busy),
+/// and memory is the process footprint (Activity Monitor's "Memory" column).
 @MainActor
 final class SystemUsageMonitor: ObservableObject {
+    /// Average CPU over the last few samples, as a percent of one core.
     @Published var cpuPercent: Double = 0
+    /// Highest CPU sample in the same window, as a percent of one core.
     @Published var cpuPeakPercent: Double = 0
+    /// Relay's physical memory footprint in bytes.
+    @Published var memoryFootprintBytes: UInt64 = 0
+    /// The footprint as a share of the Mac's physical RAM (0–100).
     @Published var memoryPercent: Double = 0
     @Published var lastOscActivity: Date? = nil
     @Published var lastMidiActivity: Date? = nil
 
     private var cpuSamples: [Double] = []
-    private var memorySamples: [Double] = []
     private let maxSamples: Int = 5
 
-    // Delta-based CPU sampling state
-    private var lastTotalThreadCPUSeconds: Double = 0
-    private var lastCPUSampleTime: Date = .distantPast
+    // Delta-based CPU sampling state (process CPU seconds against a monotonic clock).
+    private var lastProcessCPUSeconds: Double = 0
+    private var lastCPUSampleUptime: TimeInterval?
 
     private var updateTask: Task<Void, Never>?
     private var midiObserver: NSObjectProtocol?
@@ -36,19 +43,32 @@ final class SystemUsageMonitor: ObservableObject {
             forName: .midiReceiveMessageDidArrive,
             object: nil,
             queue: .main
-        ) { _ in
+        ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.lastMidiActivity = Date()
             }
         }
 
+        // Hold self weakly between ticks so the loop never keeps a hidden overlay's
+        // monitor alive (and sampling) after its view is gone.
         updateTask = Task { [weak self] in
-            guard let self else { return }
             while !Task.isCancelled {
+                guard let self else { return }
                 self.updateMetrics()
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }
         }
+    }
+
+    func stop() {
+        updateTask?.cancel()
+        updateTask = nil
+        if let midiObserver {
+            NotificationCenter.default.removeObserver(midiObserver)
+            self.midiObserver = nil
+        }
+        cpuSamples.removeAll()
+        lastCPUSampleUptime = nil
     }
 
     private func updateMetrics() {
@@ -65,13 +85,16 @@ final class SystemUsageMonitor: ObservableObject {
             if peak.rounded() != cpuPeakPercent.rounded() { cpuPeakPercent = peak }
         }
 
-        if let mem = readAppMemoryPercent() {
-            memorySamples.append(max(0, mem))
-            if memorySamples.count > maxSamples {
-                memorySamples.removeFirst(memorySamples.count - maxSamples)
+        if let footprint = readAppMemoryFootprint() {
+            // The footprint moves a little on every sample; only publish when the shown text changes.
+            if Self.formatMemory(footprint) != Self.formatMemory(memoryFootprintBytes) {
+                memoryFootprintBytes = footprint
             }
-            let avg = average(memorySamples)
-            if avg.rounded() != memoryPercent.rounded() { memoryPercent = avg }
+            let totalBytes = Double(ProcessInfo.processInfo.physicalMemory)
+            if totalBytes > 0 {
+                let percent = Double(footprint) / totalBytes * 100.0
+                if percent.rounded() != memoryPercent.rounded() { memoryPercent = percent }
+            }
         }
 
         let oscManager = OSCManager.shared
@@ -99,47 +122,31 @@ final class SystemUsageMonitor: ObservableObject {
         }
     }
 
+    /// CPU used since the previous sample, as a percent of one core (Activity Monitor's convention).
     private func readAppCpuPercent() -> Double? {
-        var threadList: thread_act_array_t?
-        var threadCount: mach_msg_type_number_t = 0
-        let taskResult = task_threads(mach_task_self_, &threadList, &threadCount)
-        guard taskResult == KERN_SUCCESS, let threads = threadList else { return nil }
+        // getrusage counts every thread the process has ever run, including ones that have
+        // since exited. Summing task_threads() only sees live threads, so time spent on
+        // short-lived worker threads (GCD, audio, network) vanished between samples.
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else { return nil }
+        let cpuSeconds = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+            + Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+
+        let now = ProcessInfo.processInfo.systemUptime
         defer {
-            vm_deallocate(mach_task_self_, vm_address_t(bitPattern: threads),
-                          vm_size_t(threadCount) * vm_size_t(MemoryLayout<thread_t>.stride))
+            lastProcessCPUSeconds = cpuSeconds
+            lastCPUSampleUptime = now
         }
 
-        // Sum cumulative user+system time across all live threads.
-        // Comparing deltas between samples gives true instantaneous CPU usage,
-        // unlike thread_basic_info.cpu_usage which is a kernel decaying average.
-        var totalCPUSeconds: Double = 0
-        for i in 0..<Int(threadCount) {
-            var info = thread_basic_info()
-            var infoCount = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.stride / MemoryLayout<integer_t>.stride)
-            let result = withUnsafeMutablePointer(to: &info) {
-                $0.withMemoryRebound(to: integer_t.self, capacity: Int(infoCount)) {
-                    thread_info(threads[i], thread_flavor_t(THREAD_BASIC_INFO), $0, &infoCount)
-                }
-            }
-            guard result == KERN_SUCCESS else { continue }
-            totalCPUSeconds += Double(info.user_time.seconds) + Double(info.user_time.microseconds) / 1_000_000
-            totalCPUSeconds += Double(info.system_time.seconds) + Double(info.system_time.microseconds) / 1_000_000
-        }
-
-        let now = Date()
-        let elapsed = now.timeIntervalSince(lastCPUSampleTime)
-        let delta = totalCPUSeconds - lastTotalThreadCPUSeconds
-        lastTotalThreadCPUSeconds = totalCPUSeconds
-        lastCPUSampleTime = now
-
-        // Skip the very first sample — delta has no prior baseline
+        // The first sample only sets the baseline.
+        guard let last = lastCPUSampleUptime else { return nil }
+        let elapsed = now - last
         guard elapsed > 0.05 else { return nil }
-
-        let cores = max(1, ProcessInfo.processInfo.activeProcessorCount)
-        return min((delta / elapsed / Double(cores)) * 100.0, 100.0)
+        return (cpuSeconds - lastProcessCPUSeconds) / elapsed * 100.0
     }
 
-    private func readAppMemoryPercent() -> Double? {
+    /// Relay's physical footprint, the figure Activity Monitor shows in its "Memory" column.
+    private func readAppMemoryFootprint() -> UInt64? {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.stride / MemoryLayout<natural_t>.stride)
         let result = withUnsafeMutablePointer(to: &info) {
@@ -148,11 +155,14 @@ final class SystemUsageMonitor: ObservableObject {
             }
         }
         guard result == KERN_SUCCESS else { return nil }
+        return info.phys_footprint
+    }
 
-        let usedBytes = Double(info.phys_footprint)
-        let totalBytes = Double(ProcessInfo.processInfo.physicalMemory)
-        guard totalBytes > 0 else { return nil }
-        return (usedBytes / totalBytes) * 100.0
+    /// Binary units, like Activity Monitor: "212 MB", "1.4 GB".
+    nonisolated static func formatMemory(_ bytes: UInt64) -> String {
+        let mb = Double(bytes) / 1_048_576
+        if mb < 1024 { return String(format: "%.0f MB", mb) }
+        return String(format: "%.1f GB", mb / 1024)
     }
 }
 
@@ -167,10 +177,23 @@ struct SystemUsageOverlayView: View {
 
     private let activityWindow: TimeInterval = 1.0
 
+    /// CPU is a percent of one core: one full core busy is a warning, two is heavy.
+    private var cpuColor: Color {
+        if monitor.cpuPercent >= 200 { return .red }
+        if monitor.cpuPercent >= 100 { return .yellow }
+        return .green
+    }
+
+    /// Memory is Relay's share of the Mac's RAM.
+    private var memoryColor: Color {
+        if monitor.memoryPercent >= 90 { return .red }
+        if monitor.memoryPercent >= 75 { return .yellow }
+        return .green
+    }
+
     private var healthColor: Color {
-        let worst = max(monitor.cpuPercent, monitor.memoryPercent)
-        if worst >= 90 { return .red }
-        if worst >= 75 { return .yellow }
+        if cpuColor == .red || memoryColor == .red { return .red }
+        if cpuColor == .yellow || memoryColor == .yellow { return .yellow }
         return .green
     }
 
@@ -181,8 +204,16 @@ struct SystemUsageOverlayView: View {
                 .frame(width: 8, height: 8)
                 .accessibilityLabel("App health")
 
-            usageBar(title: "CPU", value: monitor.cpuPercent)
-            usageBar(title: "MEM", value: monitor.memoryPercent)
+            usageBar(
+                label: String(format: "CPU %.0f%%", max(monitor.cpuPercent, 0)),
+                fraction: monitor.cpuPercent / 100.0,
+                color: cpuColor
+            )
+            usageBar(
+                label: "MEM \(SystemUsageMonitor.formatMemory(monitor.memoryFootprintBytes))",
+                fraction: monitor.memoryPercent / 100.0,
+                color: memoryColor
+            )
 
             activityIndicator(label: "OSC", enabled: oscEnabled, lastActivity: monitor.lastOscActivity)
             activityIndicator(label: "MIDI", enabled: midiEnabled, lastActivity: monitor.lastMidiActivity)
@@ -203,6 +234,9 @@ struct SystemUsageOverlayView: View {
         )
         .onAppear {
             monitor.start()
+        }
+        .onDisappear {
+            monitor.stop()
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("App usage")
@@ -229,11 +263,12 @@ struct SystemUsageOverlayView: View {
         .accessibilityValue("\(lanPeerCount)")
     }
 
+    /// `fraction` fills the bar (clamped to 0–1).
     @ViewBuilder
-    private func usageBar(title: String, value: Double) -> some View {
-        let clamped = min(max(value, 0), 100)
+    private func usageBar(label: String, fraction: Double, color: Color) -> some View {
+        let clamped = min(max(fraction, 0), 1)
         VStack(alignment: .leading, spacing: 2) {
-            Text(String(format: "%@ %.0f%%", title, clamped))
+            Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -246,8 +281,8 @@ struct SystemUsageOverlayView: View {
                     .frame(width: 46, height: 4)
 
                 Capsule()
-                    .fill(barColor(for: clamped))
-                    .frame(width: max(2, CGFloat(clamped / 100.0) * 46.0), height: 4)
+                    .fill(color)
+                    .frame(width: max(2, CGFloat(clamped) * 46.0), height: 4)
             }
         }
     }
@@ -276,11 +311,5 @@ struct SystemUsageOverlayView: View {
     private func isRecentlyActive(_ date: Date?) -> Bool {
         guard let date else { return false }
         return Date().timeIntervalSince(date) <= activityWindow
-    }
-
-    private func barColor(for value: Double) -> Color {
-        if value >= 90 { return .red }
-        if value >= 75 { return .yellow }
-        return .green
     }
 }
