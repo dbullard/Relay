@@ -730,13 +730,17 @@ private struct TrackpadPanZoomEventMonitor: NSViewRepresentable {
 
             // Synthetic gesture events from touch-screen drivers (e.g. UPDD's pinch) can
             // arrive with no window attached. Fall back to the cursor's screen position,
-            // and only accept them when our window is key and the cursor is over us.
+            // and only accept them when Relay is active and our window is the topmost
+            // window under the cursor (not a floating panel, sheet, or another app above us).
             guard let eventWindow = event.window else {
+                let mouse = NSEvent.mouseLocation
                 let viewFrameOnScreen = viewWindow.convertToScreen(view.convert(view.bounds, to: nil))
+                let topmostWindowNumber = NSWindow.windowNumber(at: mouse, belowWindowWithWindowNumber: 0)
                 return ViewportZoomMath.acceptsWindowlessEvent(
-                    screenPoint: NSEvent.mouseLocation,
+                    screenPoint: mouse,
                     viewFrameOnScreen: viewFrameOnScreen,
-                    isWindowKey: viewWindow.isKeyWindow
+                    isAppActive: NSApp.isActive,
+                    isViewWindowTopmostUnderCursor: topmostWindowNumber == viewWindow.windowNumber
                 )
             }
 

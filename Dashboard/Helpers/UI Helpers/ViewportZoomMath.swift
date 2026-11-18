@@ -53,11 +53,18 @@ enum ViewportZoomMath {
     /// Whether an event that arrived with no window (as synthetic gesture events from
     /// touch drivers can) should be handled by a viewport whose on-screen frame is
     /// `viewFrameOnScreen`, given the cursor's `screenPoint`.
+    ///
+    /// Relay must be the active app and the viewport's window must be the topmost window
+    /// under the cursor, so a pinch over a floating Relay window (Variables), a sheet, or
+    /// another app's window never zooms the canvas beneath it. The viewport's window does
+    /// not need to be key: clicking the Variables window last shouldn't disable pinch on
+    /// the dashboard.
     static func acceptsWindowlessEvent(
         screenPoint: CGPoint,
         viewFrameOnScreen: CGRect,
-        isWindowKey: Bool
+        isAppActive: Bool,
+        isViewWindowTopmostUnderCursor: Bool
     ) -> Bool {
-        isWindowKey && viewFrameOnScreen.contains(screenPoint)
+        isAppActive && isViewWindowTopmostUnderCursor && viewFrameOnScreen.contains(screenPoint)
     }
 }

@@ -51,24 +51,44 @@ final class ViewportZoomMathTests: XCTestCase {
         XCTAssertEqual(ViewportZoomMath.scrollIntent(option: false, command: false, control: false), .pan)
     }
 
-    func testWindowlessEventAcceptedInsideKeyWindowView() {
+    private let frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+
+    func testWindowlessEventAcceptedOverCanvasWhenDashboardTopmost() {
         XCTAssertTrue(ViewportZoomMath.acceptsWindowlessEvent(
-            screenPoint: CGPoint(x: 50, y: 50),
-            viewFrameOnScreen: CGRect(x: 0, y: 0, width: 100, height: 100), isWindowKey: true
+            screenPoint: CGPoint(x: 50, y: 50), viewFrameOnScreen: frame,
+            isAppActive: true, isViewWindowTopmostUnderCursor: true
+        ))
+    }
+
+    func testWindowlessEventAcceptedWhenAnotherRelayWindowIsKeyButNotUnderCursor() {
+        // e.g. the Variables window was clicked last, but the fingers are on the dashboard.
+        // Key-ness isn't an input: only "app active" and "our window is under the cursor" are.
+        XCTAssertTrue(ViewportZoomMath.acceptsWindowlessEvent(
+            screenPoint: CGPoint(x: 50, y: 50), viewFrameOnScreen: frame,
+            isAppActive: true, isViewWindowTopmostUnderCursor: true
         ))
     }
 
     func testWindowlessEventRejectedOutsideView() {
         XCTAssertFalse(ViewportZoomMath.acceptsWindowlessEvent(
-            screenPoint: CGPoint(x: 150, y: 50),
-            viewFrameOnScreen: CGRect(x: 0, y: 0, width: 100, height: 100), isWindowKey: true
+            screenPoint: CGPoint(x: 150, y: 50), viewFrameOnScreen: frame,
+            isAppActive: true, isViewWindowTopmostUnderCursor: true
         ))
     }
 
-    func testWindowlessEventRejectedWhenWindowNotKey() {
+    func testWindowlessEventRejectedOverWindowAboveCanvas() {
+        // A floating Relay window (Variables), a sheet (Settings) or another app's window
+        // sits above the canvas under the cursor.
         XCTAssertFalse(ViewportZoomMath.acceptsWindowlessEvent(
-            screenPoint: CGPoint(x: 50, y: 50),
-            viewFrameOnScreen: CGRect(x: 0, y: 0, width: 100, height: 100), isWindowKey: false
+            screenPoint: CGPoint(x: 50, y: 50), viewFrameOnScreen: frame,
+            isAppActive: true, isViewWindowTopmostUnderCursor: false
+        ))
+    }
+
+    func testWindowlessEventRejectedWhenAppInactive() {
+        XCTAssertFalse(ViewportZoomMath.acceptsWindowlessEvent(
+            screenPoint: CGPoint(x: 50, y: 50), viewFrameOnScreen: frame,
+            isAppActive: false, isViewWindowTopmostUnderCursor: true
         ))
     }
 }
