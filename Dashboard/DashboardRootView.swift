@@ -3026,7 +3026,7 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
                 Color.clear
-                    .frame(width: liveModeChromeHotZoneWidth, height: 14)
+                    .frame(width: liveModeChromeHotZoneWidth, height: LiveModeRevealHandlePolicy.hotZoneHeight)
                     .contentShape(Rectangle())
                     .onHover { hovering in
                         if hovering {
@@ -3041,6 +3041,24 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                             .onChanged(handleLiveModeChromeDragChanged)
                             .onEnded(handleLiveModeChromeDragEnded)
                     )
+                    // Touch-friendly grabber: touch monitors have no hover, and the macOS
+                    // menu bar is hidden in full-screen Live Mode, so tap/drag it instead.
+                    .overlay(alignment: .top) {
+                        if LiveModeRevealHandlePolicy.isVisible(
+                            isLiveMode: isLiveMode,
+                            isChromeVisible: isLiveModeChromeVisible
+                        ) {
+                            LiveModeRevealHandle(
+                                onTap: {
+                                    showLiveModeChrome()
+                                    scheduleLiveModeChromeHide(delay: 4.0, respectsHover: false)
+                                },
+                                onDragChanged: handleLiveModeChromeDragChanged,
+                                onDragEnded: handleLiveModeChromeDragEnded
+                            )
+                            .transition(.opacity)
+                        }
+                    }
 
                 if isLiveModeChromeVisible {
                     DashboardLiveModeChromeView(
