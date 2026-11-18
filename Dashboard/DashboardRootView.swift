@@ -666,6 +666,15 @@ var body: some View {
                 Text("Lost connection to \(lostLANDeviceName)")
             }
     }
+#if os(macOS)
+    .background(
+        HostingWindowReader { window in
+            liveModeMenuBarController.setWindow(window)
+            // Also covers launching straight into Live Mode with a restored full-screen window.
+            liveModeMenuBarController.update(isLiveMode: isLiveMode)
+        }
+    )
+#endif
     .onAppear {
         applyRestoredDocumentStateIfNeeded()
         reconcileJoinedSyncGroupIDs()
@@ -1335,8 +1344,9 @@ var body: some View {
                 )
 #if os(macOS)
                 // Takes effect immediately when already full screen, otherwise once the
-                // (animated) full-screen transition for Live Mode finishes.
-                liveModeMenuBarController.update(isLiveMode: newValue, window: NSApp.keyWindow)
+                // (animated) full-screen transition for Live Mode finishes. The controller
+                // tracks the dashboard's own window (see HostingWindowReader below).
+                liveModeMenuBarController.update(isLiveMode: newValue)
 #endif
                 liveModeChromeRevealWorkItem?.cancel()
                 liveModeChromeRevealWorkItem = nil
@@ -2427,7 +2437,8 @@ var body: some View {
                             }
                         }
 #if os(macOS)
-                        if liveModeWindowBehavior == .fullScreen, let window = NSApp.keyWindow {
+                        if liveModeWindowBehavior == .fullScreen,
+                           let window = liveModeMenuBarController.window ?? NSApp.keyWindow {
                             let alreadyFullScreen = window.styleMask.contains(.fullScreen)
                             didEnterFullScreenForLiveMode = !alreadyFullScreen
                             if !alreadyFullScreen {
@@ -2444,7 +2455,8 @@ var body: some View {
                             }
                         }
 #if os(macOS)
-                        if didEnterFullScreenForLiveMode, let window = NSApp.keyWindow {
+                        if didEnterFullScreenForLiveMode,
+                           let window = liveModeMenuBarController.window ?? NSApp.keyWindow {
                             didEnterFullScreenForLiveMode = false
                             if window.styleMask.contains(.fullScreen) {
                                 window.toggleFullScreen(nil)
