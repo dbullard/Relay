@@ -1872,6 +1872,7 @@ struct DashboardTopToolbarView: View {
                 } else {
                     HStack(spacing: 10) {
                         HStack(spacing: 8) {
+                            ScrollViewReader { tabsScrollProxy in
                             ZStack(alignment: .topLeading) {
                                 ScrollView(.horizontal) {
                                     HStack(spacing: 8) {
@@ -2139,6 +2140,17 @@ struct DashboardTopToolbarView: View {
                                 }
                             }
                             .coordinateSpace(.named("LocalTabsStrip"))
+                            // A plain mouse wheel doesn't scroll this horizontal strip, so
+                            // keep the selected tab (including a just-added one) in view
+                            // once the strip is wider than the window allows.
+                            .onChange(of: selectedTabIndex) { _, newIndex in
+                                guard tabs.indices.contains(newIndex) else { return }
+                                let id = tabs[newIndex].id
+                                withAnimation(selectionPillAnimation) {
+                                    tabsScrollProxy.scrollTo(id)
+                                }
+                            }
+                            }
                         }
                         .onPreferenceChange(TabsScrollContentWidthKey.self) { value in
                             if #available(iOS 17.0, macOS 14.0, *) {
@@ -2204,7 +2216,8 @@ struct DashboardTopToolbarView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    .frame(maxWidth: 720)
+                    // No `maxWidth: 720` cap here: it stopped the pill from growing
+                    // past ~7 tabs even with window space to spare.
                     .frame(height: tabsStripHeight)
                     .tutorialAnchor("root.tabs")
 
@@ -2432,7 +2445,11 @@ struct DashboardTopToolbarView: View {
                     .accessibilityIdentifier("DashboardTopToolbarPillHUD")
                     .padding(.top, 10)
                     .padding(.horizontal, 18)
-                    .frame(maxWidth: 900)
+                    // Was `.frame(maxWidth: 900)`: a hard cap that left the tab
+                    // strip's ScrollView ~266pt, clipping the last tab with only
+                    // three tabs even in a wide window. Grow to fit the tabs,
+                    // bounded by the window (past that, the strip scrolls).
+                    .modifier(DashboardToolbarPillWidthLayout.Modifier(minWidth: 900))
                     .onHover { hovering in
                         guard usesPillHUD else { return }
                         guard renamingTabID == nil else { return }
@@ -3296,6 +3313,47 @@ private struct TabsScrollContentWidthKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+/// Sizes the macOS toolbar pill: at least `minWidth`, wider when its content
+/// (mostly the tab strip) ideally needs more, and never wider than offered.
+/// The ideal width doesn't depend on the offered width, so there's no
+/// measure-then-resize feedback loop.
+struct DashboardToolbarPillWidthLayout: Layout {
+    var minWidth: CGFloat
+
+    struct Modifier: ViewModifier {
+        var minWidth: CGFloat
+
+        func body(content: Content) -> some View {
+            DashboardToolbarPillWidthLayout(minWidth: minWidth) { content }
+        }
+    }
+
+    static func resolvedWidth(available: CGFloat?, idealContentWidth: CGFloat, minWidth: CGFloat) -> CGFloat {
+        let wanted = max(minWidth, idealContentWidth)
+        guard let available else { return wanted }
+        return min(available, wanted)
+    }
+
+    private func proposal(for proposal: ProposedViewSize, subview: LayoutSubview) -> ProposedViewSize {
+        let ideal = subview.sizeThatFits(.unspecified).width
+        let width = Self.resolvedWidth(available: proposal.width, idealContentWidth: ideal, minWidth: minWidth)
+        return ProposedViewSize(width: width, height: proposal.height)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let childProposal = self.proposal(for: proposal, subview: subview)
+        let size = subview.sizeThatFits(childProposal)
+        return CGSize(width: childProposal.width ?? size.width, height: size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let subview = subviews.first else { return }
+        let childProposal = self.proposal(for: proposal, subview: subview)
+        subview.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: childProposal)
     }
 }
 
