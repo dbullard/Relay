@@ -931,6 +931,9 @@ final class LiveTranscriptionController: ObservableObject {
     private var channelStats: [UUID: TranscriptionChannelStats] = [:]
     private var channelLevels: [UUID: Double] = [:]
     private var committedPrefixes: [UUID: String] = [:]
+    /// The latest full text from each channel's recognizer task, which repeats everything heard
+    /// since the task started. Becomes the committed prefix when a line is flushed.
+    private var taskTextByChannel: [UUID: String] = [:]
     private struct RecentFinalRecord {
         var text: String
         var timestamp: Date
@@ -1126,6 +1129,7 @@ final class LiveTranscriptionController: ObservableObject {
 
     private func resetStreamTracking() {
         committedPrefixes.removeAll()
+        taskTextByChannel.removeAll()
         finalWordHistoryByChannel.removeAll()
     }
 
@@ -1446,6 +1450,7 @@ final class LiveTranscriptionController: ObservableObject {
         channelStats.removeAll()
         channelLevels.removeAll()
         committedPrefixes.removeAll()
+        taskTextByChannel.removeAll()
         recentFinals.removeAll()
         lastAudioActivity.removeAll()
         runtimeWarningsByChannel.removeAll()
@@ -1671,8 +1676,17 @@ final class LiveTranscriptionController: ObservableObject {
 
     private func handleEvent(_ event: TranscriptEvent, channel: TranscriptChannel) {
         guard let segmenter = segmenters[channel.id] else { return }
-        let baseText = event.isFinal ? event.text : stripLeadingFinalText(event.text, channelId: channel.id)
-        let cleanedText = stripCommittedPrefix(baseText, channelId: channel.id)
+        let cleanedText: String
+        if let prefix = committedPrefixes[channel.id],
+           let remainder = TranscriptCommittedPrefix.remainder(of: event.text, committed: prefix) {
+            // Same recognizer task as the lines already shown: keep only what they don't cover,
+            // tolerating the recognizer revising its last few words.
+            cleanedText = remainder
+        } else {
+            let baseText = event.isFinal ? event.text : stripLeadingFinalText(event.text, channelId: channel.id)
+            cleanedText = stripCommittedPrefix(baseText, channelId: channel.id)
+        }
+        taskTextByChannel[channel.id] = event.text
         let update = segmenter.handleUpdate(text: cleanedText, isFinal: event.isFinal, now: event.timestamp)
         segmenters[channel.id] = segmenter
         applySegmenterUpdate(update, channelId: channel.id, overrideChannel: channel)
@@ -1681,8 +1695,42 @@ final class LiveTranscriptionController: ObservableObject {
             // A stale prefix would make overlap stripping drop the new task's first words
             // whenever they repeat the end of the last line ("…let's go" → "go again").
             committedPrefixes[channel.id] = ""
+            taskTextByChannel[channel.id] = nil
         }
     }
+
+    #if DEBUG
+    enum ReplayStep {
+        case result(String, isFinal: Bool = false, at: TimeInterval)
+        case silence(at: TimeInterval)
+    }
+
+    /// Feeds one input's recognizer results through the live path (prefix stripping, line
+    /// segmenting, duplicate suppression) on a simulated clock, and returns the transcript.
+    func replayForTesting(_ steps: [ReplayStep], channel: TranscriptChannel) -> [TranscriptEntry] {
+        if segmenters[channel.id] == nil {
+            segmenters[channel.id] = TranscriptSegmenter(config: segmenterConfig)
+        }
+        for step in steps {
+            switch step {
+            case let .result(text, isFinal, at):
+                let event = TranscriptEvent(
+                    channelId: channel.id,
+                    timestamp: Date(timeIntervalSince1970: at),
+                    text: text,
+                    isFinal: isFinal,
+                    confidence: nil
+                )
+                handleEvent(event, channel: channel)
+            case let .silence(at):
+                if let update = segmenters[channel.id]?.tick(now: Date(timeIntervalSince1970: at)) {
+                    applySegmenterUpdate(update, channelId: channel.id, overrideChannel: channel)
+                }
+            }
+        }
+        return entries
+    }
+    #endif
 
     private func applySegmenterUpdate(_ update: TranscriptSegmenterUpdate, channelId: UUID, overrideChannel: TranscriptChannel? = nil) {
         let channel = overrideChannel ?? TranscriptChannel(
@@ -1760,6 +1808,12 @@ final class LiveTranscriptionController: ObservableObject {
     private func updateCommittedPrefix(_ flushed: String, channelId: UUID) {
         let trimmed = flushed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // The flushed line is the tail of the task's text, so the whole task text is now shown.
+        // Appending lines instead drifted from the recognizer's text as soon as one was revised.
+        if let taskText = taskTextByChannel[channelId], !taskText.isEmpty {
+            committedPrefixes[channelId] = taskText
+            return
+        }
         let existing = committedPrefixes[channelId]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if existing.isEmpty {
             committedPrefixes[channelId] = trimmed
