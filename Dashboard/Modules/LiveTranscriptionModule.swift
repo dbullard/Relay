@@ -1699,6 +1699,39 @@ final class LiveTranscriptionController: ObservableObject {
         }
     }
 
+    #if DEBUG
+    enum ReplayStep {
+        case result(String, isFinal: Bool = false, at: TimeInterval)
+        case silence(at: TimeInterval)
+    }
+
+    /// Feeds one input's recognizer results through the live path (prefix stripping, line
+    /// segmenting, duplicate suppression) on a simulated clock, and returns the transcript.
+    func replayForTesting(_ steps: [ReplayStep], channel: TranscriptChannel) -> [TranscriptEntry] {
+        if segmenters[channel.id] == nil {
+            segmenters[channel.id] = TranscriptSegmenter(config: segmenterConfig)
+        }
+        for step in steps {
+            switch step {
+            case let .result(text, isFinal, at):
+                let event = TranscriptEvent(
+                    channelId: channel.id,
+                    timestamp: Date(timeIntervalSince1970: at),
+                    text: text,
+                    isFinal: isFinal,
+                    confidence: nil
+                )
+                handleEvent(event, channel: channel)
+            case let .silence(at):
+                if let update = segmenters[channel.id]?.tick(now: Date(timeIntervalSince1970: at)) {
+                    applySegmenterUpdate(update, channelId: channel.id, overrideChannel: channel)
+                }
+            }
+        }
+        return entries
+    }
+    #endif
+
     private func applySegmenterUpdate(_ update: TranscriptSegmenterUpdate, channelId: UUID, overrideChannel: TranscriptChannel? = nil) {
         let channel = overrideChannel ?? TranscriptChannel(
             id: channelId,

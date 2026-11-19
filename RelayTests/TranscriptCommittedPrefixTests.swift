@@ -42,8 +42,15 @@ final class TranscriptCommittedPrefixTests: XCTestCase {
         var revised = (1...30).map { "w\($0)" }
         revised[9] = "changed"
         let text = (revised + ["new"]).joined(separator: " ")
-        let result = remainder(text, committed: committed)
-        XCTAssertEqual(result, "w25 w26 w27 w28 w29 w30 new")
+        XCTAssertEqual(remainder(text, committed: committed), "new")
+    }
+
+    func testDroppedWordDoesNotReShowTheWordsAfterIt() {
+        XCTAssertEqual(remainder("we got it had it", committed: "we got it Bob had it"), "")
+        XCTAssertEqual(
+            remainder("we got it had it on the board", committed: "we got it Bob had it"),
+            "on the board"
+        )
     }
 
     func testIdenticalTextHasNothingNew() {

@@ -140,8 +140,28 @@ nonisolated enum TranscriptCommittedPrefix {
         // opening words is far less likely than the recognizer revising one of its own words.
         guard shared == committedWords.count || shared >= 2 else { return nil }
 
-        let drop = min(textWords.count, max(shared, committedWords.count - maxRevisedWords))
-        return textWords.dropFirst(drop).joined(separator: " ")
+        let windowStart = max(shared, committedWords.count - maxRevisedWords)
+        var rest = Array(textWords.dropFirst(min(textWords.count, windowStart)))
+        // Shown words the recognizer kept after a correction ("bob had it" → "had it") are
+        // already on screen; only the corrected and new words around them are not.
+        let window = Array(committedWords[min(windowStart, committedWords.count)...])
+        if let kept = keptTail(of: window, in: rest) {
+            rest.removeSubrange(kept)
+        }
+        return rest.joined(separator: " ")
+    }
+
+    /// The longest run of `rest` near its start that repeats the end of `window`.
+    private static func keptTail(of window: [String], in rest: [String]) -> Range<Int>? {
+        let lowered = rest.map { $0.lowercased() }
+        for length in stride(from: min(window.count, lowered.count), to: 0, by: -1) {
+            let tail = window.suffix(length)
+            for start in 0...min(window.count, lowered.count - length)
+            where lowered[start..<(start + length)].elementsEqual(tail) {
+                return start..<(start + length)
+            }
+        }
+        return nil
     }
 
     private static func words(_ text: String) -> [String] {
