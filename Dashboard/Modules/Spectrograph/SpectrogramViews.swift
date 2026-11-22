@@ -133,12 +133,20 @@ struct SpectrogramTileView: View {
     }
 
     // MARK: - Frequency grid lines
+    //
+    // The Canvas drawing closures and label row capture plain values and a weak controller
+    // reference, never `self`. SwiftUI can keep a Canvas's event responder (and with it the
+    // drawing closure) alive after the tile is gone — e.g. the last view hit-tested under
+    // the pointer — and a closure capturing `self` kept the whole SpectrogramController
+    // (history and pixel buffers) alive with it.
 
     private func frequencyGridOverlay(width: CGFloat, height: CGFloat, model: SpectrogramModuleModel) -> some View {
         let gridHz = [50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0]
+        let range = controller.frequencyRange
+        let scale = model.frequencyScale
         return Canvas { ctx, sz in
             for hz in gridHz {
-                guard let xFrac = axisFraction(forHz: hz, model: model) else { continue }
+                guard let xFrac = Self.axisFraction(forHz: hz, range: range, scale: scale) else { continue }
                 let x = sz.width * CGFloat(xFrac)
                 var line = Path()
                 line.move(to: CGPoint(x: x, y: 0))
@@ -151,18 +159,28 @@ struct SpectrogramTileView: View {
 
     // MARK: - Cursor / readout
 
+    /// Weak handle so a lingering Canvas closure can't keep the controller alive.
+    private final class WeakController {
+        weak var value: SpectrogramController?
+        init(_ value: SpectrogramController) { self.value = value }
+    }
+
     /// SMAART-style crosshair: vertical line follows cursor frequency, horizontal line follows
     /// cursor time-position, and a label shows the frequency + level sampled at that point.
     /// The waterfall keeps scrolling live, so the sampled value updates each frame.
     private func cursorOverlay(width: CGFloat, height: CGFloat, model: SpectrogramModuleModel) -> some View {
-        Canvas { ctx, sz in
+        let cursorLocation = self.cursorLocation
+        let range = controller.frequencyRange
+        let scale = model.frequencyScale
+        let weakController = WeakController(controller)
+        return Canvas { ctx, sz in
             guard let cursor = cursorLocation, sz.width > 0, sz.height > 0,
                   cursor.x >= 0, cursor.x <= sz.width, cursor.y >= 0, cursor.y <= sz.height else { return }
 
             let xFrac = max(0, min(1, cursor.x / sz.width))
             let yFrac = max(0, min(1, cursor.y / sz.height))
-            guard let db = controller.sample(atNormalizedX: xFrac, normalizedY: yFrac) else { return }
-            let hz = hzAt(xFrac: xFrac, model: model)
+            guard let db = weakController.value?.sample(atNormalizedX: xFrac, normalizedY: yFrac) else { return }
+            let hz = Self.frequency(atFraction: xFrac, range: range, scale: scale)
 
             var vLine = Path()
             vLine.move(to: CGPoint(x: cursor.x, y: 0))
@@ -196,21 +214,21 @@ struct SpectrogramTileView: View {
     }
 
     /// Inverts `axisFraction`: the frequency under a normalized x position.
-    private func hzAt(xFrac: Double, model: SpectrogramModuleModel) -> Double {
-        let range = controller.frequencyRange
+    private static func frequency(atFraction xFrac: Double, range: ClosedRange<Double>,
+                                  scale: FrequencyScale) -> Double {
         let fMin = range.lowerBound, fMax = range.upperBound
-        return model.frequencyScale == .logarithmic
+        return scale == .logarithmic
             ? fMin * pow(fMax / fMin, xFrac)
             : fMin + xFrac * (fMax - fMin)
     }
 
     /// Normalized x position of a frequency, using the span the controller actually draws
     /// (it follows the input's sample rate), or nil if the frequency is off the image.
-    private func axisFraction(forHz hz: Double, model: SpectrogramModuleModel) -> Double? {
-        let range = controller.frequencyRange
+    private static func axisFraction(forHz hz: Double, range: ClosedRange<Double>,
+                                     scale: FrequencyScale) -> Double? {
         let fMin = range.lowerBound, fMax = range.upperBound
         guard fMax > fMin, hz >= fMin, hz <= fMax else { return nil }
-        if model.frequencyScale == .logarithmic {
+        if scale == .logarithmic {
             guard fMin > 0 else { return nil }
             return log(hz / fMin) / log(fMax / fMin)
         }
@@ -220,17 +238,20 @@ struct SpectrogramTileView: View {
     // MARK: - Axis label row
 
     private func frequencyAxisRow(width: CGFloat, model: SpectrogramModuleModel) -> some View {
-        let labels: [(hz: Double, label: String)] = [
+        let range = controller.frequencyRange
+        let scale = model.frequencyScale
+        let labels: [(hz: Double, label: String, xFrac: Double)] = [
             (50,"50"),(100,"100"),(200,"200"),(500,"500"),
             (1000,"1k"),(2000,"2k"),(5000,"5k"),(10000,"10k")
-        ].filter { axisFraction(forHz: $0.0, model: model) != nil }
+        ].compactMap { entry in
+            Self.axisFraction(forHz: entry.0, range: range, scale: scale).map { (entry.0, entry.1, $0) }
+        }
         return ZStack {
             ForEach(labels, id: \.hz) { entry in
-                let xFrac = axisFraction(forHz: entry.hz, model: model) ?? 0
                 Text(entry.label)
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.6))
-                    .position(x: width * CGFloat(xFrac), y: 10)
+                    .position(x: width * CGFloat(entry.xFrac), y: 10)
             }
         }
         .frame(width: width, height: 20)

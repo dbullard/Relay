@@ -289,6 +289,9 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
     }
     #else
     private func startEngineLocked() {
+        let snapshot = processingQueue.sync { config }
+        capture.preferredInputUID = snapshot.deviceUID
+        capture.channelIndex = snapshot.channelIndex
         capture.onBuffer = { [weak self] buffer in
             self?.handleBuffer(buffer)
         }
@@ -385,14 +388,16 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
                     cFast: toDb(smoothC.fast) + cal, cSlow: toDb(smoothC.slow) + cal,
                     zFast: toDb(smoothZ.fast) + cal, zSlow: toDb(smoothZ.slow) + cal,
                     caFast: caFastDb, caSlow: caSlowDb,
-                    rawDbFS: toDb(smoothZ.fast) + cal,
-                    rawPeakDbFS: rawPeakDbFS + cal,
+                    // Raw values are digital levels (dBFS) and deliberately exclude the
+                    // calibration offset — the automation trigger, log columns and
+                    // calibration sheet all treat them as dBFS.
+                    rawDbFS: toDb(smoothZ.fast),
+                    rawPeakDbFS: rawPeakDbFS,
                     aInstantPower: instA * linCal, cInstantPower: instC * linCal, zInstantPower: instZ * linCal,
-                    estimatedFrequencyHz: .nan,
                     clippingWarning: rawPeakThisBuffer >= 0.999,
                     // Headroom is a digital (dBFS) concept — calibration offset does not affect it.
                     headroomDb: max(0, -rawPeakDbFS),
-                    noiseFloorDbFS: noiseFloor + cal,
+                    noiseFloorDbFS: noiseFloor,
                     sampleRate: sampleRate,
                     timestamp: Date(),
                     isStale: false,

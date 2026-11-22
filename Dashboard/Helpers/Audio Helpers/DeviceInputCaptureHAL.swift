@@ -11,7 +11,6 @@ nonisolated final class DeviceInputCaptureHAL: @unchecked Sendable {
     private let queue = DispatchQueue(label: "Relay.DeviceInputCaptureHAL")
     private var audioUnit: AudioUnit?
     private var format: AudioStreamBasicDescription?
-    private var inputGainScalar: Double = 1.0
     private var isRunning = false
     private var didLogFormat = false
     private var didLogChannelPeaks = false
@@ -131,32 +130,11 @@ nonisolated final class DeviceInputCaptureHAL: @unchecked Sendable {
         return asbd
     }
 
-    private func deviceInputGainScalar(for channel: Int) -> Double {
-        func readScalar(_ selector: AudioObjectPropertySelector, element: AudioObjectPropertyElement) -> Double? {
-            var address = AudioObjectPropertyAddress(
-                mSelector: selector,
-                mScope: kAudioDevicePropertyScopeInput,
-                mElement: element
-            )
-            guard AudioObjectHasProperty(deviceId, &address) else { return nil }
-            var value: Float32 = 0
-            var size = UInt32(MemoryLayout<Float32>.size)
-            let status = AudioObjectGetPropertyData(deviceId, &address, 0, nil, &size, &value)
-            guard status == noErr, value.isFinite, value > 0 else { return nil }
-            return Double(value)
-        }
-
-        let element = AudioObjectPropertyElement(channel + 1)
-        if let scalar = readScalar(kAudioDevicePropertyVolumeScalar, element: element) {
-            return scalar
-        }
-
-        if let scalar = readScalar(kAudioDevicePropertyVolumeScalar, element: kAudioObjectPropertyElementMain) {
-            return scalar
-        }
-
-        return 1.0
-    }
+    // The device's input-volume control (kAudioDevicePropertyVolumeScalar) is applied by
+    // the device/driver before samples reach us — the macOS input slider already changes
+    // the level we receive. Capture used to multiply by that scalar again, so a device with
+    // the slider below 100% read low (e.g. -4.6 dB at 0.59 on a MacBook mic) and SPL
+    // calibration silently depended on the slider. Samples are now used as delivered.
 
     func start() throws {
         if isRunning { return }
@@ -239,7 +217,6 @@ nonisolated final class DeviceInputCaptureHAL: @unchecked Sendable {
         self.audioUnit = audioUnit
         self.format = asbd
 
-        inputGainScalar = deviceInputGainScalar(for: channelIndex)
 
         didLogChannelPeaks = false
         didLogRenderCallback = false
@@ -257,11 +234,6 @@ nonisolated final class DeviceInputCaptureHAL: @unchecked Sendable {
             #endif
         }
 
-        #if DEBUG
-        if inputGainScalar != 1.0 {
-            print("[Audio HAL] input gain scalar=\(String(format: "%.3f", inputGainScalar)) channel=\(channelIndex + 1)")
-        }
-        #endif
 
         deviceLost.store(false, ordering: .releasing)
         installDeviceListeners(audioUnit: audioUnit)
@@ -582,12 +554,6 @@ nonisolated final class DeviceInputCaptureHAL: @unchecked Sendable {
                 }
             }
 
-            if inputGainScalar != 1.0 {
-                let gain = Float(inputGainScalar)
-                for i in 0..<frames {
-                    mono[i] *= gain
-                }
-            }
         }
 
         #if DEBUG
@@ -658,7 +624,7 @@ nonisolated final class DeviceInputCaptureHAL: @unchecked Sendable {
             }
 
             let flags = String(format: "0x%08X", stream.mFormatFlags)
-            print("[Audio HAL] conversion peak raw=\(String(format: "%.6f", rawPeak)) mono=\(String(format: "%.6f", monoPeak)) gain=\(String(format: "%.3f", inputGainScalar)) bits=\(stream.mBitsPerChannel) flags=\(flags) nonInterleaved=\(isNonInterleaved)")
+            print("[Audio HAL] conversion peak raw=\(String(format: "%.6f", rawPeak)) mono=\(String(format: "%.6f", monoPeak)) bits=\(stream.mBitsPerChannel) flags=\(flags) nonInterleaved=\(isNonInterleaved)")
             didLogConversionPeak = true
         }
         #endif

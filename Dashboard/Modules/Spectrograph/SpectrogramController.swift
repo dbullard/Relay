@@ -301,8 +301,17 @@ final class SpectrogramController: ObservableObject {
         if range != frequencyRange { frequencyRange = range }
     }
 
+    /// Total waterfall rows emitted since creation (for tests of the scroll rate).
+    private(set) var rowsEmittedForTesting = 0
+
+    /// Feeds one FFT frame as if it came from the audio engine (tests only).
+    func ingestForTesting(_ frame: FFTFrame) {
+        handleFrame(frame)
+    }
+
     private func appendRows(_ row: [Float], count: Int) {
         let n = min(count, maxRows)
+        rowsEmittedForTesting += n
         for _ in 0..<n {
             if rawRows.count >= maxRows { rawRows.removeFirst() }
             rawRows.append(row)

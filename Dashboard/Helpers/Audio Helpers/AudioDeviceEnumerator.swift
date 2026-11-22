@@ -133,8 +133,18 @@ struct AudioInputDevice: Identifiable, Equatable, Sendable {
 }
 
 enum AudioDeviceEnumerator {
+    /// The input ports iOS offers right now (built-in mic, USB interfaces, wired headsets…),
+    /// so an input can be pinned to one. Falls back to the current route if none are listed.
     nonisolated static func inputDevices() -> [AudioInputDevice] {
-        return [AudioInputDevice(uid: "current", name: "Current Microphone", channelCount: 1)]
+        let ports = MeasurementAudioSession.availableInputs()
+        guard !ports.isEmpty else {
+            return [AudioInputDevice(uid: MeasurementAudioSession.currentRouteUID,
+                                     name: "Current Microphone", channelCount: 1)]
+        }
+        return ports.map { port in
+            AudioInputDevice(uid: port.uid, name: port.portName,
+                             channelCount: max(1, port.channels?.count ?? 1))
+        }
     }
 }
 #endif
@@ -152,6 +162,13 @@ final class AudioInputDeviceCache: ObservableObject {
 
         #if os(macOS)
         registerCoreAudioInvalidation()
+        #else
+        // Plugging in or removing a USB interface or headset changes the available ports.
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
         #endif
     }
 

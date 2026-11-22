@@ -349,22 +349,47 @@ struct AudioInputsConfigView: View {
                 Text("Folder")
                     .foregroundStyle(.secondary)
                     .font(.caption)
-                let displayPath = manager.settings.folderPath.isEmpty
-                    ? SPLInputLogger.defaultFolderURL().path
-                    : manager.settings.folderPath
+                // While logging, show where files are actually going (it may be the
+                // default folder if the chosen one couldn't be written).
+                let usingDefault = manager.settings.folderPath.isEmpty
+                let displayPath = manager.activeFolderURL?.path
+                    ?? (usingDefault ? manager.defaultFolderURL.path : manager.settings.folderPath)
                 Text(displayPath)
                     .font(.caption)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .foregroundStyle(.secondary)
+                    .help(displayPath)
+                if usingDefault {
+                    Text("Default")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
                 Spacer()
                 #if os(macOS)
+                if !usingDefault {
+                    Button("Use Default") { manager.useDefaultFolder() }
+                        .controlSize(.small)
+                        .buttonStyle(.bordered)
+                }
                 Button("Choose…") { chooseLogFolder() }
                     .controlSize(.small)
                     .buttonStyle(.bordered)
                 #endif
             }
             .padding(.horizontal, 12)
+
+            if let notice = manager.folderFallbackNotice {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(.secondary)
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 12)
+            }
 
             // Folder access error banner
             if let errorMsg = manager.folderAccessError {
@@ -438,7 +463,7 @@ struct AudioInputsConfigView: View {
         SPLLoggingManager.shared.settings.folderPath = url.path
         SPLLoggingManager.shared.settings.folderBookmarkData = bookmarkData
         SPLLoggingManager.shared.folderAccessError = nil
-        SPLLoggingManager.shared.settings.save()
+        SPLLoggingManager.shared.saveSettings()
     }
     #endif
 }
@@ -918,7 +943,7 @@ struct AudioInputCalibrationSheet: View {
             await MainActor.run { splSubID = subID }
             for await payload in stream {
                 guard !Task.isCancelled else { break }
-                await MainActor.run { liveRawDbFS = payload.rawDbFS - input.calibrationOffsetDb }
+                await MainActor.run { liveRawDbFS = payload.rawDbFS }
             }
         }
     }

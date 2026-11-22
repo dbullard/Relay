@@ -87,7 +87,6 @@ final class DbReaderController: ObservableObject {
     private(set) var rawAWeightedDbFS: Double = Double.nan
     private(set) var rawAcDbFS: Double = Double.nan
     private(set) var rawDcDbFS: Double = Double.nan
-    private(set) var estimatedFrequencyHz: Double = Double.nan
     private(set) var historyAll: [DbSample] = []
     private(set) var historyWindowed: [DbSample] = []
     private(set) var graphHistoryWindowed: [DbSample] = []
@@ -243,6 +242,14 @@ final class DbReaderController: ObservableObject {
         isPreviewActive = false
         isLiveMode = false
         stopSubscription()
+        // The tile view installs this callback and it captures that view, which holds this
+        // controller: a retain cycle that kept every deleted meter (and its history) in
+        // memory. Dropping it lets the controller go once its view is gone.
+        onSettingsChange = nil
+        // SwiftUI can still hold the closed tile's view state (and so this object) for a
+        // while; release the history buffers so a lingering controller costs ~1 KB, not
+        // up to historyMaxSeconds of samples.
+        resetDisplay(keepHistoryAll: false)
     }
 
     func reset() {
@@ -262,7 +269,6 @@ final class DbReaderController: ObservableObject {
         rawAWeightedDbFS = Double.nan
         rawAcDbFS = Double.nan
         rawDcDbFS = Double.nan
-        estimatedFrequencyHz = Double.nan
         clippingWarning = false
         headroomDb = 0
         noiseFloorDbFS = 0
@@ -405,7 +411,6 @@ final class DbReaderController: ObservableObject {
         clippingWarning = payload.clippingWarning
         headroomDb = payload.headroomDb
         noiseFloorDbFS = payload.noiseFloorDbFS
-        estimatedFrequencyHz = payload.estimatedFrequencyHz
         rawAWeightedDbFS = payload.aFast
         rawAcDbFS = payload.cFast
         rawDcDbFS = Double.nan
@@ -452,7 +457,8 @@ final class DbReaderController: ObservableObject {
         // Peak hold for the "Max" readout is updated from displaySpl in publish(),
         // once averaging (if enabled) has been applied for this tick — so it
         // always tracks what the meter is currently displaying.
-        currentPeak = max(payload.rawPeakDbFS, peakHold, calibrated)
+        // rawPeakDbFS is uncalibrated; the peak readout is in calibrated dB like the meter.
+        currentPeak = max(payload.rawPeakDbFS + payload.calibrationOffsetDb, peakHold, calibrated)
 
         // Open the Leq window on the first payload after averaging starts (every payload,
         // not just publish ticks, so no audio before the first tick is missed).
@@ -514,7 +520,6 @@ final class DbReaderController: ObservableObject {
             rawAWeightedDbFS: payload.aFast,
             rawAcDbFS: payload.cFast,
             rawDcDbFS: Double.nan,
-            estimatedFrequencyHz: payload.estimatedFrequencyHz,
             timestamp: timestamp,
             caSlow: caSlow,
             weights: weights,
@@ -545,7 +550,6 @@ final class DbReaderController: ObservableObject {
         rawAWeightedDbFS: Double,
         rawAcDbFS: Double,
         rawDcDbFS: Double,
-        estimatedFrequencyHz: Double,
         timestamp: Date,
         caSlow: Double?,
         weights: DbWeightingSnapshot?,
@@ -566,7 +570,6 @@ final class DbReaderController: ObservableObject {
         self.rawAWeightedDbFS = rawAWeightedDbFS
         self.rawAcDbFS = rawAcDbFS
         self.rawDcDbFS = rawDcDbFS
-        self.estimatedFrequencyHz = estimatedFrequencyHz
 
         rawPeakDbfsMaxHold = max(rawPeakDbfsMaxHold, rawPeakDbFS)
         peakHold = max(peakHold, displaySpl)
@@ -647,7 +650,6 @@ final class DbReaderController: ObservableObject {
             rawAWeightedDbFS: rawAWeightedDbFS,
             rawAcDbFS: rawAcDbFS,
             rawDcDbFS: rawDcDbFS,
-            estimatedFrequencyHz: estimatedFrequencyHz,
             clippingWarning: clippingWarning,
             headroomDb: headroomDb,
             noiseFloorDbFS: noiseFloorDbFS,

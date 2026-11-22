@@ -343,7 +343,6 @@ struct DbReaderDisplaySnapshot: Equatable {
     var rawAWeightedDbFS: Double
     var rawAcDbFS: Double
     var rawDcDbFS: Double
-    var estimatedFrequencyHz: Double
     var clippingWarning: Bool
     var headroomDb: Double
     var noiseFloorDbFS: Double
@@ -362,7 +361,6 @@ struct DbReaderDisplaySnapshot: Equatable {
         rawAWeightedDbFS: Double.nan,
         rawAcDbFS: Double.nan,
         rawDcDbFS: Double.nan,
-        estimatedFrequencyHz: Double.nan,
         clippingWarning: false,
         headroomDb: 0,
         noiseFloorDbFS: 0,
