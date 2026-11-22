@@ -114,7 +114,7 @@ nonisolated final class SPLInputLogger: @unchecked Sendable {
             let peak = interval?.zFastMax ?? payload.zFast
             let line = "\(ts),\(fmt(payload.zSlow)),\(fmt(peak))," +
                 "\(fmt(payload.rawDbFS)),\(fmt(payload.rawPeakDbFS)),\(fmt(rawPeakDbfsMax))," +
-                "\(fmt(payload.cFast))," +   // raw_ac_dbfs
+                "\(fmt(payload.cFast - payload.calibrationOffsetDb))," +   // raw_ac_dbfs: C fast, uncalibrated
                 "," +                         // raw_dc_dbfs (always empty)
                 "\(fmt(calibrationOffsetDb))," +
                 "\(fmt(payload.sampleRate)),z,slow," +

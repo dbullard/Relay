@@ -242,6 +242,14 @@ final class DbReaderController: ObservableObject {
         isPreviewActive = false
         isLiveMode = false
         stopSubscription()
+        // The tile view installs this callback and it captures that view, which holds this
+        // controller: a retain cycle that kept every deleted meter (and its history) in
+        // memory. Dropping it lets the controller go once its view is gone.
+        onSettingsChange = nil
+        // SwiftUI can still hold the closed tile's view state (and so this object) for a
+        // while; release the history buffers so a lingering controller costs ~1 KB, not
+        // up to historyMaxSeconds of samples.
+        resetDisplay(keepHistoryAll: false)
     }
 
     func reset() {
