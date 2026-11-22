@@ -91,4 +91,48 @@ final class ViewportZoomMathTests: XCTestCase {
             isAppActive: false, isViewWindowTopmostUnderCursor: true
         ))
     }
+
+    // MARK: - fitToViewport (Fit to Window / Live Mode "Fit to Screen")
+
+    func testFitScalesUpToFillALargerViewport() {
+        // A 1920x1080 canvas on a 3840x2160 full-screen viewport must scale up, not stay at 1x.
+        let r = ViewportZoomMath.fitToViewport(
+            contentSize: CGSize(width: 1920, height: 1080),
+            viewportSize: CGSize(width: 3840, height: 2160),
+            range: 0.25...3
+        )!
+        XCTAssertEqual(r.zoom, 2, accuracy: 1e-9)
+        XCTAssertEqual(r.pan.width, 0, accuracy: 1e-9)
+        XCTAssertEqual(r.pan.height, 0, accuracy: 1e-9)
+    }
+
+    func testFitScalesDownAndCentersOnTheShortAxis() {
+        let r = ViewportZoomMath.fitToViewport(
+            contentSize: CGSize(width: 2000, height: 1000),
+            viewportSize: CGSize(width: 1000, height: 800),
+            range: 0.25...3
+        )!
+        XCTAssertEqual(r.zoom, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(r.pan.width, 0, accuracy: 1e-9)
+        XCTAssertEqual(r.pan.height, 150, accuracy: 1e-9) // (800 - 500) / 2
+    }
+
+    func testFitClampsToRange() {
+        let r = ViewportZoomMath.fitToViewport(
+            contentSize: CGSize(width: 100, height: 100),
+            viewportSize: CGSize(width: 1000, height: 1000),
+            range: 0.25...3
+        )!
+        XCTAssertEqual(r.zoom, 3, accuracy: 1e-9)
+        XCTAssertEqual(r.pan.width, 350, accuracy: 1e-9) // (1000 - 300) / 2
+    }
+
+    func testFitReturnsNilForEmptySizes() {
+        XCTAssertNil(ViewportZoomMath.fitToViewport(
+            contentSize: .zero, viewportSize: CGSize(width: 100, height: 100), range: 0.25...3
+        ))
+        XCTAssertNil(ViewportZoomMath.fitToViewport(
+            contentSize: CGSize(width: 100, height: 100), viewportSize: .zero, range: 0.25...3
+        ))
+    }
 }

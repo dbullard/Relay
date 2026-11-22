@@ -39,6 +39,29 @@ enum ViewportZoomMath {
         return (clamped, pan)
     }
 
+    /// Zoom and pan that show the whole `contentSize` centered in `viewportSize`,
+    /// scaling up or down as needed (clamped to `range`). Backs both the "Fit to Window"
+    /// toolbar button and Live Mode's "Fit to Screen".
+    ///
+    /// Returns `nil` when either size is empty (e.g. before the first layout pass).
+    static func fitToViewport(
+        contentSize: CGSize,
+        viewportSize: CGSize,
+        range: ClosedRange<CGFloat>
+    ) -> (zoom: CGFloat, pan: CGSize)? {
+        guard contentSize.width > 0, contentSize.height > 0,
+              viewportSize.width > 0, viewportSize.height > 0
+        else { return nil }
+
+        let raw = min(viewportSize.width / contentSize.width, viewportSize.height / contentSize.height)
+        let zoom = min(max(raw, range.lowerBound), range.upperBound)
+        let pan = CGSize(
+            width: (viewportSize.width - contentSize.width * zoom) * 0.5,
+            height: (viewportSize.height - contentSize.height * zoom) * 0.5
+        )
+        return (zoom, pan)
+    }
+
     /// Multiplicative zoom factor for a modifier+scroll zoom.
     static func scrollZoomFactor(deltaY: CGFloat) -> CGFloat {
         1.0 + (-deltaY * 0.001)
