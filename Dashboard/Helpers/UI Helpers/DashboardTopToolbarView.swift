@@ -1797,7 +1797,8 @@ struct DashboardTopToolbarView: View {
                     }
                 }
 
-                #if os(iOS)
+                // Undo/Redo live in the toolbar on every platform: in full screen on a touch
+                // screen the menu bar (Edit ▸ Undo) is hard to reach.
                 if canUndo || canRedo {
                     toolbarClusterDivider(height: iconH * 0.6)
                         .transition(.scale(scale: 0.2, anchor: .center).combined(with: .opacity))
@@ -1817,6 +1818,8 @@ struct DashboardTopToolbarView: View {
                                 .toolbarIconChrome(isActive: false)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Undo")
+                        .help("Undo")
                         .transition(.scale.combined(with: .opacity))
                     }
 
@@ -1833,12 +1836,13 @@ struct DashboardTopToolbarView: View {
                                 .toolbarIconChrome(isActive: false)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Redo")
+                        .help("Redo")
                         .transition(.scale.combined(with: .opacity))
                     }
                 }
                 .animation(.easeInOut(duration: 0.18), value: canUndo)
                 .animation(.easeInOut(duration: 0.18), value: canRedo)
-                #endif
             }
                 #if os(iOS)
                 .padding(.horizontal, 8)

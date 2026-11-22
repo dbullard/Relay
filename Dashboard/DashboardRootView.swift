@@ -399,6 +399,10 @@ struct DashboardRootView: View {
     
     @Environment(\.undoManager) private var systemUndoManager
     @State private var undoBridge = DashboardUndoBridge()
+    /// Bumped whenever the undo stack changes so the toolbar's Undo/Redo buttons refresh.
+    /// `UndoManager` isn't observable, and graph edits or a menu-bar Undo don't always
+    /// re-render this view on their own.
+    @State private var undoStackRevision: Int = 0
     
     // MARK: - LAN Shared Tabs
     @StateObject private var lanService = LANSharedTabsService()
@@ -3271,6 +3275,10 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
         .onChange(of: proxy.size, initial: false) { _, newSize in
             updateCanvasViewportSize(for: newSize)
         }
+        .onReceive(Self.undoStackChangePublisher) { note in
+            guard let um = note.object as? UndoManager, um === systemUndoManager else { return }
+            undoStackRevision &+= 1
+        }
         .onChange(of: canvasBoundsStore.size, initial: false) { _, _ in
             // Canvas document-default changes no longer auto-scale tiles.
             // Tiles are already in the correct coordinate space.
@@ -6071,7 +6079,16 @@ private func updateLANSharedTabs(_ currentTabs: [DashboardTab]? = nil) {
             )
         }
 
+/// Fires when an undo group closes or an undo/redo runs, i.e. whenever canUndo/canRedo may change.
+private static let undoStackChangePublisher = Publishers.MergeMany(
+    NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup),
+    NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange),
+    NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)
+)
+.receive(on: RunLoop.main)
+
 private func topToolbar() -> some View {
+    _ = undoStackRevision // re-read canUndo/canRedo when the undo stack changes
     let localIsMirror = (selectedTabSafe?.lanMirrorShareId != nil)
     let isMirrorTabSelected: Bool = (selectedLANShareId != nil) || localIsMirror
     let canUndo = (systemUndoManager?.canUndo ?? false) && !isMirrorTabSelected
