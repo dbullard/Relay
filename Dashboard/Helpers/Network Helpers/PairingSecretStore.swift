@@ -27,7 +27,7 @@ public final class KeychainPairingSecretStore: PairingSecretStoring {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
+        guard Keychain.copyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
         return item as? Data
     }
 
@@ -37,11 +37,11 @@ public final class KeychainPairingSecretStore: PairingSecretStoring {
             kSecAttrService as String: service,
             kSecAttrAccount as String: deviceId
         ]
-        SecItemDelete(match as CFDictionary)
+        Keychain.delete(match as CFDictionary)
         guard let secret else { return }
         var add = match
         add[kSecValueData as String] = secret
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+        Keychain.add(add as CFDictionary, nil)
     }
 }

@@ -444,6 +444,7 @@
 				Modules/ProfanityFilter.swift,
 				Helpers/Integrations/Connections/SpecteraClient.swift,
 				Helpers/Integrations/Connections/SpecteraKeychainStore.swift,
+				Helpers/Keychain/KeychainAccess.swift,
 				Migration/PreviousRelayImporter.swift,
 				Migration/PreviousRelayImportSheet.swift,
 				Diagnostics/GitHubIssueReport.swift,
