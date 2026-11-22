@@ -48,6 +48,12 @@ var onGraphChanged: (() -> Void)? = nil
 @StateObject private var smartLightProfilesStore = SmartLightProfilesStore.shared
 @State private var isBatchDeletingNodes: Bool = false
 @StateObject private var undoProxy = GraphDashboardUndoProxy()
+/// Bumped when an undo/redo restores the graph, so the *live* view rebuilds its caches.
+/// The undo proxy's closures hold a copy of this view from `onAppear`, whose plain
+/// properties (`tilesSnapshot`, rundown titles) can be stale: the graph is prewarmed before
+/// the flip to Automation, while the tiles snapshot is still empty. Rebuilding from that copy
+/// dropped canvas-backed nodes (e.g. a Time tile's trigger) after Undo/Redo.
+@State private var graphUndoRestoreTick: Int = 0
 #if os(macOS)
 @Environment(\.prodLinkIsWorkEnabled) private var isWorkEnabled
 #else
@@ -721,8 +727,9 @@ private func postGraphSelectionCount() {
             tab.graph = nil
         }
 
-        // Rebuild caches and clear transient interaction state
-        refreshGraphCaches()
+        // Clear transient interaction state, and have the live view rebuild its caches
+        // (see `graphUndoRestoreTick`; this copy's tiles snapshot may be stale).
+        graphUndoRestoreTick &+= 1
         linkingFromNodeId = nil
         linkingFromPoint = nil
         linkingCurrentPoint = nil
@@ -3123,6 +3130,9 @@ private func applyGraphLifecycle<Content: View>(
             name: Notification.Name("Relay.GraphSendAllAvailability"),
             object: computeSendAllAvailability()
         )
+    }
+    .onChange(of: graphUndoRestoreTick, initial: false) { _, _ in
+        refreshGraphCaches()
     }
     .onChange(of: tilesSnapshotSignature, initial: false) { _, _ in
         guard isWorkEnabled else { return }
