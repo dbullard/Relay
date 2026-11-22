@@ -339,6 +339,7 @@
 				"Helpers/UI Helpers/TimeUtils.swift",
 				"Helpers/UI Helpers/VariableSuggestionInputs.swift",
 				"Helpers/UI Helpers/ViewportPanZoomModifier.swift",
+				"Helpers/UI Helpers/ViewportZoomMath.swift",
 				Launch/LaunchNewDashboardSheet.swift,
 				Launch/RelayLaunchScreenView.swift,
 				Config/RelayBuildConfig.swift,
