@@ -1420,6 +1420,22 @@ extension DashboardTileEditView {
                         in: 0.1...1.0
                     )
                 }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Scroll Speed")
+                        Spacer()
+                        Text("\(Int(currentModel.scrollRate)) rows/s")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { currentModel.scrollRate },
+                            set: { v in var u = currentModel; u.scrollRate = v.rounded(); update(u) }
+                        ),
+                        in: 1...60
+                    )
+                }
             }
             // Level Range (threshold controls)
             if !currentModel.linkToRTA {

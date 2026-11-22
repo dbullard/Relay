@@ -217,6 +217,16 @@ struct DbReaderTileView: View {
                         .background(.black.opacity(0.35))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
+            } else if controller.isSignalStale {
+                // The input stopped delivering audio (unplugged, failed to open). Say so
+                // rather than leaving the last reading on screen as if it were live.
+                Text(applyCapitalization(controller.statusText))
+                    .font(.caption)
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.black.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
         .opacity(model.isEnabled ? 1.0 : 0.45)

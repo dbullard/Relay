@@ -1,11 +1,12 @@
 import Foundation
 @preconcurrency import AVFoundation
+import Synchronization
 
 #if os(macOS)
 import AudioToolbox
 import CoreAudio
 
-nonisolated final class DeviceInputCaptureHAL {
+nonisolated final class DeviceInputCaptureHAL: @unchecked Sendable {
     private let deviceId: AudioDeviceID
     private let queue = DispatchQueue(label: "Relay.DeviceInputCaptureHAL")
     private var audioUnit: AudioUnit?
@@ -25,6 +26,88 @@ nonisolated final class DeviceInputCaptureHAL {
     private var renderBufferCount: Int = 0
     private var monoBufferPool: [AVAudioPCMBuffer] = []
     private var monoBufferPoolIndex = 0
+    /// Pool buffers handed to `queue` and not yet consumed. The render thread drops a
+    /// buffer instead of overwriting one the consumer may still be reading.
+    private let buffersInFlight = Atomic<Int>(0)
+    /// Set when the device this unit was opened on goes away. When a device disappears
+    /// (USB unplug, Dante Virtual Soundcard stopped, aggregate destroyed) the HAL output
+    /// unit silently switches to another input — typically the system default mic — and
+    /// keeps rendering. Without this flag that other mic's audio would be metered as if it
+    /// were the configured input.
+    private let deviceLost = Atomic<Bool>(false)
+    private var deviceAliveListener: AudioObjectPropertyListenerBlock?
+    private let listenerQueue = DispatchQueue(label: "Relay.DeviceInputCaptureHAL.Listener")
+
+    /// True once the opened device has disappeared or the unit has moved to another device.
+    /// The owner should stop this capture and reopen the configured device when it returns.
+    var isDeviceLost: Bool {
+        if deviceLost.load(ordering: .acquiring) { return true }
+        guard let audioUnit else { return false }
+        if !Self.isDeviceAlive(deviceId) || Self.currentDevice(of: audioUnit) != deviceId {
+            deviceLost.store(true, ordering: .releasing)
+            return true
+        }
+        return false
+    }
+
+    private static func isDeviceAlive(_ id: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsAlive,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var alive: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectGetPropertyData(id, &address, 0, nil, &size, &alive)
+        return status == noErr && alive != 0
+    }
+
+    private static func currentDevice(of unit: AudioUnit) -> AudioDeviceID? {
+        var current = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, 0, &current, &size)
+        return status == noErr ? current : nil
+    }
+
+    /// One proc for add and remove: removal matches on the function pointer.
+    private static let currentDeviceListenerProc: AudioUnitPropertyListenerProc = { refCon, unit, _, _, _ in
+        let capture = Unmanaged<DeviceInputCaptureHAL>.fromOpaque(refCon).takeUnretainedValue()
+        if DeviceInputCaptureHAL.currentDevice(of: unit) != capture.deviceId {
+            capture.deviceLost.store(true, ordering: .releasing)
+        }
+    }
+
+    private func installDeviceListeners(audioUnit: AudioUnit) {
+        var aliveAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsAlive,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let id = deviceId
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self, !Self.isDeviceAlive(id) else { return }
+            self.deviceLost.store(true, ordering: .releasing)
+        }
+        if AudioObjectAddPropertyListenerBlock(deviceId, &aliveAddress, listenerQueue, block) == noErr {
+            deviceAliveListener = block
+        }
+        AudioUnitAddPropertyListener(audioUnit, kAudioOutputUnitProperty_CurrentDevice, Self.currentDeviceListenerProc, Unmanaged.passUnretained(self).toOpaque())
+    }
+
+    private func removeDeviceListeners(audioUnit: AudioUnit) {
+        if let block = deviceAliveListener {
+            var aliveAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceIsAlive,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            AudioObjectRemovePropertyListenerBlock(deviceId, &aliveAddress, listenerQueue, block)
+            deviceAliveListener = nil
+        }
+        AudioUnitRemovePropertyListenerWithUserData(audioUnit, kAudioOutputUnitProperty_CurrentDevice, Self.currentDeviceListenerProc, Unmanaged.passUnretained(self).toOpaque())
+    }
+    private static let monoBufferPoolSize = 16
 
     var channelIndex: Int = 0
     var onBuffer: ((AVAudioPCMBuffer) -> Void)?
@@ -180,6 +263,9 @@ nonisolated final class DeviceInputCaptureHAL {
         }
         #endif
 
+        deviceLost.store(false, ordering: .releasing)
+        installDeviceListeners(audioUnit: audioUnit)
+
         status = AudioOutputUnitStart(audioUnit)
         guard status == noErr else { throw error(status) }
         isRunning = true
@@ -190,6 +276,7 @@ nonisolated final class DeviceInputCaptureHAL {
         if isRunning {
             AudioOutputUnitStop(audioUnit)
         }
+        removeDeviceListeners(audioUnit: audioUnit)
         AudioUnitUninitialize(audioUnit)
         AudioComponentInstanceDispose(audioUnit)
         self.audioUnit = nil
@@ -249,7 +336,7 @@ nonisolated final class DeviceInputCaptureHAL {
         renderBufferCount = bufferCount
 
         if let monoFormat = AVAudioFormat(standardFormatWithSampleRate: format.mSampleRate, channels: 1) {
-            monoBufferPool = (0..<8).compactMap { _ in
+            monoBufferPool = (0..<Self.monoBufferPoolSize).compactMap { _ in
                 AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: frameCapacity)
             }
         } else {
@@ -271,6 +358,9 @@ nonisolated final class DeviceInputCaptureHAL {
 
     private func render(ioActionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>, timeStamp: UnsafePointer<AudioTimeStamp>, busNumber: UInt32, frameCount: UInt32) -> OSStatus {
         guard let audioUnit, let format else { return noErr }
+        // The unit has moved off the configured device: deliver nothing, so the owner's
+        // watchdog reports "no signal" instead of metering whatever mic it moved to.
+        if deviceLost.load(ordering: .relaxed) { return noErr }
 
         if !didLogRenderCallback {
             didLogRenderCallback = true
@@ -325,6 +415,9 @@ nonisolated final class DeviceInputCaptureHAL {
             #endif
         }
 
+        #if DEBUG
+        // Diagnostics only: scans the first frames of every callback for the silence and
+        // per-channel peak logs below, so keep it out of release builds.
         if let first = srcList.first, let data = first.mData {
             let frameLimit = min(128, Int(frameCount))
             let channels = max(1, Int(stream.mChannelsPerFrame))
@@ -420,11 +513,18 @@ nonisolated final class DeviceInputCaptureHAL {
                 didLogChannelPeaks = true
             }
         }
+        #endif
 
         guard !monoBufferPool.isEmpty else {
             DispatchQueue.main.async {
                 RelayDiagnosticsStore.shared.recordError("HAL mono AVAudioPCMBuffer alloc failed", tag: "Audio HAL")
             }
+            return noErr
+        }
+        // If the consumer has fallen this far behind, the next pool slot may still be in
+        // use. Dropping one buffer is a brief gap; overwriting would corrupt audio that is
+        // mid-analysis.
+        guard buffersInFlight.load(ordering: .acquiring) < monoBufferPool.count - 1 else {
             return noErr
         }
         let monoBuffer = monoBufferPool[monoBufferPoolIndex]
@@ -564,8 +664,10 @@ nonisolated final class DeviceInputCaptureHAL {
         #endif
 
         let onBuffer = self.onBuffer
-        queue.async {
+        buffersInFlight.wrappingAdd(1, ordering: .relaxed)
+        queue.async { [self] in
             onBuffer?(monoBuffer)
+            buffersInFlight.wrappingSubtract(1, ordering: .releasing)
         }
 
         return noErr

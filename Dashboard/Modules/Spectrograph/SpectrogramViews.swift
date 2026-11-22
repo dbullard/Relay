@@ -9,6 +9,8 @@ struct SpectrogramTileView: View {
     @StateObject private var controller: SpectrogramController
     /// False while this side of the flip container is hidden (Automation view showing).
     @Environment(\.prodLinkIsWorkEnabled) private var isWorkEnabled
+    /// Offscreen thumbnail / LAN snapshot renders must not start audio capture.
+    @Environment(\.dashboardIsLANSnapshotRendering) private var isLANSnapshotRendering
 
     /// Cursor position within the waterfall image area, set while hovering/dragging.
     @State private var cursorLocation: CGPoint?
@@ -66,16 +68,25 @@ struct SpectrogramTileView: View {
                 if model.showFrequencyAxis {
                     ZStack {
                         Color.black
-                        frequencyAxisRow(width: geo.size.width)
+                        frequencyAxisRow(width: geo.size.width, model: model)
                     }
                     .frame(height: axisH)
                 }
             }
             .onAppear {
+                guard !isLANSnapshotRendering else { return }
                 controller.updateDisplaySize(CGSize(width: geo.size.width, height: imageH))
                 controller.updateSettings(model)
                 controller.setVisible(isWorkEnabled)
+                controller.setTileActive(true)
                 controller.setLiveMode(isLiveMode && model.isEnabled)
+            }
+            .onDisappear {
+                controller.setTileActive(false)
+            }
+            .onChange(of: imageH) { _, newHeight in
+                // One history row per point of height; keep it in step when the tile resizes.
+                controller.updateDisplaySize(CGSize(width: geo.size.width, height: newHeight))
             }
         }
         .onChange(of: isWorkEnabled) { _, enabled in
@@ -83,14 +94,17 @@ struct SpectrogramTileView: View {
         }
         .opacity(model.isEnabled ? 1 : 0.45)
         .onChange(of: module) { _, newValue in
+            guard !isLANSnapshotRendering else { return }
             let m = effectiveModel(Self.resolveModel(module: newValue))
             controller.updateSettings(m)
         }
         .onChange(of: tab) { _, _ in
+            guard !isLANSnapshotRendering else { return }
             let m = effectiveModel(Self.resolveModel(module: module))
             controller.updateSettings(m)
         }
         .onChange(of: isLiveMode) { _, newValue in
+            guard !isLANSnapshotRendering else { return }
             let m = effectiveModel(Self.resolveModel(module: module))
             controller.setLiveMode(newValue && m.isEnabled)
             if !newValue { cursorLocation = nil }
@@ -122,12 +136,9 @@ struct SpectrogramTileView: View {
 
     private func frequencyGridOverlay(width: CGFloat, height: CGFloat, model: SpectrogramModuleModel) -> some View {
         let gridHz = [50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0]
-        let fMin = 20.0, fMax = 22050.0
         return Canvas { ctx, sz in
             for hz in gridHz {
-                let xFrac: Double = model.frequencyScale == .logarithmic
-                    ? log10(hz / fMin) / log10(fMax / fMin)
-                    : (hz - fMin) / (fMax - fMin)
+                guard let xFrac = axisFraction(forHz: hz, model: model) else { continue }
                 let x = sz.width * CGFloat(xFrac)
                 var line = Path()
                 line.move(to: CGPoint(x: x, y: 0))
@@ -184,28 +195,38 @@ struct SpectrogramTileView: View {
         .allowsHitTesting(false)
     }
 
-    /// Inverts the frequency-axis mapping used by `frequencyGridOverlay`/`frequencyAxisRow`.
+    /// Inverts `axisFraction`: the frequency under a normalized x position.
     private func hzAt(xFrac: Double, model: SpectrogramModuleModel) -> Double {
-        let fMin = 20.0, fMax = 22050.0
+        let range = controller.frequencyRange
+        let fMin = range.lowerBound, fMax = range.upperBound
         return model.frequencyScale == .logarithmic
             ? fMin * pow(fMax / fMin, xFrac)
             : fMin + xFrac * (fMax - fMin)
     }
 
+    /// Normalized x position of a frequency, using the span the controller actually draws
+    /// (it follows the input's sample rate), or nil if the frequency is off the image.
+    private func axisFraction(forHz hz: Double, model: SpectrogramModuleModel) -> Double? {
+        let range = controller.frequencyRange
+        let fMin = range.lowerBound, fMax = range.upperBound
+        guard fMax > fMin, hz >= fMin, hz <= fMax else { return nil }
+        if model.frequencyScale == .logarithmic {
+            guard fMin > 0 else { return nil }
+            return log(hz / fMin) / log(fMax / fMin)
+        }
+        return (hz - fMin) / (fMax - fMin)
+    }
+
     // MARK: - Axis label row
 
-    private func frequencyAxisRow(width: CGFloat) -> some View {
-        let model = Self.resolveModel(module: module)
+    private func frequencyAxisRow(width: CGFloat, model: SpectrogramModuleModel) -> some View {
         let labels: [(hz: Double, label: String)] = [
             (50,"50"),(100,"100"),(200,"200"),(500,"500"),
             (1000,"1k"),(2000,"2k"),(5000,"5k"),(10000,"10k")
-        ]
-        let fMin = 20.0, fMax = 22050.0
+        ].filter { axisFraction(forHz: $0.0, model: model) != nil }
         return ZStack {
             ForEach(labels, id: \.hz) { entry in
-                let xFrac: Double = model.frequencyScale == .logarithmic
-                    ? log10(entry.hz / fMin) / log10(fMax / fMin)
-                    : (entry.hz - fMin) / (fMax - fMin)
+                let xFrac = axisFraction(forHz: entry.hz, model: model) ?? 0
                 Text(entry.label)
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.6))

@@ -33,9 +33,9 @@ actor AudioAnalysisEngine {
         let (subID, stream) = proc.addSPLSubscriber()
         splCounts[inputID, default: 0] += 1
         splSubToInput[subID] = inputID
-        if splCounts[inputID] == 1 && fftCounts[inputID, default: 0] == 0 {
-            proc.start()
-        }
+        // start() is idempotent and keeps retrying a device that can't be opened yet, so
+        // call it on every subscribe rather than only the first.
+        proc.start()
         return (subID, stream)
     }
 
@@ -54,9 +54,7 @@ actor AudioAnalysisEngine {
         let (subID, stream) = proc.addFFTSubscriber(resolution: resolution)
         fftCounts[inputID, default: 0] += 1
         fftSubToInput[subID] = inputID
-        if fftCounts[inputID] == 1 && splCounts[inputID, default: 0] == 0 {
-            proc.start()
-        }
+        proc.start()
         return (subID, stream)
     }
 

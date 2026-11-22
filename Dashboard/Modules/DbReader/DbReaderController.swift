@@ -59,6 +59,17 @@ final class DbReaderControllerStore {
         controllers[moduleId] = created
         return created
     }
+
+    /// Stops and forgets the controllers for modules that left a document. A meter keeps
+    /// running while its tile is merely off-screen in Live Mode (it feeds automation and
+    /// shared values), so deletion is the only thing that should shut it down. If the
+    /// deletion is undone, the tile's view simply creates a fresh controller.
+    func evict(moduleIds: Set<UUID>) {
+        for id in moduleIds {
+            guard let controller = controllers.removeValue(forKey: id) else { continue }
+            controller.shutdown()
+        }
+    }
 }
 
 // MARK: - Controller
@@ -103,7 +114,7 @@ final class DbReaderController: ObservableObject {
     private var isPreviewActive: Bool = false
 
     var lastPublishTime: TimeInterval = 0
-    private var peakHold: Double = 0
+    private var peakHold: Double = -Double.greatestFiniteMagnitude  // "—" until the first reading; 0 hid negative (uncalibrated) levels
     var aSlowMaxHold: Double = 0
     private var rawPeakDbfsMaxHold: Double = -Double.greatestFiniteMagnitude
     var lastSampleRate: Double = 0
@@ -120,16 +131,25 @@ final class DbReaderController: ObservableObject {
     private var splTask: Task<Void, Never>?
     private var currentInputID: UUID?
 
-    // LAeq energy accumulators — accumulate linear power (not dB) for correct averaging.
-    // For C-A mode leqPowerAccumulator holds C power and leqCaAuxAccumulator holds A power;
-    // displaySpl = 10·log10(avgC) - 10·log10(avgA) so the differential is preserved.
-    private var leqPowerAccumulator: Double = 0
-    private var leqCaAuxAccumulator: Double = 0   // A power, only used when weighting == .ca
-    private var leqSampleCount: Int = 0
-    // Wall-clock start of the current LAeq window, used to drive averagingProgress
-    // and the window reset — sample-tick counts don't reliably track real elapsed
-    // time because the publish rate can fall short of publishHz.
-    private var leqWindowStartTime: Date?
+    /// Start of the current Leq window: the processor's running energy totals at that
+    /// moment. Leq over the window is (total now − total at start) / (samples now −
+    /// samples at start), which covers every audio sample — not just the ones that happen
+    /// to land on a display tick — and survives payloads dropped by the stream.
+    /// Totals are kept for every weighting so switching weighting mid-window stays exact.
+    fileprivate struct LeqWindow {
+        var aPower: Double
+        var cPower: Double
+        var zPower: Double
+        var sampleCount: Double
+        /// Wall-clock start, used for averagingProgress and the window reset.
+        var startTime: Date
+    }
+    private var leqWindow: LeqWindow?
+    /// Set once the module is deleted. Its view can still call setLiveMode/setTileActive
+    /// for a frame while it is torn down; those calls must not restart the microphone.
+    private var isShutDown = false
+    /// True while the input has stopped delivering audio.
+    private(set) var isSignalStale: Bool = false
 
     init(moduleId: UUID, tileId: UUID, settings: DbReaderModuleModel) {
         self.moduleId = moduleId
@@ -170,10 +190,7 @@ final class DbReaderController: ObservableObject {
 
         if averagingChanged {
             recentDisplaySamples.removeAll()
-            leqPowerAccumulator = 0
-            leqCaAuxAccumulator = 0
-            leqSampleCount = 0
-            leqWindowStartTime = nil
+            leqWindow = nil
             displaySpl = 0
             averagingProgress = 0
         }
@@ -182,7 +199,7 @@ final class DbReaderController: ObservableObject {
             // The "Max" readout tracks the peak of displaySpl, which depends on
             // weighting/time-weighting/averaging — restart it so it doesn't mix
             // peaks captured under different meter settings.
-            peakHold = 0
+            peakHold = -Double.greatestFiniteMagnitude
         }
 
         if inputChanged, wasRunning {
@@ -196,10 +213,7 @@ final class DbReaderController: ObservableObject {
         isLiveMode = isLive
         if isLive && !wasLive {
             recentDisplaySamples.removeAll()
-            leqPowerAccumulator = 0
-            leqCaAuxAccumulator = 0
-            leqSampleCount = 0
-            leqWindowStartTime = nil
+            leqWindow = nil
             averagingProgress = 0
             aSlowMaxHold = 0
             rawPeakDbfsMaxHold = -Double.greatestFiniteMagnitude
@@ -220,6 +234,15 @@ final class DbReaderController: ObservableObject {
     func setPreviewActive(_ isActive: Bool) {
         isPreviewActive = isActive
         updateRunState()
+    }
+
+    /// Permanently stops metering (the module was deleted).
+    func shutdown() {
+        isShutDown = true
+        isTileActive = false
+        isPreviewActive = false
+        isLiveMode = false
+        stopSubscription()
     }
 
     func reset() {
@@ -243,13 +266,10 @@ final class DbReaderController: ObservableObject {
         clippingWarning = false
         headroomDb = 0
         noiseFloorDbFS = 0
-        peakHold = 0
+        peakHold = -Double.greatestFiniteMagnitude
         aSlowMaxHold = 0
         rawPeakDbfsMaxHold = -Double.greatestFiniteMagnitude
-        leqPowerAccumulator = 0
-        leqCaAuxAccumulator = 0
-        leqSampleCount = 0
-        leqWindowStartTime = nil
+        leqWindow = nil
         lastPublishTime = 0
         recentNoiseFloor.removeAll()
         recentDisplaySamples.removeAll()
@@ -292,6 +312,7 @@ final class DbReaderController: ObservableObject {
     }
 
     private func updateRunState() {
+        guard !isShutDown else { stopSubscription(); return }
         let shouldRun = (settings.isEnabled && settings.isArmedByUser && isLiveMode && isTileActive)
             || (isPreviewActive && settings.isEnabled)
         if shouldRun {
@@ -330,12 +351,20 @@ final class DbReaderController: ObservableObject {
         isRunning = true
         statusText = ""
         lastPublishTime = 0
+        // Hold `self` only per payload, never for the stream's lifetime.
         splTask = Task { [weak self] in
             let (subID, stream) = await AudioAnalysisEngine.shared.subscribeSPL(to: inputID, config: config)
-            await MainActor.run { self?.splSubscriptionID = subID }
+            // stopSubscription() may have run while subscribeSPL was in flight. It found no
+            // subscription ID to cancel, so this task must release the subscription itself —
+            // otherwise the mic keeps running with nobody listening.
+            guard !Task.isCancelled, let owner = self else {
+                await AudioAnalysisEngine.shared.unsubscribeSPL(id: subID)
+                return
+            }
+            owner.splSubscriptionID = subID
             for await payload in stream {
-                guard let self else { break }
-                await MainActor.run { self.handleSPLPayload(payload) }
+                guard !Task.isCancelled, let owner = self else { break }
+                owner.handleSPLPayload(payload)
             }
         }
     }
@@ -349,13 +378,24 @@ final class DbReaderController: ObservableObject {
         }
         currentInputID = nil
         isRunning = false
+        if isSignalStale {
+            isSignalStale = false
+            statusText = ""
+        }
         if isTileActive && isLiveMode {
             DbReaderOutputStore.shared.clear(moduleId: moduleId, tileId: tileId)
         }
     }
 
     func handleSPLPayload(_ payload: SPLPayload) {
-        guard !payload.isStale else { return }
+        if payload.isStale {
+            handleSignalLost()
+            return
+        }
+        if isSignalStale {
+            isSignalStale = false
+            statusText = ""
+        }
 
         lastSampleRate = payload.sampleRate
 
@@ -370,14 +410,9 @@ final class DbReaderController: ObservableObject {
         rawAcDbFS = payload.cFast
         rawDcDbFS = Double.nan
 
-        // Noise floor tracking
+        // Noise-floor and calibration-window tracking happen in publish(), at the
+        // throttled publish rate, rather than here on every audio buffer.
         let timestamp = payload.timestamp
-        recentNoiseFloor.append((timestamp: timestamp, value: payload.rawDbFS))
-        let noiseFloorCutoff = timestamp.addingTimeInterval(-5)
-        recentNoiseFloor.removeAll { $0.timestamp < noiseFloorCutoff }
-        if let minValue = recentNoiseFloor.map(\.value).min() {
-            noiseFloorDbFS = minValue
-        }
 
         // Build weights snapshot
         let weights = DbWeightingSnapshot(
@@ -411,10 +446,6 @@ final class DbReaderController: ObservableObject {
         currentSplSlow = payload.caSlow
         currentZSlow = payload.zSlow
 
-        recentZSlowSamples.append((timestamp: timestamp, value: currentZSlow))
-        let zSlowCutoff = timestamp.addingTimeInterval(-5)
-        recentZSlowSamples.removeAll { $0.timestamp < zSlowCutoff }
-
         aSlowMaxHold = max(aSlowMaxHold, payload.aSlow)
         rawPeakDbfsMaxHold = max(rawPeakDbfsMaxHold, payload.rawPeakDbFS)
 
@@ -423,73 +454,53 @@ final class DbReaderController: ObservableObject {
         // always tracks what the meter is currently displaying.
         currentPeak = max(payload.rawPeakDbFS, peakHold, calibrated)
 
+        // Open the Leq window on the first payload after averaging starts (every payload,
+        // not just publish ticks, so no audio before the first tick is missed).
+        let averaging = settings.averagingEnabled && isLiveMode
+        if averaging, leqWindow == nil {
+            leqWindow = LeqWindow(payload: payload)
+        } else if !averaging {
+            leqWindow = nil
+        }
+
         // Throttle publish to publishHz
         let now = Date().timeIntervalSince1970
         let publishInterval = 1.0 / max(1.0, settings.publishHz)
         guard (now - lastPublishTime) >= publishInterval else { return }
         lastPublishTime = now
 
-        // LAeq energy averaging.
-        // Instant powers are already scaled by linCal in AudioInputProcessor, so
-        // 10·log10(avgPower) already includes the acoustic calibration offset.
+        // Leq energy averaging from the processor's running energy totals (see LeqWindow).
+        // Powers already include the calibration offset.
         //
-        // C-A special case: accumulate C and A power separately so the averaged
-        // display is LAeqC − LAeqA, preserving the C-A differential.
+        // C-A special case: Leq(C) − Leq(A), preserving the C-A differential.
         // Using only A power (as a plain LAeqA) would match a dBA tile exactly,
         // which defeats the purpose of the C-A weighting.
-        let instantPower: Double
-        let instantCaAux: Double?   // non-nil only for C-A mode
-        switch settings.weighting {
-        case .a:
-            instantPower = payload.aInstantPower
-            instantCaAux = nil
-        case .ca:
-            instantPower = payload.cInstantPower   // C power → main accumulator
-            instantCaAux = payload.aInstantPower   // A power → aux accumulator
-        case .c:
-            instantPower = payload.cInstantPower
-            instantCaAux = nil
-        case .z:
-            instantPower = payload.zInstantPower
-            instantCaAux = nil
-        }
-
-        if settings.averagingEnabled && isLiveMode {
-            if leqWindowStartTime == nil { leqWindowStartTime = timestamp }
-
-            leqPowerAccumulator += instantPower
-            if let aux = instantCaAux { leqCaAuxAccumulator += aux }
-            leqSampleCount += 1
-            let avgPower = leqPowerAccumulator / Double(leqSampleCount)
-
-            if settings.weighting == .ca {
-                // Averaged C-A = LAeqC − LAeqA
-                let avgAux = leqCaAuxAccumulator / Double(leqSampleCount)
-                let leqC = avgPower > 1e-12 ? 10 * log10(avgPower) : -120
-                let leqA = avgAux  > 1e-12 ? 10 * log10(avgAux)   : -120
-                displaySpl = leqC - leqA
-            } else {
-                displaySpl = avgPower > 1e-12 ? 10 * log10(avgPower) : -120
+        if averaging, let window = leqWindow {
+            func leqDb(_ powerSum: Double, _ samples: Double, fallback: Double) -> Double {
+                let mean = samples > 0 ? powerSum / samples : fallback
+                return mean > 1e-12 ? 10 * log10(mean) : -120
+            }
+            let samples = payload.cumulativeSampleCount - window.sampleCount
+            let aDb = leqDb(payload.cumulativeAPower - window.aPower, samples, fallback: payload.aInstantPower)
+            let cDb = leqDb(payload.cumulativeCPower - window.cPower, samples, fallback: payload.cInstantPower)
+            let zDb = leqDb(payload.cumulativeZPower - window.zPower, samples, fallback: payload.zInstantPower)
+            switch settings.weighting {
+            case .a: displaySpl = aDb
+            case .c: displaySpl = cDb
+            case .z: displaySpl = zDb
+            case .ca: displaySpl = cDb - aDb
             }
 
-            // Drive progress off real elapsed time, not sample-tick counts —
-            // the publish rate can fall short of publishHz, which previously
-            // made the window take longer than averagingWindowSeconds to complete.
-            let elapsed = timestamp.timeIntervalSince(leqWindowStartTime ?? timestamp)
+            let elapsed = timestamp.timeIntervalSince(window.startTime)
             averagingProgress = min(1.0, elapsed / settings.averagingWindowSeconds)
             if elapsed >= settings.averagingWindowSeconds {
-                leqPowerAccumulator = 0
-                leqCaAuxAccumulator = 0
-                leqSampleCount = 0
-                leqWindowStartTime = nil
+                // The next window starts exactly where this one ended, so no audio falls
+                // between windows.
+                leqWindow = LeqWindow(payload: payload)
             }
         } else {
             displaySpl = calibrated
             averagingProgress = 0
-            leqPowerAccumulator = 0
-            leqCaAuxAccumulator = 0
-            leqSampleCount = 0
-            leqWindowStartTime = nil
         }
 
         let caSlow = settings.weighting == .ca ? payload.caSlow : nil as Double?
@@ -509,6 +520,21 @@ final class DbReaderController: ObservableObject {
             weights: weights,
             zSlowDb: payload.zSlow
         )
+    }
+
+    /// The input stopped delivering audio: show that instead of freezing on the last level,
+    /// and tell downstream consumers the value is stale.
+    private func handleSignalLost() {
+        guard !isSignalStale else { return }
+        isSignalStale = true
+        statusText = "No signal from input"
+        leqWindow = nil
+        averagingProgress = 0
+        lastPublishTime = 0
+        if isTileActive && isLiveMode {
+            DbReaderOutputStore.shared.clear(moduleId: moduleId, tileId: tileId)
+        }
+        publishDisplaySnapshot()
     }
 
     func publish(
@@ -630,22 +656,32 @@ final class DbReaderController: ObservableObject {
         )
     }
 
+    /// First index in `historyAll` whose timestamp is >= `date`. History is appended in
+    /// time order, so a binary search replaces the linear scans that ran every publish.
+    private func historyIndex(atOrAfter date: Date) -> Int {
+        var low = 0, high = historyAll.count
+        while low < high {
+            let mid = (low + high) / 2
+            if historyAll[mid].timestamp < date { low = mid + 1 } else { high = mid }
+        }
+        return low
+    }
+
     private func trimHistory(now: Date) {
         let maxAge = settings.historyMaxSeconds
-        while let first = historyAll.first,
-              now.timeIntervalSince(first.timestamp) > maxAge {
-            historyAll.removeFirst()
-        }
+        // Drop everything older than maxAge in one pass instead of repeated removeFirst().
+        let expired = historyIndex(atOrAfter: now.addingTimeInterval(-maxAge))
+        if expired > 0 { historyAll.removeFirst(expired) }
         let windowAge = settings.historyWindowSeconds
         let windowStart = now.addingTimeInterval(-windowAge)
-        let visibleStartIndex = historyAll.firstIndex { $0.timestamp >= windowStart } ?? historyAll.endIndex
+        let visibleStartIndex = historyIndex(atOrAfter: windowStart)
         historyWindowed = visibleStartIndex < historyAll.endIndex
             ? Array(historyAll[visibleStartIndex...])
             : []
 
         let averageLookback = settings.graphLineMode == .averageSpl ? settings.averagingWindowSeconds : 0
         let graphStart = windowStart.addingTimeInterval(-max(0, averageLookback))
-        let firstNeededIndex = historyAll.firstIndex { $0.timestamp >= graphStart } ?? historyAll.endIndex
+        let firstNeededIndex = historyIndex(atOrAfter: graphStart)
         if firstNeededIndex < historyAll.endIndex {
             let startIndex = firstNeededIndex > historyAll.startIndex
                 ? historyAll.index(before: firstNeededIndex)
@@ -749,3 +785,13 @@ final class DbReaderFileExporter: NSObject, UIDocumentPickerDelegate {
     }
 }
 #endif
+
+fileprivate extension DbReaderController.LeqWindow {
+    init(payload: SPLPayload) {
+        self.init(aPower: payload.cumulativeAPower,
+                  cPower: payload.cumulativeCPower,
+                  zPower: payload.cumulativeZPower,
+                  sampleCount: payload.cumulativeSampleCount,
+                  startTime: payload.timestamp)
+    }
+}

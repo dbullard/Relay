@@ -6,7 +6,7 @@ typealias FFTStream = AsyncStream<FFTFrame>
 
 // MARK: - SPL
 
-struct SPLPayload: Sendable, Equatable {
+nonisolated struct SPLPayload: Sendable, Equatable {
     var aFast: Double
     var aSlow: Double
     var cFast: Double
@@ -28,7 +28,19 @@ struct SPLPayload: Sendable, Equatable {
     var noiseFloorDbFS: Double
     var sampleRate: Double
     var timestamp: Date
+    /// True when the input has stopped delivering audio (device unplugged, capture failed
+    /// to start, audio session interrupted). Level fields are meaningless when set.
     var isStale: Bool
+    // Running totals of calibrated squared-sample power since the processor was created,
+    // per weighting, plus the matching sample count. They only ever grow, so a subscriber
+    // can compute an exact Leq over any window from two payloads' differences — even when
+    // the payloads in between were dropped by the stream's buffering policy.
+    var cumulativeAPower: Double = 0
+    var cumulativeCPower: Double = 0
+    var cumulativeZPower: Double = 0
+    var cumulativeSampleCount: Double = 0
+    /// Calibration offset (dB) applied to this payload's levels.
+    var calibrationOffsetDb: Double = 0
 
     static let empty = SPLPayload(
         aFast: .nan, aSlow: .nan, cFast: .nan, cSlow: .nan,
@@ -43,16 +55,23 @@ struct SPLPayload: Sendable, Equatable {
 
 // MARK: - FFT
 
-struct FFTFrame: Sendable, Equatable {
+nonisolated struct FFTFrame: Sendable, Equatable {
     var magnitudes: [Float]
     var sampleRate: Double
     var timestamp: TimeInterval
     var isRepeated: Bool
+
+    /// Sent once when the input stops delivering audio. Carries no magnitudes.
+    var isStale: Bool { magnitudes.isEmpty }
+
+    static func stale(timestamp: TimeInterval) -> FFTFrame {
+        FFTFrame(magnitudes: [], sampleRate: 0, timestamp: timestamp, isRepeated: true)
+    }
 }
 
 // MARK: - RTA
 
-struct RTABand: Sendable, Identifiable, Equatable {
+nonisolated struct RTABand: Sendable, Identifiable, Equatable {
     var id: Int
     var centerHz: Double
     var lowerHz: Double

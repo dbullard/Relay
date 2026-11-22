@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 // MARK: - Weighting Filter Implementation
 
@@ -34,43 +35,41 @@ nonisolated struct IIRCoefficients {
 }
 
 nonisolated struct IIRFilter {
-    private var xHist: [Double]
-    private var yHist: [Double]
+    // Transposed direct form II: one state value per order instead of separate x/y
+    // histories, and no per-sample history shifting. Coefficients are padded to the same
+    // length; a[0] is assumed to be 1 (as the designs in WeightingCoefficients produce).
+    private var state: [Double]
     private let b: [Double]
     private let a: [Double]
 
     init(coeffs: IIRCoefficients) {
-        self.b = coeffs.b
-        self.a = coeffs.a
-        let order = max(b.count, a.count) - 1
-        self.xHist = Array(repeating: 0, count: max(0, order))
-        self.yHist = Array(repeating: 0, count: max(0, order))
+        let length = max(coeffs.b.count, coeffs.a.count, 1)
+        self.b = coeffs.b + Array(repeating: 0, count: length - coeffs.b.count)
+        self.a = coeffs.a + Array(repeating: 0, count: length - coeffs.a.count)
+        self.state = Array(repeating: 0, count: length - 1)
     }
 
     mutating func process(_ x: Double) -> Double {
-        var y = b.isEmpty ? x : (b[0] * x)
-        if !xHist.isEmpty {
-            for i in 1...xHist.count {
-                if i < b.count {
-                    y += b[i] * xHist[i - 1]
-                }
-                if i < a.count {
-                    y -= a[i] * yHist[i - 1]
+        let order = state.count
+        if order == 0 { return b[0] * x }
+        return b.withUnsafeBufferPointer { b in
+            a.withUnsafeBufferPointer { a in
+                state.withUnsafeMutableBufferPointer { z in
+                    let y = b[0] * x + z[0]
+                    var i = 0
+                    while i < order - 1 {
+                        z[i] = b[i + 1] * x - a[i + 1] * y + z[i + 1]
+                        i += 1
+                    }
+                    z[order - 1] = b[order] * x - a[order] * y
+                    return y
                 }
             }
-            for i in stride(from: xHist.count - 1, through: 1, by: -1) {
-                xHist[i] = xHist[i - 1]
-                yHist[i] = yHist[i - 1]
-            }
-            xHist[0] = x
-            yHist[0] = y
         }
-        return y
     }
 
     mutating func reset() {
-        for i in xHist.indices { xHist[i] = 0 }
-        for i in yHist.indices { yHist[i] = 0 }
+        for i in state.indices { state[i] = 0 }
     }
 }
 
@@ -79,7 +78,8 @@ nonisolated struct WeightingFilter {
     let sampleRate: Double
     var stages: [Biquad]
     private var iir: IIRFilter?
-    private static var didLogKeys: Set<String> = []
+    // Processors for different inputs build filters on their own queues at the same time.
+    private static let didLogKeys = Mutex<Set<String>>([])
 
     init?(weighting: DbWeighting, sampleRate: Double) {
         self.weighting = weighting
@@ -113,15 +113,13 @@ nonisolated struct WeightingFilter {
             }
         }
 
+        #if DEBUG
         let key = "\(weighting.rawValue)-\(String(format: "%.0f", sampleRate))"
-        if !Self.didLogKeys.contains(key) {
-            Self.didLogKeys.insert(key)
-            if let summary = WeightingCoefficients.debugResponseSummary(weighting: weighting, sampleRate: sampleRate) {
-                #if DEBUG
-                print("[Audio Weighting] Weighting response: \(summary)")
-                #endif
-            }
+        if Self.didLogKeys.withLock({ $0.insert(key).inserted }),
+           let summary = WeightingCoefficients.debugResponseSummary(weighting: weighting, sampleRate: sampleRate) {
+            print("[Audio Weighting] Weighting response: \(summary)")
         }
+        #endif
     }
 
     mutating func processSample(_ x: Double) -> Double {
@@ -271,8 +269,12 @@ nonisolated enum WeightingCoefficients {
     // IEC 61672-style A/C weighting via bilinear transform of analog poles/zeros.
     // Normalized to 0 dB at 1 kHz. Returns nil for unsupported sample rates.
     private static func design(weighting: DbWeighting, sampleRate: Double) -> [BiquadCoefficients]? {
-        let supported = abs(sampleRate - 48000) < 1 || abs(sampleRate - 44100) < 1
-        guard supported else { return nil }
+        // The tabulated IIR designs (aIIR/cIIR) cover 44.1/48 kHz; this pole-matched
+        // bilinear design covers everything else the hardware may run at (88.2/96/192 kHz,
+        // 32 kHz…). Previously it was limited to 44.1/48 kHz too, so at any other rate the
+        // A and C meters silently fell back to unweighted (Z) levels. The highest A/C pole
+        // (12.2 kHz) must sit below Nyquist.
+        guard sampleRate >= 32_000 else { return nil }
 
         let polesHz: [Double]
         let zerosHz: [Double]
