@@ -47,7 +47,6 @@ final class SPLInputLoggerTests: XCTestCase {
             zFast: -17, zSlow: -18, caFast: -20, caSlow: -21,
             rawDbFS: -22, rawPeakDbFS: -20,
             aInstantPower: 0, cInstantPower: 0, zInstantPower: 0,
-            estimatedFrequencyHz: 440,
             clippingWarning: false, headroomDb: 2, noiseFloorDbFS: -60,
             sampleRate: 48000, timestamp: Date(), isStale: false
         )

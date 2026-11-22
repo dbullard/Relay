@@ -943,7 +943,7 @@ struct AudioInputCalibrationSheet: View {
             await MainActor.run { splSubID = subID }
             for await payload in stream {
                 guard !Task.isCancelled else { break }
-                await MainActor.run { liveRawDbFS = payload.rawDbFS - input.calibrationOffsetDb }
+                await MainActor.run { liveRawDbFS = payload.rawDbFS }
             }
         }
     }

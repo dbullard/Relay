@@ -83,10 +83,10 @@ nonisolated final class SPLInputLogger: @unchecked Sendable {
                 "# Channel Index: \(input.channelIndex)",
                 "# Calibration Offset dB: \(String(format: "%.2f", input.calibrationOffsetDb))",
                 "# One row per second. spl = Z slow at the row time; peak = highest Z fast in the second;",
-                "# leq_* = equivalent continuous level over the second.",
+                "# leq_* = equivalent continuous level over the second. raw_* columns are uncalibrated dBFS.",
                 "timestamp_iso,spl,peak,raw_dbfs,raw_peak_dbfs,raw_peak_dbfs_max_hold," +
                 "raw_ac_dbfs,raw_dc_dbfs," +
-                "estimated_freq_hz,calibration_offset_db,sample_rate_hz," +
+                "calibration_offset_db,sample_rate_hz," +
                 "weighting,time_weighting," +
                 "a_fast,a_slow,a_slow_max,c_fast,c_slow,z_fast,z_slow,ca_fast,ca_slow," +
                 "leq_a,leq_c,leq_z"
@@ -116,7 +116,7 @@ nonisolated final class SPLInputLogger: @unchecked Sendable {
                 "\(fmt(payload.rawDbFS)),\(fmt(payload.rawPeakDbFS)),\(fmt(rawPeakDbfsMax))," +
                 "\(fmt(payload.cFast))," +   // raw_ac_dbfs
                 "," +                         // raw_dc_dbfs (always empty)
-                "\(fmt(payload.estimatedFrequencyHz)),\(fmt(calibrationOffsetDb))," +
+                "\(fmt(calibrationOffsetDb))," +
                 "\(fmt(payload.sampleRate)),z,slow," +
                 "\(fmt(payload.aFast)),\(fmt(payload.aSlow)),\(fmt(aSlowMax))," +
                 "\(fmt(payload.cFast)),\(fmt(payload.cSlow))," +

@@ -15,6 +15,7 @@ nonisolated struct SPLPayload: Sendable, Equatable {
     var zSlow: Double
     var caFast: Double
     var caSlow: Double
+    /// Uncalibrated digital levels (dBFS): Z-weighted fast RMS and buffer peak.
     var rawDbFS: Double
     var rawPeakDbFS: Double
     // Instantaneous squared-amplitude power per weighting BEFORE IEC time-weighting.
@@ -22,7 +23,6 @@ nonisolated struct SPLPayload: Sendable, Equatable {
     var aInstantPower: Double
     var cInstantPower: Double
     var zInstantPower: Double
-    var estimatedFrequencyHz: Double  // .nan if unavailable
     var clippingWarning: Bool
     var headroomDb: Double
     var noiseFloorDbFS: Double
@@ -47,7 +47,6 @@ nonisolated struct SPLPayload: Sendable, Equatable {
         zFast: .nan, zSlow: .nan, caFast: .nan, caSlow: .nan,
         rawDbFS: .nan, rawPeakDbFS: .nan,
         aInstantPower: 0, cInstantPower: 0, zInstantPower: 0,
-        estimatedFrequencyHz: .nan,
         clippingWarning: false, headroomDb: 0, noiseFloorDbFS: 0,
         sampleRate: 44100, timestamp: Date(timeIntervalSince1970: 0), isStale: true
     )

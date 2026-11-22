@@ -1130,8 +1130,8 @@ extension DashboardTileEditView {
                 liveSplProvider: { dbReaderController.currentZSlow },
                 liveRawDbFSProvider: { dbReaderController.rawDbFS },
                 onApply: { targetDb, capturedSpl, capturedRawDbFS in
-                    // rawFS/spl already include inputCal (baked in by AudioInputProcessor).
-                    // newCal = targetDb - trueRaw = targetDb - (measuredVal - inputCal)
+                    // measuredVal is uncalibrated dBFS, so the offset is simply target − raw.
+                    // The SPL fallback does include the current offset, so it is added back.
                     let measuredVal = capturedRawDbFS ?? resolvedDbReaderRawDbFS(for: moduleID, model: currentModel)
                     let measuredSpl = capturedSpl ?? resolvedDbReaderZSlow(for: moduleID, model: currentModel)
                     let currentCal = currentModel.inputID.flatMap {
@@ -1139,7 +1139,7 @@ extension DashboardTileEditView {
                     } ?? 0
                     let newCal: Double
                     if measuredVal.isFinite && measuredVal != 0 {
-                        newCal = targetDb - measuredVal + currentCal
+                        newCal = targetDb - measuredVal
                     } else {
                         newCal = targetDb - measuredSpl + currentCal
                     }
