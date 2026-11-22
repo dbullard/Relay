@@ -11,18 +11,18 @@ struct SPLLoggingSettings: Codable, Equatable {
 
     static let userDefaultsKey = "relay_spl_logging_settings_v1"
 
-    static func load() -> SPLLoggingSettings {
-        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+    static func load(from defaults: UserDefaults = .standard) -> SPLLoggingSettings {
+        guard let data = defaults.data(forKey: userDefaultsKey),
               let decoded = try? JSONDecoder().decode(SPLLoggingSettings.self, from: data)
         else { return SPLLoggingSettings() }
         return decoded
     }
 
-    func save() {
+    func save(to defaults: UserDefaults = .standard) {
         guard let data = try? JSONEncoder().encode(self) else {
             assertionFailure("SPLLoggingSettings: encoding failed")
             return
         }
-        UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
+        defaults.set(data, forKey: Self.userDefaultsKey)
     }
 }

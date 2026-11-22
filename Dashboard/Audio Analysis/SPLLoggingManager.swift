@@ -11,11 +11,29 @@ import Observation
 final class SPLLoggingManager {
     static let shared = SPLLoggingManager()
 
-    var settings: SPLLoggingSettings = SPLLoggingSettings.load()
+    var settings: SPLLoggingSettings
+
+    /// Where settings persist. Tests pass a throwaway suite: unit tests run inside a copy
+    /// of Relay that shares the real app's `UserDefaults`, so the default store would
+    /// overwrite the user's logging folder and on/off state.
+    @ObservationIgnored private let defaults: UserDefaults
+    /// The inputs to log. Tests pass a fixed list so no real audio device is opened.
+    @ObservationIgnored private let inputsProvider: () -> [AudioInputConfig]
+
+    /// Where logs go when no folder is chosen, or the chosen one can't be used:
+    /// `~/Documents/Relay/SPL Logs` in the app. Tests pass a temporary folder.
+    @ObservationIgnored let defaultFolderURL: URL
 
     /// Non-nil when the last `startLogging()` call failed to open any log files.
     /// Cleared when logging stops or a new successful session starts.
     var folderAccessError: String? = nil
+
+    /// Set when logging is running in the default folder because the chosen folder
+    /// couldn't be written (e.g. an unmounted drive). Cleared on the next start or stop.
+    var folderFallbackNotice: String? = nil
+
+    /// The folder the current logging session writes to; nil when not logging.
+    private(set) var activeFolderURL: URL? = nil
 
     // Runtime state — not persisted
     private var activeSessions: [UUID: SPLInputLogger] = [:]
@@ -25,7 +43,21 @@ final class SPLLoggingManager {
     /// second at 512 frames / 48 kHz); logging each one produced ~60 MB per input per hour.
     nonisolated static let logIntervalSeconds: TimeInterval = 1.0
 
-    init() {
+    init(defaults: UserDefaults = .standard,
+         defaultFolderURL: URL = SPLInputLogger.defaultFolderURL(),
+         inputsProvider: @escaping () -> [AudioInputConfig] = { AudioInputsConfigStore.shared.inputs }) {
+        self.defaults = defaults
+        self.defaultFolderURL = defaultFolderURL
+        self.inputsProvider = inputsProvider
+        self.settings = SPLLoggingSettings.load(from: defaults)
+        // A folder inside the system's temporary directory is never a deliberate choice
+        // (it came from test runs sharing the app's settings) and macOS purges it, so logs
+        // written there would quietly disappear. Go back to the default folder.
+        if !settings.folderPath.isEmpty, Self.isTemporaryLocation(settings.folderPath) {
+            settings.folderPath = ""
+            settings.folderBookmarkData = nil
+            saveSettings()
+        }
         if settings.isLogging {
             Task {
                 await Task.yield()
@@ -38,16 +70,26 @@ final class SPLLoggingManager {
         // Idempotent: stop any existing session first
         await stopLogging()
 
-        let folderURL = resolvedFolderURL()
-        let bookmarkData = settings.folderBookmarkData
+        var folderURL = resolvedFolderURL()
+        var bookmarkData = settings.folderBookmarkData
         let sessionId = UUID()
         let sessionStart = Date()
-        let inputs = AudioInputsConfigStore.shared.inputs
+        let inputs = inputsProvider()
 
-        var startedCount = 0
-        for input in inputs {
-            if startSession(for: input, sessionId: sessionId, sessionStart: sessionStart, folderURL: folderURL, bookmarkData: bookmarkData) {
-                startedCount += 1
+        var startedCount = startSessions(inputs, sessionId: sessionId, sessionStart: sessionStart,
+                                         folderURL: folderURL, bookmarkData: bookmarkData)
+
+        // The chosen folder couldn't be written (unmounted drive, revoked access): keep the
+        // choice for next time, but log to the default folder now rather than not at all.
+        let usedChosenFolder = !settings.folderPath.isEmpty
+        if !inputs.isEmpty, startedCount == 0, usedChosenFolder {
+            let chosenPath = settings.folderPath
+            folderURL = defaultFolderURL
+            bookmarkData = nil
+            startedCount = startSessions(inputs, sessionId: sessionId, sessionStart: sessionStart,
+                                         folderURL: folderURL, bookmarkData: nil)
+            if startedCount > 0 {
+                folderFallbackNotice = "Couldn't write to \"\(chosenPath)\". Logging to \"\(folderURL.path)\" instead."
             }
         }
 
@@ -56,16 +98,14 @@ final class SPLLoggingManager {
         if inputs.isEmpty || startedCount > 0 {
             settings.isLogging = true
             folderAccessError = nil
+            activeFolderURL = folderURL
         } else {
-            // All sessions failed to open — likely a file-access/permissions problem with the
-            // selected folder (e.g. TCC denied Desktop/Documents/Downloads on this launch).
+            // All sessions failed to open, even in the default folder — likely a file-access
+            // problem (e.g. TCC denied Documents on this launch).
             settings.isLogging = false
-            let displayPath = settings.folderPath.isEmpty
-                ? resolvedFolderURL().path
-                : settings.folderPath
-            folderAccessError = "Can't write to \"\(displayPath)\". Choose a different folder or grant access in System Settings › Privacy & Security › Files and Folders."
+            folderAccessError = "Can't write to \"\(folderURL.path)\". Choose a different folder or grant access in System Settings › Privacy & Security › Files and Folders."
         }
-        settings.save()
+        saveSettings()
         if settings.isLogging {
             observeInputChanges(folderURL: folderURL, bookmarkData: bookmarkData, sessionId: sessionId, sessionStart: sessionStart)
         }
@@ -79,7 +119,47 @@ final class SPLLoggingManager {
 
         settings.isLogging = false
         folderAccessError = nil
-        settings.save()
+        folderFallbackNotice = nil
+        activeFolderURL = nil
+        saveSettings()
+    }
+
+    /// Clears the chosen folder so logs go to the default folder. Takes effect the next
+    /// time logging starts, like choosing a folder.
+    func useDefaultFolder() {
+        settings.folderPath = ""
+        settings.folderBookmarkData = nil
+        folderAccessError = nil
+        saveSettings()
+    }
+
+    private func startSessions(_ inputs: [AudioInputConfig], sessionId: UUID, sessionStart: Date,
+                               folderURL: URL, bookmarkData: Data?) -> Int {
+        var started = 0
+        for input in inputs where startSession(for: input, sessionId: sessionId, sessionStart: sessionStart,
+                                               folderURL: folderURL, bookmarkData: bookmarkData) {
+            started += 1
+        }
+        return started
+    }
+
+    /// True for paths inside the system temporary directories.
+    nonisolated static func isTemporaryLocation(_ path: String) -> Bool {
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        let tempRoots = [
+            FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path,
+            URL(fileURLWithPath: NSTemporaryDirectory()).resolvingSymlinksInPath().path,
+            "/private/var/folders", "/var/folders", "/private/tmp", "/tmp"
+        ]
+        return tempRoots.contains { root in
+            let r = root.hasSuffix("/") ? String(root.dropLast()) : root
+            return resolved == r || resolved.hasPrefix(r + "/")
+        }
+    }
+
+    /// Persists `settings` to this manager's store.
+    func saveSettings() {
+        settings.save(to: defaults)
     }
 
     func toggleLogging() async {
@@ -94,7 +174,7 @@ final class SPLLoggingManager {
 
     private func observeInputChanges(folderURL: URL, bookmarkData: Data?, sessionId: UUID, sessionStart: Date) {
         withObservationTracking {
-            _ = AudioInputsConfigStore.shared.inputs
+            _ = inputsProvider()
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.settings.isLogging else { return }
@@ -106,7 +186,7 @@ final class SPLLoggingManager {
     }
 
     private func reconcileInputs(folderURL: URL, bookmarkData: Data?, sessionId: UUID, sessionStart: Date) {
-        let currentInputs = AudioInputsConfigStore.shared.inputs
+        let currentInputs = inputsProvider()
         let currentIDs = Set(currentInputs.map(\.id))
         let activeIDs = Set(activeSessions.keys)
 
@@ -212,6 +292,6 @@ final class SPLLoggingManager {
         if !settings.folderPath.isEmpty {
             return URL(fileURLWithPath: settings.folderPath)
         }
-        return SPLInputLogger.defaultFolderURL()
+        return defaultFolderURL
     }
 }
