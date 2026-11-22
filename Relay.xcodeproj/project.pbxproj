@@ -181,6 +181,7 @@
 				Automation/UI/TriggerNodePreferencesAdapter.swift,
 				Automation/UI/VistaGraphNodeView.swift,
 				Automation/VistaIntegration.swift,
+				DashboardCanvasUndoBridge.swift,
 				DashboardCoreModels.swift,
 				DashboardRootView.swift,
 				"Helpers/Audio Helpers/AudioDeviceEnumerator.swift",

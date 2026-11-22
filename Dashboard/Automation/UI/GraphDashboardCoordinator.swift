@@ -64,10 +64,14 @@ final class GraphDashboardUndoProxy: NSObject, ObservableObject {
     func register(actionName: String, before: Data?, undoManager: UndoManager?) {
         guard let undoManager else { return }
 
-        undoManager.registerUndo(withTarget: self) { target in
-            let redoState = target.snapshot?()
-            target.register(actionName: actionName, before: redoState, undoManager: undoManager)
-            target.restore?(before)
+        // UndoManager does not retain its target, and this proxy is a @StateObject of a
+        // view that is rebuilt on every tab switch. Capturing `self` in the handler keeps
+        // the proxy alive for as long as an undo/redo step refers to it; otherwise
+        // Edit ▸ Undo after switching tabs calls into a freed object.
+        undoManager.registerUndo(withTarget: self) { [self] _ in
+            let redoState = snapshot?()
+            register(actionName: actionName, before: redoState, undoManager: undoManager)
+            restore?(before)
         }
         undoManager.setActionName(actionName)
     }

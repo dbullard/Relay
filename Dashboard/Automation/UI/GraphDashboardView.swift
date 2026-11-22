@@ -782,6 +782,24 @@ private func postGraphSelectionCount() {
         }
     }
 
+    /// Records adding a node from the Add Node popover as one undo step.
+    ///
+    /// Unlike `commitGraphEdit`, this never coalesces with a typing burst: the popover's
+    /// search field can still hold focus when a row is picked, and the add must stay its
+    /// own step. The graph is created first (if missing) so Undo restores an empty graph
+    /// rather than `nil`, which the shared-graph binding would ignore.
+    private func commitAddNode(_ mutation: () -> Void) {
+        finalizePendingGraphEditUndo()
+        if tab.graph == nil { tab.graph = DashboardGraph() }
+        let beforeGraph = tab.graph
+        mutation()
+        guard tab.graph != beforeGraph else { return }
+        registerGraphUndo(actionName: "Add Node", before: encodeGraphForUndo(beforeGraph))
+        Task { @MainActor in
+            automationRuntime.setActiveTabSnapshot(tab)
+        }
+    }
+
     private func performGraphEdit(actionName: String, mutation: @escaping () -> Void) {
         commitGraphEdit(actionName: actionName) {
             mutation()
@@ -2149,7 +2167,7 @@ private func handleDestinationSelection(groupKey: String, deviceId: UUID, canvas
             )
             return
         }
-        enableConsoleDestinationNode(device: device, canvasSize: canvasSize)
+        commitAddNode { enableConsoleDestinationNode(device: device, canvasSize: canvasSize) }
     } else if groupKey == "destination.vista" {
         guard let device = availableVistaDestinationDevices.first(where: { $0.id == deviceId }) else {
             addNodeHelpMessage = addNodeHelp(
@@ -2158,9 +2176,9 @@ private func handleDestinationSelection(groupKey: String, deviceId: UUID, canvas
             )
             return
         }
-        enableVistaDestinationNode(device: device, canvasSize: canvasSize)
+        commitAddNode { enableVistaDestinationNode(device: device, canvasSize: canvasSize) }
     } else if groupKey == "moduleGroup.shure" || groupKey == "moduleGroup.sennheiser" {
-        enableWirelessDestinationNode(groupKey: groupKey, deviceId: deviceId, canvasSize: canvasSize)
+        commitAddNode { enableWirelessDestinationNode(groupKey: groupKey, deviceId: deviceId, canvasSize: canvasSize) }
     }
 
     addNodeSearchText = ""
@@ -2219,7 +2237,7 @@ private func handleAddNodeSelection(_ group: AddableGroup, canvasSize: CGSize) {
     }
 
     addNodeHelpMessage = nil
-    enableModuleGroupNode(group.id, canvasSize: canvasSize)
+    commitAddNode { enableModuleGroupNode(group.id, canvasSize: canvasSize) }
     refreshGraphCaches()
     addNodeSearchText = ""
     showAddNodePopover = false
