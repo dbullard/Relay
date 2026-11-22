@@ -2410,30 +2410,22 @@ var body: some View {
                 // visually overlap the left overview sidebar.
                 .frame(width: canvasViewportSize.width, height: canvasViewportSize.height, alignment: .topLeading)
                 .clipped()
+                .onChange(of: canvasViewportSize, initial: false) { _, _ in
+                    refitCanvasForLiveModeIfNeeded()
+                }
+                .onChange(of: canvasSize, initial: false) { _, _ in
+                    refitCanvasForLiveModeIfNeeded()
+                }
                 .onChange(of: isLiveMode, initial: false) { _, newValue in
                     if newValue {
                         if liveModeCanvasBehavior == .fitToScreen {
                             // Entering Live Mode: remember current viewport, then fit the canvas to the viewport.
+                            // The window may still be growing (full screen, chrome hiding); the
+                            // canvasViewportSize onChange below re-fits once the final size lands.
                             canvasViewportZoomBeforeLive = canvasViewportZoom
                             canvasViewportPanBeforeLive = canvasViewportPan
-
-                            let viewportWidth = max(1.0, canvasViewportSize.width)
-                            let viewportHeight = max(1.0, canvasViewportSize.height)
-                            let canvasWidth = max(1.0, canvasSize.width)
-                            let canvasHeight = max(1.0, canvasSize.height)
-
-                            let zoomToFit = min(viewportWidth / canvasWidth, viewportHeight / canvasHeight)
-                            let fittedZoom = min(1.0, zoomToFit)
-                            let fittedWidth = canvasWidth * fittedZoom
-                            let fittedHeight = canvasHeight * fittedZoom
-                            let fittedPan = CGSize(
-                                width: (viewportWidth - fittedWidth) * 0.5,
-                                height: (viewportHeight - fittedHeight) * 0.5
-                            )
-
                             withAnimation(.easeInOut(duration: 0.25)) {
-                                canvasViewportZoom = fittedZoom
-                                canvasViewportPan = fittedPan
+                                fitCanvasToViewport()
                             }
                         }
 #if os(macOS)
@@ -2573,28 +2565,22 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
     /// what the "Fit to Window" toolbar button does. Used to avoid opening a
     /// freshly loaded (or newly created) dashboard at a 1:1 zoom that clips it.
     private func fitCanvasToViewport() {
-        let contentSize = canvasSize
-        let viewportSize = canvasViewportSize
-        guard contentSize.width > 0, contentSize.height > 0,
-              viewportSize.width > 0, viewportSize.height > 0
-        else { return }
+        guard let fit = ViewportZoomMath.fitToViewport(
+            contentSize: canvasSize,
+            viewportSize: canvasViewportSize,
+            range: 0.25...3.00
+        ) else { return }
 
-        let zoomRange: ClosedRange<CGFloat> = 0.25...3.00
-        let fittedZoom = min(
-            max(
-                min(viewportSize.width / contentSize.width, viewportSize.height / contentSize.height),
-                zoomRange.lowerBound
-            ),
-            zoomRange.upperBound
-        )
-        let targetWidth = contentSize.width * fittedZoom
-        let targetHeight = contentSize.height * fittedZoom
+        canvasViewportZoom = fit.zoom
+        canvasViewportPan = fit.pan
+    }
 
-        canvasViewportZoom = fittedZoom
-        canvasViewportPan = CGSize(
-            width: (viewportSize.width - targetWidth) * 0.5,
-            height: (viewportSize.height - targetHeight) * 0.5
-        )
+    /// Live Mode with "Fit to Screen" keeps the canvas fitted while the viewport changes
+    /// size: the full-screen transition and hidden chrome resize the window only after
+    /// `isLiveMode` flips, and a tab switch can change the canvas size.
+    private func refitCanvasForLiveModeIfNeeded() {
+        guard isLiveMode, liveModeCanvasBehavior == .fitToScreen else { return }
+        fitCanvasToViewport()
     }
 
     private var hiddenGraphNodeCountForAddMenu: Int {
