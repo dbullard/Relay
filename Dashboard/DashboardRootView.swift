@@ -1028,9 +1028,10 @@ var body: some View {
                 updateShureModulePresence()
                 refreshOSCListeningConfiguration()
             }
-            .onChange(of: tabs, initial: false) { _, _ in
+            .onChange(of: tabs, initial: false) { oldTabs, newTabs in
                 updateShureModulePresence()
                 refreshOSCListeningConfiguration()
+                evictRemovedDbReaderControllers(oldTabs: oldTabs, newTabs: newTabs)
             }
             .onReceive(NotificationCenter.default.publisher(for: ActionNodeNotifications.notify)) { note in
                 let ui = note.userInfo ?? [:]
@@ -5440,6 +5441,26 @@ private func recomputeLANMirrorScale() {
             }
         }
     }
+    /// SPL meter controllers outlive their views in Live Mode, so a tile deleted while live
+    /// would otherwise keep its microphone running. Only modules that were in *this*
+    /// document and are now gone are evicted, so other open documents are unaffected.
+    private func evictRemovedDbReaderControllers(oldTabs: [DashboardTab], newTabs: [DashboardTab]) {
+        func dbReaderModuleIDs(_ tabs: [DashboardTab]) -> Set<UUID> {
+            var ids = Set<UUID>()
+            for tab in tabs {
+                for tile in tab.tiles {
+                    for module in tile.modules ?? [] {
+                        if case .dbReader = module.kind { ids.insert(module.id) }
+                    }
+                }
+            }
+            return ids
+        }
+        let removed = dbReaderModuleIDs(oldTabs).subtracting(dbReaderModuleIDs(newTabs))
+        guard !removed.isEmpty else { return }
+        DbReaderControllerStore.shared.evict(moduleIds: removed)
+    }
+
     private func updateShureModulePresence() {
         let hasShureModule = tabs.contains { tab in
             tab.tiles.contains { tile in

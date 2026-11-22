@@ -11,10 +11,16 @@ import CoreAudio
 /// Manages one audio tap for a single named input.
 /// Runs the SPL pipeline (all weightings simultaneously) and an adaptive FFT pipeline.
 /// Multiple subscribers may attach; the tap starts on first subscriber and stops on last.
-nonisolated final class AudioInputProcessor {
+///
+/// Threading:
+/// - `controlQueue` owns capture start/stop and the signal watchdog. It may call into
+///   `processingQueue` (sync), never the other way round.
+/// - `processingQueue` owns the DSP state, the subscriber lists and `config`.
+nonisolated final class AudioInputProcessor: @unchecked Sendable {
     let inputID: UUID
     private var config: AudioInputConfig
     private let processingQueue = DispatchQueue(label: "Relay.AudioInputProcessor", qos: .userInitiated)
+    private let controlQueue = DispatchQueue(label: "Relay.AudioInputProcessor.Control", qos: .userInitiated)
 
     private var splContinuations: [UUID: AsyncStream<SPLPayload>.Continuation] = [:]
     private var fftContinuations: [UUID: FFTSubscription] = [:]
@@ -32,15 +38,30 @@ nonisolated final class AudioInputProcessor {
         var slow: Double = 0
     }
 
+    // MARK: Processing-queue state
+
     private var smoothA = SmoothPair()
     private var smoothC = SmoothPair()
     private var smoothZ = SmoothPair()
-    private var peakHoldRaw: Double = 0
     private var noiseFloor: Double = -120
     private var lastSampleRate: Double = 0
 
     private var filterA: WeightingFilter? = nil
     private var filterC: WeightingFilter? = nil
+
+    /// Reused per buffer so the processing path doesn't allocate.
+    private var sampleScratch: [Double] = []
+
+    // Running energy totals (see SPLPayload.cumulative*). Never reset.
+    private var cumulativeA: Double = 0
+    private var cumulativeC: Double = 0
+    private var cumulativeZ: Double = 0
+    private var cumulativeSamples: Double = 0
+
+    /// Uptime of the last buffer received; read by the watchdog.
+    private var lastBufferUptime: TimeInterval = 0
+    /// True after the watchdog has told subscribers the input went silent.
+    private var isSignalStale = false
 
     private var fftRingBuffer: [Float] = []
     private var fftWriteIndex: Int = 0    // monotonically increasing — never reset below its current value
@@ -56,9 +77,21 @@ nonisolated final class AudioInputProcessor {
     private var fftImagPart: [Float] = []
     private var fftMagnitudes: [Float] = []
 
+    // MARK: Control-queue state
+
+    /// True while at least one subscriber wants audio.
+    private var wantsRunning = false
+    private var isCaptureRunning = false
+    private var watchdog: DispatchSourceTimer?
+    private var lastRestartAttemptUptime: TimeInterval = 0
+
+    /// No buffer for this long while running ⇒ the input is treated as gone.
+    private static let staleAfterSeconds: TimeInterval = 1.5
+    /// Minimum spacing between capture restart attempts while the input is gone.
+    private static let restartIntervalSeconds: TimeInterval = 2.0
+
     #if os(macOS)
     private var captureHAL: DeviceInputCaptureHAL?
-    private let captureQueue = DispatchQueue(label: "Relay.AudioInputProcessor.Capture", qos: .userInitiated)
     #else
     private let capture = EngineInputCapture()
     #endif
@@ -69,7 +102,15 @@ nonisolated final class AudioInputProcessor {
     }
 
     deinit {
-        stop()
+        // No other references exist at this point, so tear down directly rather than via
+        // controlQueue.sync — deinit can run on controlQueue (the watchdog handler holds a
+        // temporary strong reference), where a sync would deadlock.
+        watchdog?.cancel()
+        #if os(macOS)
+        captureHAL?.stop()
+        #else
+        capture.stop()
+        #endif
         if let fftSetup { vDSP_destroy_fftsetup(fftSetup) }
     }
 
@@ -115,21 +156,24 @@ nonisolated final class AudioInputProcessor {
 
     // MARK: - Start / stop
 
+    /// Starts capture (idempotent). If the device can't be opened now, the watchdog keeps
+    /// retrying until it can or `stop()` is called.
     func start() {
-        #if os(macOS)
-        startHAL()
-        #else
-        startEngine()
-        #endif
+        controlQueue.sync {
+            wantsRunning = true
+            processingQueue.sync { lastBufferUptime = ProcessInfo.processInfo.systemUptime }
+            if !isCaptureRunning { startCaptureLocked() }
+            startWatchdogLocked()
+        }
     }
 
     func stop() {
-        #if os(macOS)
-        captureHAL?.stop()
-        captureHAL = nil
-        #else
-        capture.stop()
-        #endif
+        controlQueue.sync {
+            wantsRunning = false
+            watchdog?.cancel()
+            watchdog = nil
+            stopCaptureLocked()
+        }
     }
 
     func updateConfig(_ newConfig: AudioInputConfig) {
@@ -139,39 +183,107 @@ nonisolated final class AudioInputProcessor {
                 || newConfig.channelIndex != config.channelIndex
             config = newConfig
         }
-        if deviceChanged { stop(); start() }
+        guard deviceChanged else { return }
+        // Only restart capture that is supposed to be running — an idle processor (no
+        // subscribers) must not open the device just because its config changed.
+        controlQueue.sync {
+            guard wantsRunning else { return }
+            stopCaptureLocked()
+            processingQueue.sync { lastBufferUptime = ProcessInfo.processInfo.systemUptime }
+            startCaptureLocked()
+        }
     }
 
-    // MARK: - Platform capture
+    // MARK: - Watchdog (controlQueue)
+
+    private func startWatchdogLocked() {
+        guard watchdog == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: controlQueue)
+        timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(200))
+        timer.setEventHandler { [weak self] in self?.watchdogTick() }
+        watchdog = timer
+        timer.resume()
+    }
+
+    private func watchdogTick() {
+        guard wantsRunning else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let silentFor = processingQueue.sync { now - lastBufferUptime }
+        #if os(macOS)
+        // The opened device vanished or the unit moved to another device; the capture has
+        // already stopped delivering buffers, so don't wait out the silence timeout.
+        let deviceLost = captureHAL?.isDeviceLost ?? false
+        #else
+        let deviceLost = false
+        #endif
+        guard !isCaptureRunning || deviceLost || silentFor > Self.staleAfterSeconds else { return }
+
+        processingQueue.async { [weak self] in self?.markSignalStale() }
+
+        // Device unplugged, sample-rate/format change, failed start, or (iOS) an audio
+        // session interruption: tear down and try again, re-resolving the device by UID.
+        guard now - lastRestartAttemptUptime >= Self.restartIntervalSeconds else { return }
+        lastRestartAttemptUptime = now
+        stopCaptureLocked()
+        startCaptureLocked()
+    }
+
+    // MARK: - Platform capture (controlQueue)
+
+    private func startCaptureLocked() {
+        #if os(macOS)
+        startHALLocked()
+        #else
+        startEngineLocked()
+        #endif
+    }
+
+    private func stopCaptureLocked() {
+        #if os(macOS)
+        captureHAL?.stop()
+        captureHAL = nil
+        #else
+        capture.stop()
+        #endif
+        isCaptureRunning = false
+    }
 
     #if os(macOS)
-    private func startHAL() {
-        let uid = config.deviceUID ?? ""
-        guard let deviceId = AudioDeviceEnumerator.deviceId(for: uid)
-                              ?? AudioDeviceEnumerator.defaultInputDeviceId() else {
-            return
-        }
+    private func startHALLocked() {
+        let snapshot = processingQueue.sync { config }
+        let uid = snapshot.deviceUID ?? ""
+        // Only fall back to the system default input when no device was chosen. A chosen
+        // device that's missing (unplugged) must not silently meter a different mic — the
+        // watchdog keeps retrying until it comes back.
+        let resolved = uid.isEmpty
+            ? AudioDeviceEnumerator.defaultInputDeviceId()
+            : AudioDeviceEnumerator.deviceId(for: uid)
+        guard let deviceId = resolved else { return }
         let hal = DeviceInputCaptureHAL(deviceId: deviceId)
-        hal.channelIndex = config.channelIndex
+        hal.channelIndex = snapshot.channelIndex
         hal.onBuffer = { [weak self] buffer in
             self?.handleBuffer(buffer)
         }
         do {
             try hal.start()
             captureHAL = hal
+            isCaptureRunning = true
         } catch {
+            hal.stop()
             captureHAL = nil
+            isCaptureRunning = false
         }
     }
     #else
-    private func startEngine() {
+    private func startEngineLocked() {
         capture.onBuffer = { [weak self] buffer in
             self?.handleBuffer(buffer)
         }
         do {
             try capture.start()
+            isCaptureRunning = true
         } catch {
-            // capture remains stopped; callers can retry via updateConfig
+            isCaptureRunning = false
         }
     }
     #endif
@@ -181,16 +293,26 @@ nonisolated final class AudioInputProcessor {
     private func handleBuffer(_ buffer: AVAudioPCMBuffer) {
         let sampleRate = buffer.format.sampleRate
         let frameCount = Int(buffer.frameLength)
-        guard frameCount > 0 else { return }
-
-        var samples = [Double](repeating: 0, count: frameCount)
-        extractSamples(from: buffer, into: &samples, channelIndex: config.channelIndex)
+        guard frameCount > 0, sampleRate > 0 else { return }
 
         processingQueue.sync {
+            lastBufferUptime = ProcessInfo.processInfo.systemUptime
+            if isSignalStale {
+                isSignalStale = false
+                // Levels from before the dropout are stale; start the meters fresh.
+                resetFilters(sampleRate: sampleRate)
+            }
+
             if sampleRate != lastSampleRate {
                 lastSampleRate = sampleRate
                 resetFilters(sampleRate: sampleRate)
+                updateFFTSize()
             }
+
+            if sampleScratch.count < frameCount {
+                sampleScratch = [Double](repeating: 0, count: frameCount)
+            }
+            extractSamples(from: buffer, frameCount: frameCount, channelIndex: config.channelIndex)
 
             let dt = 1.0 / sampleRate
             let alphaFast = exp(-dt / 0.125)
@@ -198,26 +320,37 @@ nonisolated final class AudioInputProcessor {
             var instA: Double = 0, instC: Double = 0, instZ: Double = 0
             var rawPeakThisBuffer: Double = 0
 
-            for sample in samples {
-                let z = sample
-                let a = filterA?.processSample(z) ?? z
-                let c = filterC?.processSample(z) ?? z
+            sampleScratch.withUnsafeBufferPointer { samples in
+                for i in 0..<frameCount {
+                    let z = samples[i]
+                    let a = filterA?.processSample(z) ?? z
+                    let c = filterC?.processSample(z) ?? z
 
-                let z2 = z * z, a2 = a * a, c2 = c * c
+                    let z2 = z * z, a2 = a * a, c2 = c * c
 
-                smoothZ.fast = alphaFast * smoothZ.fast + (1 - alphaFast) * z2
-                smoothZ.slow = alphaSlow  * smoothZ.slow + (1 - alphaSlow) * z2
-                smoothA.fast = alphaFast * smoothA.fast + (1 - alphaFast) * a2
-                smoothA.slow = alphaSlow  * smoothA.slow + (1 - alphaSlow) * a2
-                smoothC.fast = alphaFast * smoothC.fast + (1 - alphaFast) * c2
-                smoothC.slow = alphaSlow  * smoothC.slow + (1 - alphaSlow) * c2
+                    smoothZ.fast = alphaFast * smoothZ.fast + (1 - alphaFast) * z2
+                    smoothZ.slow = alphaSlow  * smoothZ.slow + (1 - alphaSlow) * z2
+                    smoothA.fast = alphaFast * smoothA.fast + (1 - alphaFast) * a2
+                    smoothA.slow = alphaSlow  * smoothA.slow + (1 - alphaSlow) * a2
+                    smoothC.fast = alphaFast * smoothC.fast + (1 - alphaFast) * c2
+                    smoothC.slow = alphaSlow  * smoothC.slow + (1 - alphaSlow) * c2
 
-                rawPeakThisBuffer = max(rawPeakThisBuffer, abs(z))
-                instZ += z2; instA += a2; instC += c2
+                    rawPeakThisBuffer = max(rawPeakThisBuffer, abs(z))
+                    instZ += z2; instA += a2; instC += c2
+                }
             }
-            peakHoldRaw = max(peakHoldRaw, rawPeakThisBuffer)
 
-            let n = max(1.0, Double(samples.count))
+            // Apply per-input calibration offset to dB outputs and scale linear powers
+            // proportionally so Leq computations stay consistent.
+            let cal = config.calibrationOffsetDb
+            let linCal = cal != 0 ? pow(10.0, cal / 10.0) : 1.0
+
+            cumulativeA += instA * linCal
+            cumulativeC += instC * linCal
+            cumulativeZ += instZ * linCal
+            cumulativeSamples += Double(frameCount)
+
+            let n = Double(frameCount)
             instA /= n; instC /= n; instZ /= n
 
             func toDb(_ energy: Double) -> Double {
@@ -227,38 +360,40 @@ nonisolated final class AudioInputProcessor {
 
             let rawPeakDbFS = rawPeakThisBuffer > 1e-10 ? 20 * log10(rawPeakThisBuffer) : -120
 
-            // Apply per-input calibration offset to dB outputs and scale linear instant
-            // powers proportionally so LAeq computations stay consistent.
-            let cal = config.calibrationOffsetDb
-            let linCal = cal != 0 ? pow(10.0, cal / 10.0) : 1.0
-
             // C-A is the difference between C-weighted and A-weighted dB levels.
             // The calibration offset cancels out (it shifts both C and A equally),
             // so no +cal is needed here.
             let caFastDb = toDb(smoothC.fast) - toDb(smoothA.fast)
             let caSlowDb = toDb(smoothC.slow) - toDb(smoothA.slow)
 
-            let payload = SPLPayload(
-                aFast: toDb(smoothA.fast) + cal, aSlow: toDb(smoothA.slow) + cal,
-                cFast: toDb(smoothC.fast) + cal, cSlow: toDb(smoothC.slow) + cal,
-                zFast: toDb(smoothZ.fast) + cal, zSlow: toDb(smoothZ.slow) + cal,
-                caFast: caFastDb, caSlow: caSlowDb,
-                rawDbFS: toDb(smoothZ.fast) + cal,
-                rawPeakDbFS: rawPeakDbFS + cal,
-                aInstantPower: instA * linCal, cInstantPower: instC * linCal, zInstantPower: instZ * linCal,
-                estimatedFrequencyHz: .nan,
-                clippingWarning: rawPeakThisBuffer >= 0.999,
-                // Headroom is a digital (dBFS) concept — calibration offset does not affect it.
-                headroomDb: max(0, -rawPeakDbFS),
-                noiseFloorDbFS: noiseFloor + cal,
-                sampleRate: sampleRate,
-                timestamp: Date(),
-                isStale: false
-            )
-            for cont in splContinuations.values { cont.yield(payload) }
+            if !splContinuations.isEmpty {
+                let payload = SPLPayload(
+                    aFast: toDb(smoothA.fast) + cal, aSlow: toDb(smoothA.slow) + cal,
+                    cFast: toDb(smoothC.fast) + cal, cSlow: toDb(smoothC.slow) + cal,
+                    zFast: toDb(smoothZ.fast) + cal, zSlow: toDb(smoothZ.slow) + cal,
+                    caFast: caFastDb, caSlow: caSlowDb,
+                    rawDbFS: toDb(smoothZ.fast) + cal,
+                    rawPeakDbFS: rawPeakDbFS + cal,
+                    aInstantPower: instA * linCal, cInstantPower: instC * linCal, zInstantPower: instZ * linCal,
+                    estimatedFrequencyHz: .nan,
+                    clippingWarning: rawPeakThisBuffer >= 0.999,
+                    // Headroom is a digital (dBFS) concept — calibration offset does not affect it.
+                    headroomDb: max(0, -rawPeakDbFS),
+                    noiseFloorDbFS: noiseFloor + cal,
+                    sampleRate: sampleRate,
+                    timestamp: Date(),
+                    isStale: false,
+                    cumulativeAPower: cumulativeA,
+                    cumulativeCPower: cumulativeC,
+                    cumulativeZPower: cumulativeZ,
+                    cumulativeSampleCount: cumulativeSamples,
+                    calibrationOffsetDb: cal
+                )
+                for cont in splContinuations.values { cont.yield(payload) }
+            }
 
             if !fftContinuations.isEmpty && currentFFTSize > 0 {
-                appendToFFTRingBuffer(samples)
+                appendToFFTRingBuffer(count: frameCount)
                 if fftWriteIndex >= fftNextFrameAt, let frame = computeFFTFrame(sampleRate: sampleRate) {
                     for entry in fftContinuations.values { entry.continuation.yield(frame) }
                     // Advance the next-frame trigger by hopSize. fftWriteIndex is NEVER
@@ -271,28 +406,62 @@ nonisolated final class AudioInputProcessor {
         }
     }
 
+    /// Tells every subscriber once that the input stopped delivering audio.
+    private func markSignalStale() {
+        guard !isSignalStale else { return }
+        isSignalStale = true
+        var payload = SPLPayload.empty
+        payload.timestamp = Date()
+        payload.calibrationOffsetDb = config.calibrationOffsetDb
+        payload.cumulativeAPower = cumulativeA
+        payload.cumulativeCPower = cumulativeC
+        payload.cumulativeZPower = cumulativeZ
+        payload.cumulativeSampleCount = cumulativeSamples
+        for cont in splContinuations.values { cont.yield(payload) }
+        let frame = FFTFrame.stale(timestamp: Date().timeIntervalSinceReferenceDate)
+        for entry in fftContinuations.values { entry.continuation.yield(frame) }
+    }
+
     // MARK: - Helpers
 
-    private func extractSamples(from buffer: AVAudioPCMBuffer, into output: inout [Double], channelIndex: Int) {
-        let frameCount = Int(buffer.frameLength)
-        guard let floatData = buffer.floatChannelData else { return }
+    private func extractSamples(from buffer: AVAudioPCMBuffer, frameCount: Int, channelIndex: Int) {
+        guard let floatData = buffer.floatChannelData else {
+            for i in 0..<frameCount { sampleScratch[i] = 0 }
+            return
+        }
         let chCount = Int(buffer.format.channelCount)
         let ch = min(max(channelIndex, 0), chCount - 1)
         let ptr = floatData[ch]
-        for i in 0..<frameCount { output[i] = Double(ptr[i]) }
+        sampleScratch.withUnsafeMutableBufferPointer { out in
+            vDSP_vspdp(ptr, 1, out.baseAddress!, 1, vDSP_Length(frameCount))
+        }
     }
 
     private func resetFilters(sampleRate: Double) {
         filterA = WeightingFilter(weighting: .a, sampleRate: sampleRate)
         filterC = WeightingFilter(weighting: .c, sampleRate: sampleRate)
         smoothA = SmoothPair(); smoothC = SmoothPair(); smoothZ = SmoothPair()
-        peakHoldRaw = 0
+    }
+
+    /// FFT length for the finest resolution any subscriber asked for. The table in
+    /// `RTABandResolution.minimumFFTSize` is tuned for 44.1/48 kHz, so it is scaled up at
+    /// higher sample rates to keep the same frequency resolution (Hz per bin).
+    static func fftSize(for resolution: RTABandResolution, sampleRate: Double) -> Int {
+        let base = RTABandResolution.minimumFFTSize(for: resolution)
+        guard sampleRate > 0 else { return base }
+        let octavesAbove48k = log2(sampleRate / 48_000).rounded()
+        let multiplier = octavesAbove48k > 0 ? 1 << min(Int(octavesAbove48k), 3) : 1
+        return base * multiplier
     }
 
     private func updateFFTSize() {
         let maxRes = fftContinuations.values.map(\.resolution).max()
-        currentFFTSize = maxRes.map { RTABandResolution.minimumFFTSize(for: $0) } ?? 0
-        if currentFFTSize > 0 { configureFFT(size: currentFFTSize) }
+        let newSize = maxRes.map { Self.fftSize(for: $0, sampleRate: lastSampleRate) } ?? 0
+        // Reconfiguring wipes the ring buffer, which stalls every other FFT subscriber on
+        // this input for a full window — only do it when the size really changes.
+        guard newSize != currentFFTSize else { return }
+        currentFFTSize = newSize
+        if newSize > 0 { configureFFT(size: newSize) }
     }
 
     private func configureFFT(size: Int) {
@@ -314,10 +483,27 @@ nonisolated final class AudioInputProcessor {
         fftMagnitudes = [Float](repeating: 0, count: halfN)
     }
 
-    private func appendToFFTRingBuffer(_ samples: [Double]) {
-        for s in samples {
-            fftRingBuffer[fftWriteIndex % currentFFTSize] = Float(s)
-            fftWriteIndex += 1
+    /// Copies the first `count` samples of `sampleScratch` into the FFT ring buffer in at
+    /// most two contiguous runs.
+    private func appendToFFTRingBuffer(count: Int) {
+        let n = currentFFTSize
+        guard n > 0 else { return }
+        // Only the newest n samples can survive in the ring.
+        let skip = max(0, count - n)
+        var remaining = count - skip
+        var src = skip
+        fftWriteIndex += skip
+        sampleScratch.withUnsafeBufferPointer { samples in
+            fftRingBuffer.withUnsafeMutableBufferPointer { ring in
+                while remaining > 0 {
+                    let pos = fftWriteIndex % n
+                    let run = min(remaining, n - pos)
+                    vDSP_vdpsp(samples.baseAddress! + src, 1, ring.baseAddress! + pos, 1, vDSP_Length(run))
+                    src += run
+                    remaining -= run
+                    fftWriteIndex += run
+                }
+            }
         }
     }
 
@@ -327,9 +513,22 @@ nonisolated final class AudioInputProcessor {
         let halfN = n / 2
         let log2n = vDSP_Length(log2(Double(n)).rounded())
 
-        // Apply Hann window to the ring-buffer contents using pre-allocated buffer.
+        // Apply the Hann window to the ring-buffer contents (oldest sample first) in two
+        // contiguous runs, into the pre-allocated buffer.
         let startIdx = fftWriteIndex % n
-        for i in 0..<n { fftWindowed[i] = fftRingBuffer[(startIdx + i) % n] * fftWindow[i] }
+        let firstRun = n - startIdx
+        fftRingBuffer.withUnsafeBufferPointer { ring in
+            fftWindow.withUnsafeBufferPointer { win in
+                fftWindowed.withUnsafeMutableBufferPointer { out in
+                    vDSP_vmul(ring.baseAddress! + startIdx, 1, win.baseAddress!, 1,
+                              out.baseAddress!, 1, vDSP_Length(firstRun))
+                    if startIdx > 0 {
+                        vDSP_vmul(ring.baseAddress!, 1, win.baseAddress! + firstRun, 1,
+                                  out.baseAddress! + firstRun, 1, vDSP_Length(startIdx))
+                    }
+                }
+            }
+        }
 
         // Real-input FFT via vDSP_fft_zrip ("z" = split-complex, "r" = real input, "ip" = in-place).
         //

@@ -7,6 +7,8 @@ struct RTATileView: View {
     var isLiveMode: Bool
 
     @StateObject private var controller: RTAController
+    /// Offscreen thumbnail / LAN snapshot renders must not start audio capture.
+    @Environment(\.dashboardIsLANSnapshotRendering) private var isLANSnapshotRendering
 
     /// Cursor position in canvas-local coordinates (post-padding), set while hovering/dragging.
     @State private var cursorLocation: CGPoint?
@@ -75,13 +77,20 @@ struct RTATileView: View {
         }
         .opacity(model.isEnabled ? 1 : 0.45)
         .onAppear {
+            guard !isLANSnapshotRendering else { return }
             controller.updateSettings(model)
+            controller.setTileActive(true)
             controller.setLiveMode(isLiveMode && model.isEnabled)
         }
+        .onDisappear {
+            controller.setTileActive(false)
+        }
         .onChange(of: module) { _, newValue in
+            guard !isLANSnapshotRendering else { return }
             controller.updateSettings(Self.resolveModel(module: newValue))
         }
         .onChange(of: isLiveMode) { _, newValue in
+            guard !isLANSnapshotRendering else { return }
             let m = Self.resolveModel(module: module)
             controller.setLiveMode(newValue && m.isEnabled)
             if !newValue { cursorLocation = nil }

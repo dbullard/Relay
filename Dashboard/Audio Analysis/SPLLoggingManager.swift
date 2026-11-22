@@ -21,9 +21,9 @@ final class SPLLoggingManager {
     private var activeSessions: [UUID: SPLInputLogger] = [:]
     private var subscriptionTasks: [UUID: Task<Void, Never>] = [:]
 
-    // Max-hold trackers per input (reset on startLogging)
-    private var aSlowMax: [UUID: Double] = [:]
-    private var rawPeakMax: [UUID: Double] = [:]
+    /// One CSV row per input per interval. Payloads arrive once per audio buffer (~94 per
+    /// second at 512 frames / 48 kHz); logging each one produced ~60 MB per input per hour.
+    nonisolated static let logIntervalSeconds: TimeInterval = 1.0
 
     init() {
         if settings.isLogging {
@@ -76,8 +76,6 @@ final class SPLLoggingManager {
         subscriptionTasks.removeAll()
         for (_, logger) in activeSessions { logger.close() }
         activeSessions.removeAll()
-        aSlowMax.removeAll()
-        rawPeakMax.removeAll()
 
         settings.isLogging = false
         folderAccessError = nil
@@ -118,8 +116,6 @@ final class SPLLoggingManager {
             subscriptionTasks.removeValue(forKey: removedID)
             activeSessions[removedID]?.close()
             activeSessions.removeValue(forKey: removedID)
-            aSlowMax.removeValue(forKey: removedID)
-            rawPeakMax.removeValue(forKey: removedID)
         }
 
         // Add sessions for new inputs
@@ -146,33 +142,62 @@ final class SPLLoggingManager {
         ) else { return false }
 
         activeSessions[input.id] = logger
-        aSlowMax[input.id] = -Double.greatestFiniteMagnitude
-        rawPeakMax[input.id] = -Double.greatestFiniteMagnitude
+        logger.onWriteFailure = { [weak self] message in
+            Task { @MainActor [weak self] in self?.folderAccessError = message }
+        }
 
         let inputID = input.id
-        let task = Task { [weak self] in
+        // Runs off the main actor: per-buffer accumulation is cheap, and the only hop that
+        // remains is the logger's own write queue, once per interval.
+        let task = Task.detached(priority: .utility) {
             let (subID, stream) = await AudioAnalysisEngine.shared.subscribeSPL(
                 to: inputID, config: input)
             defer {
                 Task { await AudioAnalysisEngine.shared.unsubscribeSPL(id: subID) }
             }
+            var aSlowMax = -Double.greatestFiniteMagnitude
+            var rawPeakMax = -Double.greatestFiniteMagnitude
+            var intervalStart: SPLPayload?
+            var zFastMax = -Double.greatestFiniteMagnitude
             for await payload in stream {
                 guard !Task.isCancelled else { break }
-                await MainActor.run {
-                    guard let self, let logger = self.activeSessions[inputID] else { return }
-                    self.aSlowMax[inputID] = max(
-                        self.aSlowMax[inputID] ?? -Double.greatestFiniteMagnitude,
-                        payload.aSlow)
-                    self.rawPeakMax[inputID] = max(
-                        self.rawPeakMax[inputID] ?? -Double.greatestFiniteMagnitude,
-                        payload.rawPeakDbFS)
-                    logger.append(
-                        payload: payload,
-                        calibrationOffsetDb: input.calibrationOffsetDb,
-                        aSlowMax: self.aSlowMax[inputID] ?? 0,
-                        rawPeakDbfsMax: self.rawPeakMax[inputID] ?? 0
-                    )
+                guard !payload.isStale else {
+                    // Input dropped out: don't log the gap as silence; restart the interval
+                    // when audio returns.
+                    intervalStart = nil
+                    continue
                 }
+                aSlowMax = max(aSlowMax, payload.aSlow)
+                rawPeakMax = max(rawPeakMax, payload.rawPeakDbFS)
+                zFastMax = max(zFastMax, payload.zFast)
+                guard let start = intervalStart else {
+                    intervalStart = payload
+                    continue
+                }
+                guard payload.timestamp.timeIntervalSince(start.timestamp) >= Self.logIntervalSeconds else {
+                    continue
+                }
+                let samples = payload.cumulativeSampleCount - start.cumulativeSampleCount
+                func leq(_ now: Double, _ then: Double, fallback: Double) -> Double {
+                    let mean = samples > 0 ? (now - then) / samples : fallback
+                    return mean > 1e-12 ? 10 * log10(mean) : -120
+                }
+                let stats = SPLInputLogger.IntervalStats(
+                    zFastMax: zFastMax,
+                    leqA: leq(payload.cumulativeAPower, start.cumulativeAPower, fallback: payload.aInstantPower),
+                    leqC: leq(payload.cumulativeCPower, start.cumulativeCPower, fallback: payload.cInstantPower),
+                    leqZ: leq(payload.cumulativeZPower, start.cumulativeZPower, fallback: payload.zInstantPower)
+                )
+                logger.append(
+                    payload: payload,
+                    // From the payload, so the column follows recalibration mid-session.
+                    calibrationOffsetDb: payload.calibrationOffsetDb,
+                    aSlowMax: aSlowMax,
+                    rawPeakDbfsMax: rawPeakMax,
+                    interval: stats
+                )
+                intervalStart = payload
+                zFastMax = payload.zFast
             }
         }
         subscriptionTasks[input.id] = task

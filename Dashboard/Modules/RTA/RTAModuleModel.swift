@@ -67,7 +67,7 @@ enum RTADisplayMode: String, Codable, CaseIterable {
     }
 }
 
-enum RTATimeSmoothing: String, Codable, CaseIterable {
+nonisolated enum RTATimeSmoothing: String, Codable, CaseIterable {
     case fast
     case slow
 

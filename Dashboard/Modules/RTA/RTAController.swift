@@ -17,6 +17,13 @@ final class RTAController: ObservableObject {
     private var subscriptions: [UUID: Subscription] = [:]
     private(set) var settings: RTAModuleModel
 
+    /// Audio runs only while the module is enabled, the dashboard is live, and the tile is
+    /// actually on screen. Settings changes alone never start capture (they used to,
+    /// briefly, on every appear and every offscreen thumbnail render).
+    private var isLive = false
+    private var isViewActive = true
+    private var shouldRun: Bool { settings.isEnabled && isLive && isViewActive }
+
     /// Latest computed bands per source, written on every FFT frame (off the publish cadence).
     private var latestBands: [UUID: [RTABand]] = [:]
     private var latestBandsDirty: Bool = false
@@ -29,7 +36,6 @@ final class RTAController: ObservableObject {
 
     init(settings: RTAModuleModel) {
         self.settings = settings
-        startPublishLoop()
     }
 
     deinit {
@@ -46,7 +52,10 @@ final class RTAController: ObservableObject {
     /// Coalesces per-source band updates (which arrive at up to ~23Hz *per source* at
     /// 1/48-octave) onto a single ~30Hz cadence, so adding more overlay sources doesn't
     /// multiply the rate at which `RTAViews.body` re-renders and redraws the whole canvas.
+    /// Runs only while at least one source is subscribed, so an idle or paused RTA tile
+    /// doesn't wake the main thread 30 times a second.
     private func startPublishLoop() {
+        guard publishTask == nil else { return }
         publishTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 33_000_000)
@@ -64,7 +73,7 @@ final class RTAController: ObservableObject {
             || newSettings.frequencyRangeLow != settings.frequencyRangeLow
             || newSettings.frequencyRangeHigh != settings.frequencyRangeHigh
         settings = newSettings
-        if !newSettings.isEnabled {
+        if !shouldRun {
             stopAll()
         } else if resolutionChanged {
             stopAll()
@@ -75,11 +84,15 @@ final class RTAController: ObservableObject {
     }
 
     func setLiveMode(_ isLive: Bool) {
-        if isLive && settings.isEnabled { syncSubscriptions() } else { stopAll() }
+        self.isLive = isLive
+        if shouldRun { syncSubscriptions() } else { stopAll() }
     }
 
+    /// False when the tile leaves the screen (or the dashboard closes): releases the input
+    /// even if SwiftUI keeps this controller object around.
     func setTileActive(_ isActive: Bool) {
-        if isActive && settings.isEnabled { syncSubscriptions() } else { stopAll() }
+        isViewActive = isActive
+        if shouldRun { syncSubscriptions() } else { stopAll() }
     }
 
     // MARK: - Subscription management
@@ -93,7 +106,7 @@ final class RTAController: ObservableObject {
     }
 
     private func syncSubscriptions() {
-        guard settings.isEnabled else { stopAll(); return }
+        guard shouldRun else { stopAll(); return }
         let desired = Set(desiredSourceIDs)
 
         for id in subscriptions.keys where !desired.contains(id) {
@@ -103,6 +116,13 @@ final class RTAController: ObservableObject {
             startSubscription(for: id)
         }
         isRunning = !subscriptions.isEmpty
+        if isRunning { startPublishLoop() } else { stopPublishLoop() }
+    }
+
+    private func stopPublishLoop() {
+        publishTask?.cancel()
+        publishTask = nil
+        latestBandsDirty = false
     }
 
     private func startSubscription(for inputID: UUID) {
@@ -131,6 +151,13 @@ final class RTAController: ObservableObject {
             for await frame in stream {
                 guard !Task.isCancelled, let owner = self else { break }
                 guard let p = owner.subscriptions[inputID]?.processor else { break }
+                if frame.isStale {
+                    // The input stopped delivering audio. Drop its trace (the view shows
+                    // "Waiting…" when the primary has none) instead of freezing it.
+                    owner.latestBands.removeValue(forKey: inputID)
+                    owner.latestBandsDirty = true
+                    continue
+                }
                 let timeSmoothing = owner.settings.timeSmoothing
                 let peakHoldDecayDbPerSec = owner.settings.peakHoldDecayDbPerSec
                 // Runs on the RTABandProcessor actor, off the main actor, so the
@@ -160,5 +187,6 @@ final class RTAController: ObservableObject {
     private func stopAll() {
         for id in Array(subscriptions.keys) { stopSubscription(for: id) }
         isRunning = false
+        stopPublishLoop()
     }
 }
