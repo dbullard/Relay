@@ -70,6 +70,9 @@ actor AudioAnalysisEngine {
 
     func splSubscriberCount(for inputID: UUID) -> Int { splCounts[inputID, default: 0] }
     func fftSubscriberCount(for inputID: UUID) -> Int { fftCounts[inputID, default: 0] }
+    func processorForTesting(inputID: UUID, config: AudioInputConfig) -> AudioInputProcessor {
+        processor(for: inputID, config: config)
+    }
 
     // MARK: - Private
 

@@ -156,10 +156,21 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
 
     // MARK: - Start / stop
 
+    // Start, stop and restart run asynchronously on this input's own `controlQueue`.
+    // Opening a device can block for seconds (a slow or waking interface, a driver that
+    // hangs, a pending microphone-permission prompt). These used to run synchronously
+    // inside the shared `AudioAnalysisEngine` actor, so one slow device stalled every
+    // subscribe and unsubscribe for every input: all meters froze until it returned.
+    // The serial queue keeps start/stop/restart in call order for this input.
+
+    /// Called at the start of every capture start attempt. Tests use it to simulate a
+    /// device that is slow to open.
+    var captureStartHookForTesting: (() -> Void)?
+
     /// Starts capture (idempotent). If the device can't be opened now, the watchdog keeps
-    /// retrying until it can or `stop()` is called.
+    /// retrying until it can or `stop()` is called. Returns immediately.
     func start() {
-        controlQueue.sync {
+        controlQueue.async { [self] in
             wantsRunning = true
             processingQueue.sync { lastBufferUptime = ProcessInfo.processInfo.systemUptime }
             if !isCaptureRunning { startCaptureLocked() }
@@ -167,8 +178,9 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
         }
     }
 
+    /// Stops capture. Returns immediately.
     func stop() {
-        controlQueue.sync {
+        controlQueue.async { [self] in
             wantsRunning = false
             watchdog?.cancel()
             watchdog = nil
@@ -186,7 +198,7 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
         guard deviceChanged else { return }
         // Only restart capture that is supposed to be running — an idle processor (no
         // subscribers) must not open the device just because its config changed.
-        controlQueue.sync {
+        controlQueue.async { [self] in
             guard wantsRunning else { return }
             stopCaptureLocked()
             processingQueue.sync { lastBufferUptime = ProcessInfo.processInfo.systemUptime }
@@ -231,6 +243,7 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
     // MARK: - Platform capture (controlQueue)
 
     private func startCaptureLocked() {
+        captureStartHookForTesting?()
         #if os(macOS)
         startHALLocked()
         #else
