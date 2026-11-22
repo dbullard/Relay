@@ -17,7 +17,7 @@ struct SmartLightKeychainBackend: SmartLightSecretStoreBackend {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        guard Keychain.copyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data else {
             return nil
         }
@@ -30,14 +30,14 @@ struct SmartLightKeychainBackend: SmartLightSecretStoreBackend {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        let updateStatus = SecItemUpdate(attrs as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        let updateStatus = Keychain.update(attrs as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if updateStatus == errSecSuccess {
             return
         }
         var addAttrs = attrs
         addAttrs[kSecValueData as String] = data
         addAttrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        _ = SecItemAdd(addAttrs as CFDictionary, nil)
+        _ = Keychain.add(addAttrs as CFDictionary, nil)
     }
 
     func clear(service: String, account: String) {
@@ -46,7 +46,7 @@ struct SmartLightKeychainBackend: SmartLightSecretStoreBackend {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
+        Keychain.delete(query as CFDictionary)
     }
 }
 

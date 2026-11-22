@@ -271,7 +271,7 @@ final class YouTubeKeychainTokenStore: YouTubeTokenStore {
             kSecUseAuthenticationContext as String: context
         ]
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let status = Keychain.copyMatching(query as CFDictionary, &item)
         guard status == errSecSuccess, let data = item as? Data else { return nil }
         return try? JSONDecoder().decode(YouTubeOAuthTokens.self, from: data)
     }
@@ -289,7 +289,7 @@ final class YouTubeKeychainTokenStore: YouTubeTokenStore {
             kSecAttrAccount as String: account
         ]
 
-        let updateStatus = SecItemUpdate(
+        let updateStatus = Keychain.update(
             attrs as CFDictionary,
             [kSecValueData as String: data] as CFDictionary
         )
@@ -305,7 +305,7 @@ final class YouTubeKeychainTokenStore: YouTubeTokenStore {
             addQuery[kSecValueData as String] = data
             addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
             addQuery[kSecUseAuthenticationContext as String] = addContext
-            _ = SecItemAdd(addQuery as CFDictionary, nil)
+            _ = Keychain.add(addQuery as CFDictionary, nil)
             return
         }
 
@@ -316,7 +316,7 @@ final class YouTubeKeychainTokenStore: YouTubeTokenStore {
         addQuery[kSecValueData as String] = data
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         addQuery[kSecUseAuthenticationContext as String] = addContext
-        _ = SecItemAdd(addQuery as CFDictionary, nil)
+        _ = Keychain.add(addQuery as CFDictionary, nil)
     }
 
     func clear() {
@@ -325,7 +325,7 @@ final class YouTubeKeychainTokenStore: YouTubeTokenStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
+        Keychain.delete(query as CFDictionary)
     }
 }
 

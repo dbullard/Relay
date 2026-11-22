@@ -46,7 +46,7 @@ enum ServiceCredentials {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        guard Keychain.copyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data,
               let text = String(data: data, encoding: .utf8) else { return nil }
         let value = trimmed(text)
@@ -59,12 +59,12 @@ enum ServiceCredentials {
             kSecAttrService as String: secretService,
             kSecAttrAccount as String: secretAccount
         ]
-        SecItemDelete(base as CFDictionary)
+        Keychain.delete(base as CFDictionary)
         let secret = trimmed(value)
         guard !secret.isEmpty, let data = secret.data(using: .utf8) else { return }
         var add = base
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+        Keychain.add(add as CFDictionary, nil)
     }
 }

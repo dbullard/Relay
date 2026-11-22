@@ -16,7 +16,7 @@ final class SpecteraKeychainStore {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+        guard Keychain.copyMatching(query as CFDictionary, &result) == errSecSuccess,
               let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -29,14 +29,14 @@ final class SpecteraKeychainStore {
             kSecAttrAccount as String: account
         ]
         guard !password.isEmpty else {
-            SecItemDelete(baseQuery as CFDictionary)
+            Keychain.delete(baseQuery as CFDictionary)
             return
         }
         let data = Data(password.utf8)
-        if SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary) != errSecSuccess {
+        if Keychain.update(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary) != errSecSuccess {
             var addQuery = baseQuery
             addQuery[kSecValueData as String] = data
-            SecItemAdd(addQuery as CFDictionary, nil)
+            Keychain.add(addQuery as CFDictionary, nil)
         }
     }
 
@@ -49,7 +49,7 @@ final class SpecteraKeychainStore {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
+        guard Keychain.copyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
         return result as? Data
     }
 
@@ -59,10 +59,10 @@ final class SpecteraKeychainStore {
             kSecAttrService as String: certificateService,
             kSecAttrAccount as String: deviceID.uuidString
         ]
-        if SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: certificate] as CFDictionary) != errSecSuccess {
+        if Keychain.update(baseQuery as CFDictionary, [kSecValueData as String: certificate] as CFDictionary) != errSecSuccess {
             var addQuery = baseQuery
             addQuery[kSecValueData as String] = certificate
-            SecItemAdd(addQuery as CFDictionary, nil)
+            Keychain.add(addQuery as CFDictionary, nil)
         }
     }
 }
