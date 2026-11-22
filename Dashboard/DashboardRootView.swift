@@ -398,7 +398,7 @@ struct DashboardRootView: View {
     @StateObject private var windowCloseCoordinator = DashboardWindowCloseCoordinator()
     
     @Environment(\.undoManager) private var systemUndoManager
-    @State private var undoBridge = DashboardUndoBridge()
+    @State private var undoBridge = DashboardCanvasUndoBridge()
     /// Bumped whenever the undo stack changes so the toolbar's Undo/Redo buttons refresh.
     /// `UndoManager` isn't observable, and graph edits or a menu-bar Undo don't always
     /// re-render this view on their own.
@@ -1020,6 +1020,7 @@ var body: some View {
                 undoBridge.bind(
                     tabs: $tabs,
                     selectedTabIndex: $selectedTabIndex,
+                    universalGraph: $universalGraph,
                     hasUnsavedChanges: hasUnsavedBinding
                 )
 
@@ -6644,54 +6645,9 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         
         // MARK: - Undo / Redo
 
+        /// Call before a canvas edit to record it as one undo step (see `DashboardCanvasUndoBridge`).
         private func pushUndoSnapshot(_ actionName: String = "Edit Dashboard") {
-            guard let um = systemUndoManager else { return }
-
-            let oldTabs = tabs
-            let oldSelectedIndex = selectedTabIndex
-
-            um.registerUndo(withTarget: undoBridge) { bridge in
-                let newTabs = bridge.tabs?.wrappedValue ?? []
-                let newSelectedIndex = bridge.selectedTabIndex?.wrappedValue ?? 0
-
-                bridge.applyTabs(oldTabs, selectedIndex: oldSelectedIndex)
-
-                um.registerUndo(withTarget: bridge) { b2 in
-                    b2.applyTabs(newTabs, selectedIndex: newSelectedIndex)
-                    um.setActionName(actionName)
-                }
-
-                um.setActionName(actionName)
-            }
-
-            um.setActionName(actionName)
-        }
-
-        /// Class target used for UndoManager registration (UndoManager requires a class target).
-        private final class DashboardUndoBridge: NSObject {
-            var tabs: Binding<[DashboardTab]>?
-            var selectedTabIndex: Binding<Int>?
-            var hasUnsavedChanges: Binding<Bool>?
-
-            func bind(
-                tabs: Binding<[DashboardTab]>,
-                selectedTabIndex: Binding<Int>,
-                hasUnsavedChanges: Binding<Bool>
-            ) {
-                self.tabs = tabs
-                self.selectedTabIndex = selectedTabIndex
-                self.hasUnsavedChanges = hasUnsavedChanges
-            }
-
-            func applyTabs(_ newTabs: [DashboardTab], selectedIndex: Int) {
-                tabs?.wrappedValue = newTabs
-                if newTabs.isEmpty {
-                    selectedTabIndex?.wrappedValue = 0
-                } else {
-                    selectedTabIndex?.wrappedValue = min(max(selectedIndex, 0), newTabs.count - 1)
-                }
-                hasUnsavedChanges?.wrappedValue = true
-            }
+            undoBridge.registerUndo(actionName: actionName, undoManager: systemUndoManager)
         }
 
         private func undo() { systemUndoManager?.undo() }
