@@ -289,6 +289,9 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
     }
     #else
     private func startEngineLocked() {
+        let snapshot = processingQueue.sync { config }
+        capture.preferredInputUID = snapshot.deviceUID
+        capture.channelIndex = snapshot.channelIndex
         capture.onBuffer = { [weak self] buffer in
             self?.handleBuffer(buffer)
         }
