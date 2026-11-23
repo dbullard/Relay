@@ -259,7 +259,7 @@ struct ConsoleGraphNodeView: View {
                 if rawCount > 0 {
                     print("[ConsoleGraphNodeView] Snapshots raw preview: \(rundownSnapshotTitles.prefix(5))")
                 }
-                postCreateRenameSnapshotsRequest()
+                confirmIfLive("snapshot names") { postCreateRenameSnapshotsRequest() }
             } label: {
                 Label("Test", systemImage: "paperplane.fill")
                     .labelStyle(.titleAndIcon)
@@ -429,6 +429,24 @@ struct ConsoleGraphNodeView: View {
     @State private var localPositionChannelDefaults: [String: Int] = [:]
     @State private var showAllAssignments: Bool = false
     @State private var snapshotEditsDebounceWork: DispatchWorkItem?
+    @AppStorage(graphLiveModeStorageKey) private var isLiveModeEnabled: Bool = false
+    /// A Test waiting for a yes because Live Mode is on.
+    @State private var pendingLiveConfirmation: GraphLiveConfirmation? = nil
+
+    /// Runs a Test now, or asks first while Live Mode is on: Test writes to the desk.
+    private func confirmIfLive(_ what: String, action: @escaping () -> Void) {
+        guard isLiveModeEnabled else {
+            action()
+            return
+        }
+        let name = device.name.isEmpty ? "Audio Console" : device.name
+        pendingLiveConfirmation = GraphLiveConfirmation(
+            title: "Send \(what) to \u{201C}\(name)\u{201D}?",
+            message: "Live Mode is on. This writes to the console at \(device.host):\(Int(device.port)) now.",
+            confirmLabel: "Send",
+            action: action
+        )
+    }
 
     struct AssignmentRowModel: Identifiable, Equatable {
         let id: UUID
@@ -1243,7 +1261,7 @@ struct ConsoleGraphNodeView: View {
 
             Button {
                 print("[ConsoleGraphNodeView] Assignments Send tapped: deviceId=\(device.id) assignedCount=\(assignmentWorkItems.count)")
-                postSendChannelAssignmentsRequest()
+                confirmIfLive("channel names") { postSendChannelAssignmentsRequest() }
             } label: {
                 Label("Test", systemImage: "paperplane.fill")
                     .labelStyle(.titleAndIcon)
@@ -1524,7 +1542,7 @@ struct ConsoleGraphNodeView: View {
                     .foregroundStyle(.secondary)
 
                 Button {
-                    onTestQuActions()
+                    confirmIfLive("the Qu actions") { onTestQuActions() }
                 } label: {
                     if isTestingConsoleAction {
                         HStack(spacing: 4) {
@@ -1599,7 +1617,7 @@ struct ConsoleGraphNodeView: View {
                     .foregroundStyle(.secondary)
 
                 Button {
-                    onTestStandardActions()
+                    confirmIfLive("the console actions") { onTestStandardActions() }
                 } label: {
                     if isTestingConsoleAction {
                         HStack(spacing: 4) {
@@ -1799,7 +1817,7 @@ struct ConsoleGraphNodeView: View {
                     .foregroundStyle(.secondary)
 
                 Button {
-                    onTestDigiCoActions()
+                    confirmIfLive("the DiGiCo actions") { onTestDigiCoActions() }
                 } label: {
                     if isTestingConsoleAction {
                         HStack(spacing: 4) {
@@ -2657,6 +2675,15 @@ struct ConsoleGraphNodeView: View {
 
     var body: some View {
         nodeView
+            .graphLiveConfirmationDialog($pendingLiveConfirmation)
+            .onReceive(NotificationCenter.default.publisher(for: .graphConsoleAssignmentsReplaced)) { note in
+                // Undo/Redo of Auto or Clear: the frozen `device` snapshot won't change, so
+                // take the restored assignments from the notification.
+                guard (note.object as? UUID) == device.id,
+                      let assignments = note.userInfo?["assignments"] as? [String: Int] else { return }
+                localConsoleChannelAssignments = assignments
+                rebuildAssignmentCaches()
+            }
             .onAppear {
                 // Restore collapse states from the graph layout model so they survive mode switches.
                 if let layout = graph?.tileLayouts[nodeId] {

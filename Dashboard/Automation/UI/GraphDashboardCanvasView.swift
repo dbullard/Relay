@@ -45,6 +45,17 @@ final class GraphInteractionStore {
     var marqueeStart: CGPoint? = nil
     var marqueeCurrent: CGPoint? = nil
 
+    /// Link the user clicked; Delete removes it. Only the links canvas and the selected-link
+    /// toolbar read it, so selecting a link doesn't re-run the graph body.
+    var selectedLinkId: UUID? = nil
+    /// Link under the pointer, drawn highlighted.
+    var hoveredLinkId: UUID? = nil
+
+    /// Link geometry from the last graph render, for hit-testing clicks without re-running
+    /// the graph body. Bookkeeping only, never rendered from directly.
+    @ObservationIgnored var linkHitSpecs: [GraphLinkSpec] = []
+    @ObservationIgnored var linkHitPositions: [UUID: CGPoint] = [:]
+
     // Untracked reads: the macro's backing storage, which skips observation registration.
     var untrackedPan: CGSize { _pan }
     var untrackedZoom: CGFloat { _zoom }
@@ -53,6 +64,8 @@ final class GraphInteractionStore {
     var untrackedIsMarqueeSelecting: Bool { _isMarqueeSelecting }
     var untrackedMarqueeStart: CGPoint? { _marqueeStart }
     var untrackedMarqueeCurrent: CGPoint? { _marqueeCurrent }
+    var untrackedSelectedLinkId: UUID? { _selectedLinkId }
+    var untrackedHoveredLinkId: UUID? { _hoveredLinkId }
 
     func untrackedDragPosition(for nodeId: UUID) -> CGPoint? {
         _dragPositions[nodeId]
@@ -118,6 +131,24 @@ final class GraphInteractionStore {
     func setMarqueeCurrent(_ point: CGPoint?) {
         guard _marqueeCurrent != point else { return }
         marqueeCurrent = point
+    }
+
+    func setSelectedLinkId(_ id: UUID?) {
+        guard _selectedLinkId != id else { return }
+        selectedLinkId = id
+    }
+
+    func setHoveredLinkId(_ id: UUID?) {
+        guard _hoveredLinkId != id else { return }
+        hoveredLinkId = id
+    }
+
+    /// Graph-space endpoints of the cached links, following live drag positions.
+    func untrackedLinkCurves() -> [GraphLinkGeometry.Curve] {
+        GraphLinkGeometry.curves(
+            for: linkHitSpecs,
+            center: { nodeId in self._dragPositions[nodeId] ?? self.linkHitPositions[nodeId] ?? .zero }
+        )
     }
 }
 
@@ -298,10 +329,92 @@ struct GraphViewportGrid: View {
 /// One link to draw. Endpoints are node-center-relative so the canvas can follow live
 /// drag positions without the graph view recomputing port geometry.
 struct GraphLinkSpec: Equatable {
+    let linkId: UUID
     let fromNodeId: UUID
     let fromOffset: CGPoint
     let toNodeId: UUID
     let toOffset: CGPoint
+    /// Event/trigger flow (drawn solid) vs data/value flow (drawn dashed, in a different colour).
+    var isEventFlow: Bool = true
+}
+
+/// Pure link-curve geometry: the bezier every link is drawn with, and hit-testing against it.
+enum GraphLinkGeometry {
+    struct Curve: Equatable {
+        let id: UUID
+        let from: CGPoint
+        let to: CGPoint
+    }
+
+    /// Control points of the link curve from `p0` to `p3` (horizontal tangents).
+    static func controlPoints(from p0: CGPoint, to p3: CGPoint) -> (CGPoint, CGPoint) {
+        let dx = max(80, abs((p3.x - p0.x) * 0.45))
+        return (CGPoint(x: p0.x + dx, y: p0.y), CGPoint(x: p3.x - dx, y: p3.y))
+    }
+
+    /// Point at `t` (0...1) on the link curve.
+    static func point(at t: CGFloat, from p0: CGPoint, to p3: CGPoint) -> CGPoint {
+        let (c1, c2) = controlPoints(from: p0, to: p3)
+        let u = 1 - t
+        let a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t
+        return CGPoint(
+            x: a * p0.x + b * c1.x + c * c2.x + d * p3.x,
+            y: a * p0.y + b * c1.y + c * c2.y + d * p3.y
+        )
+    }
+
+    /// Shortest distance from `point` to the link curve, measured against a fine polyline.
+    static func distance(from point: CGPoint, toCurveFrom p0: CGPoint, to p3: CGPoint, segments: Int = 48) -> CGFloat {
+        let count = max(2, segments)
+        var best = CGFloat.greatestFiniteMagnitude
+        var previous = p0
+        for i in 1...count {
+            let next = self.point(at: CGFloat(i) / CGFloat(count), from: p0, to: p3)
+            best = min(best, distance(from: point, toSegment: previous, next))
+            previous = next
+        }
+        return best
+    }
+
+    static func distance(from p: CGPoint, toSegment a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let abx = b.x - a.x, aby = b.y - a.y
+        let lengthSquared = abx * abx + aby * aby
+        guard lengthSquared > 0 else { return hypot(p.x - a.x, p.y - a.y) }
+        let t = max(0, min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / lengthSquared))
+        return hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby))
+    }
+
+    /// Bounding box of the curve (endpoints plus control points contain it).
+    static func bounds(from p0: CGPoint, to p3: CGPoint) -> CGRect {
+        let (c1, c2) = controlPoints(from: p0, to: p3)
+        let xs = [p0.x, p3.x, c1.x, c2.x], ys = [p0.y, p3.y, c1.y, c2.y]
+        let minX = xs.min() ?? 0, minY = ys.min() ?? 0
+        return CGRect(x: minX, y: minY, width: (xs.max() ?? 0) - minX, height: (ys.max() ?? 0) - minY)
+    }
+
+    /// The nearest curve within `tolerance` of `point`, or nil.
+    static func hitTest(_ point: CGPoint, curves: [Curve], tolerance: CGFloat) -> UUID? {
+        var best: (id: UUID, distance: CGFloat)?
+        for curve in curves {
+            guard bounds(from: curve.from, to: curve.to).insetBy(dx: -tolerance, dy: -tolerance).contains(point) else { continue }
+            let d = distance(from: point, toCurveFrom: curve.from, to: curve.to)
+            if d <= tolerance, d < (best?.distance ?? .greatestFiniteMagnitude) {
+                best = (curve.id, d)
+            }
+        }
+        return best?.id
+    }
+
+    static func curves(for specs: [GraphLinkSpec], center: (UUID) -> CGPoint) -> [Curve] {
+        specs.map { spec in
+            let a = center(spec.fromNodeId), b = center(spec.toNodeId)
+            return Curve(
+                id: spec.linkId,
+                from: CGPoint(x: a.x + spec.fromOffset.x, y: a.y + spec.fromOffset.y),
+                to: CGPoint(x: b.x + spec.toOffset.x, y: b.y + spec.toOffset.y)
+            )
+        }
+    }
 }
 
 /// The in-progress link line while dragging from an output nub.
@@ -330,6 +443,21 @@ struct GraphLinksCanvasView: View, Equatable {
     let store: GraphInteractionStore
     let size: CGSize
     let drawPadding: CGFloat
+    /// Context-menu "Delete Link" on a wire (macOS). Not part of `==`.
+    var onDeleteLink: ((UUID) -> Void)? = nil
+
+    /// Event flow: solid white. Data flow: dashed cyan, so the two differ by more than colour.
+    static let eventFlowColor = Color.white.opacity(0.45)
+    static let dataFlowColor = Color(red: 0.45, green: 0.82, blue: 1.0).opacity(0.65)
+    static let dataFlowDash: [CGFloat] = [7, 5]
+
+    private struct Stroke {
+        let from: CGPoint
+        let to: CGPoint
+        let color: Color
+        let lineWidth: CGFloat
+        let dash: [CGFloat]
+    }
 
     var body: some View {
         let pad = drawPadding
@@ -338,6 +466,8 @@ struct GraphLinksCanvasView: View, Equatable {
         let dragPositions = store.dragPositions
         let linkingFromPoint = store.linkingFromPoint
         let linkingCurrentPoint = store.linkingCurrentPoint
+        let selectedLinkId = store.selectedLinkId
+        let hoveredLinkId = store.hoveredLinkId
 
         // Resolve every curve in graph space up front, then draw them into a canvas sized
         // to just their bounds. The layout frame stays the original oversized area (an
@@ -352,14 +482,30 @@ struct GraphLinksCanvasView: View, Equatable {
             let c = center(nodeId)
             return CGPoint(x: c.x + offset.x, y: c.y + offset.y)
         }
-        var curves: [(CGPoint, CGPoint, Color)] = links.map {
-            (point($0.fromNodeId, $0.fromOffset), point($0.toNodeId, $0.toOffset), Color.white.opacity(0.45))
+        var strokes: [Stroke] = links.map { spec in
+            let isSelected = spec.linkId == selectedLinkId
+            let isHovered = spec.linkId == hoveredLinkId
+            let base = spec.isEventFlow ? Self.eventFlowColor : Self.dataFlowColor
+            return Stroke(
+                from: point(spec.fromNodeId, spec.fromOffset),
+                to: point(spec.toNodeId, spec.toOffset),
+                color: isSelected ? Color.accentColor.opacity(0.95) : (isHovered ? base.opacity(1) : base),
+                lineWidth: isSelected ? 3.5 : (isHovered ? 3 : 2),
+                dash: spec.isEventFlow ? [] : Self.dataFlowDash
+            )
+        }
+        // Draw the selected link last so it sits on top where links cross.
+        if let selectedIndex = links.firstIndex(where: { $0.linkId == selectedLinkId }) {
+            strokes.append(strokes.remove(at: selectedIndex))
         }
         if let pendingLink, let current = linkingCurrentPoint {
             let start = linkingFromPoint ?? point(pendingLink.fromNodeId, pendingLink.fallbackFromOffset)
-            curves.append((start, current, pendingLink.color))
+            strokes.append(Stroke(from: start, to: current, color: pendingLink.color, lineWidth: 2, dash: []))
         }
-        let bounds = Self.bounds(of: curves.map { ($0.0, $0.1) })
+        let bounds = Self.bounds(of: strokes.map { ($0.from, $0.to) })
+        // Hit targets for hover and the context menu; skipped while dragging, when they'd be
+        // rebuilt every frame and nothing can be clicked anyway.
+        let showsHitTargets = dragPositions.isEmpty && linkingCurrentPoint == nil && !links.isEmpty
 
         return Color.clear
             .frame(width: size.width + pad * 2, height: size.height + pad * 2)
@@ -369,18 +515,65 @@ struct GraphLinksCanvasView: View, Equatable {
                         func local(_ p: CGPoint) -> CGPoint {
                             CGPoint(x: p.x - bounds.minX, y: p.y - bounds.minY)
                         }
-                        for (from, to, color) in curves {
-                            let path = Self.bezierPath(from: local(from), to: local(to))
-                            context.stroke(path, with: .color(color), lineWidth: 2.0)
+                        for stroke in strokes {
+                            let path = Self.bezierPath(from: local(stroke.from), to: local(stroke.to))
+                            context.stroke(
+                                path,
+                                with: .color(stroke.color),
+                                style: StrokeStyle(lineWidth: stroke.lineWidth, lineCap: .round, dash: stroke.dash)
+                            )
                         }
                     }
                     .frame(width: bounds.width, height: bounds.height)
                     // Overlay space: graph point p sits at p + pad (the frame is offset by -pad).
                     .offset(x: bounds.minX + pad, y: bounds.minY + pad)
+                    .allowsHitTesting(false)
+                }
+            }
+            .allowsHitTesting(false)
+            .overlay(alignment: .topLeading) {
+                if showsHitTargets {
+                    ZStack(alignment: .topLeading) {
+                        ForEach(links, id: \.linkId) { spec in
+                            let from = point(spec.fromNodeId, spec.fromOffset)
+                            let to = point(spec.toNodeId, spec.toOffset)
+                            linkHitTarget(
+                                linkId: spec.linkId,
+                                path: Self.bezierPath(
+                                    from: CGPoint(x: from.x + pad, y: from.y + pad),
+                                    to: CGPoint(x: to.x + pad, y: to.y + pad)
+                                )
+                            )
+                        }
+                    }
                 }
             }
             .offset(x: -pad, y: -pad)
-            .allowsHitTesting(false)
+    }
+
+    /// Invisible band along one wire: hover highlight, and on macOS a "Delete Link" context
+    /// menu. Clicks pass through to the scene, which selects links by `GraphLinkGeometry`.
+    @ViewBuilder
+    private func linkHitTarget(linkId: UUID, path: Path) -> some View {
+        let target = Color.clear
+            .contentShape(path.strokedPath(StrokeStyle(lineWidth: 12, lineCap: .round)))
+            .onHover { inside in
+                if inside {
+                    store.setHoveredLinkId(linkId)
+                } else if store.untrackedHoveredLinkId == linkId {
+                    store.setHoveredLinkId(nil)
+                }
+            }
+            .accessibilityHidden(true)
+        #if os(macOS)
+        target.contextMenu {
+            Button("Delete Link", role: .destructive) {
+                onDeleteLink?(linkId)
+            }
+        }
+        #else
+        target
+        #endif
     }
 
     /// Bounding box of the bezier curves (their endpoints plus control points, which
@@ -388,11 +581,8 @@ struct GraphLinksCanvasView: View, Equatable {
     static func bounds(of curves: [(CGPoint, CGPoint)]) -> CGRect? {
         var rect: CGRect?
         for (p0, p3) in curves {
-            let dx = max(80, abs((p3.x - p0.x) * 0.45))
-            for p in [p0, p3, CGPoint(x: p0.x + dx, y: p0.y), CGPoint(x: p3.x - dx, y: p3.y)] {
-                let r = CGRect(origin: p, size: .zero)
-                rect = rect?.union(r) ?? r
-            }
+            let r = GraphLinkGeometry.bounds(from: p0, to: p3)
+            rect = rect?.union(r) ?? r
         }
         return rect?.insetBy(dx: -4, dy: -4)
     }
@@ -400,12 +590,45 @@ struct GraphLinksCanvasView: View, Equatable {
     static func bezierPath(from p0: CGPoint, to p3: CGPoint) -> Path {
         var path = Path()
         path.move(to: p0)
-        let dxRaw = (p3.x - p0.x) * 0.45
-        let dx = max(80, abs(dxRaw))
-        let c1 = CGPoint(x: p0.x + dx, y: p0.y)
-        let c2 = CGPoint(x: p3.x - dx, y: p3.y)
+        let (c1, c2) = GraphLinkGeometry.controlPoints(from: p0, to: p3)
         path.addCurve(to: p3, control1: c1, control2: c2)
         return path
+    }
+}
+
+/// Small toolbar at the selected link's midpoint (view space) with Delete Link: the touch
+/// and pointer path to removing one wire. Delete/Backspace does the same.
+struct GraphSelectedLinkOverlay: View {
+    let store: GraphInteractionStore
+    let onDelete: (UUID) -> Void
+
+    var body: some View {
+        if let linkId = store.selectedLinkId,
+           let spec = store.linkHitSpecs.first(where: { $0.linkId == linkId }) {
+            let drag = store.dragPositions
+            let pan = store.pan
+            let zoom = store.zoom
+            let curve = GraphLinkGeometry.curves(for: [spec]) { nodeId in
+                drag[nodeId] ?? store.linkHitPositions[nodeId] ?? .zero
+            }[0]
+            let mid = GraphLinkGeometry.point(at: 0.5, from: curve.from, to: curve.to)
+            Button {
+                onDelete(linkId)
+            } label: {
+                Label("Delete Link", systemImage: "trash")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: graphMinimumHitTarget)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.white)
+            .background(Capsule().fill(Color.black.opacity(0.82)))
+            .overlay(Capsule().stroke(Color.accentColor.opacity(0.8), lineWidth: 1))
+            .fixedSize()
+            .position(x: mid.x * zoom + pan.width, y: mid.y * zoom + pan.height - graphMinimumHitTarget)
+            .help("Delete this link (Delete key)")
+        }
     }
 }
 
