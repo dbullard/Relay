@@ -45,6 +45,10 @@ struct DashboardInspectorPanelView: View {
     @State private var initialTileSizeHeightSnapshot: String = ""
     @State private var initialTileSizeSnapshot: CGSize? = nil
 
+    /// Folds a slider drag (or a burst of colour-panel changes) into one undo step.
+    /// A reference box: updating it must not re-render the inspector.
+    @State private var undoCoalescing = InspectorUndoCoalescingBox()
+
     // MARK: - Body
 
     var body: some View {
@@ -382,38 +386,23 @@ struct DashboardInspectorPanelView: View {
             },
 
             onUpdateModulePadding: { moduleID, top, bottom in
-                pushUndoSnapshot("Edit Module Padding")
-
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    if let top = top { modules[idx].paddingTop = top }
-                    if let bottom = bottom { modules[idx].paddingBottom = bottom }
-
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                guard tileBinding.wrappedValue.modules?.contains(where: { $0.id == moduleID }) == true else { return }
+                commitTileEdit("Edit Module Padding", toSelection: false) { tile in
+                    guard let idx = tile.modules?.firstIndex(where: { $0.id == moduleID }) else { return }
+                    if let top = top { tile.modules?[idx].paddingTop = top }
+                    if let bottom = bottom { tile.modules?[idx].paddingBottom = bottom }
                 }
             },
 
             onUpdateModuleScale: { moduleID, scale in
-                pushUndoSnapshot("Edit Module Scale")
-
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules,
-                      let mIdx = modules.firstIndex(where: { $0.id == moduleID }) else {
-                    return
+                guard tileBinding.wrappedValue.modules?.contains(where: { $0.id == moduleID }) == true else { return }
+                commitTileEdit("Edit Module Scale", toSelection: false) { tile in
+                    guard let mIdx = tile.modules?.firstIndex(where: { $0.id == moduleID }) else { return }
+                    // Height is in points; nil means Auto.
+                    tile.modules?[mIdx].moduleHeightPoints = scale
+                    // Clear legacy scale so height points are the sole driver.
+                    tile.modules?[mIdx].moduleScale = nil
                 }
-
-                // Height is in points; nil means Auto.
-                modules[mIdx].moduleHeightPoints = scale
-                // Clear legacy scale so height points are the sole driver.
-                modules[mIdx].moduleScale = nil
-
-                tile.modules = modules
-                tileBinding.wrappedValue = tile
-                markUnsavedAndScheduleSave()
             },
 
             tab: tabBinding,
@@ -448,30 +437,13 @@ struct DashboardInspectorPanelView: View {
             },
 
             onSaveTileAppearance: { style, opacity, radius, color, gradient in
-                pushUndoSnapshot("Edit Tile Appearance")
-
-                if isMultiTileEdit {
-                    guard tabs.indices.contains(selectedTabIndex) else { return }
-                    for id in selectedTileIDs {
-                        if let idx = tabs[selectedTabIndex].tiles.firstIndex(where: { $0.id == id }) {
-                            tabs[selectedTabIndex].tiles[idx].backgroundStyle = style
-                            tabs[selectedTabIndex].tiles[idx].backgroundOpacity = opacity
-                            tabs[selectedTabIndex].tiles[idx].cornerRadius = radius
-                            tabs[selectedTabIndex].tiles[idx].backgroundCustomColor = color
-                            tabs[selectedTabIndex].tiles[idx].backgroundGradient = gradient
-                        }
-                    }
-                } else {
-                    var tile = tileBinding.wrappedValue
+                commitTileEdit("Edit Tile Appearance", toSelection: isMultiTileEdit) { tile in
                     tile.backgroundStyle = style
                     tile.backgroundOpacity = opacity
                     tile.cornerRadius = radius
                     tile.backgroundCustomColor = color
                     tile.backgroundGradient = gradient
-                    tileBinding.wrappedValue = tile
                 }
-
-                markUnsavedAndScheduleSave()
             },
 
             onPreviewTileAppearance: { style, opacity, radius, color, gradient in
@@ -515,22 +487,9 @@ struct DashboardInspectorPanelView: View {
             },
 
             onSaveTileContentPadding: { padding in
-                pushUndoSnapshot("Edit Tile Padding")
-
-                if isMultiTileEdit {
-                    guard tabs.indices.contains(selectedTabIndex) else { return }
-                    for id in selectedTileIDs {
-                        if let idx = tabs[selectedTabIndex].tiles.firstIndex(where: { $0.id == id }) {
-                            tabs[selectedTabIndex].tiles[idx].contentPadding = padding
-                        }
-                    }
-                } else {
-                    var tile = tileBinding.wrappedValue
+                commitTileEdit("Edit Tile Padding", toSelection: isMultiTileEdit) { tile in
                     tile.contentPadding = padding
-                    tileBinding.wrappedValue = tile
                 }
-
-                markUnsavedAndScheduleSave()
             },
 
             onSaveModuleLayout: { layout in
@@ -599,32 +558,14 @@ struct DashboardInspectorPanelView: View {
             initialTextVerticalAlignment: tileValue.textVerticalAlignment,
 
             onSaveTextFormatting: { size, weight, color, caps, justification, verticalAlignment in
-                pushUndoSnapshot("Edit Text Formatting")
-
-                if isMultiTileEdit {
-                    guard tabs.indices.contains(selectedTabIndex) else { return }
-                    for id in selectedTileIDs {
-                        if let idx = tabs[selectedTabIndex].tiles.firstIndex(where: { $0.id == id }) {
-                            tabs[selectedTabIndex].tiles[idx].textFontSize = size
-                            tabs[selectedTabIndex].tiles[idx].textFontWeight = weight
-                            tabs[selectedTabIndex].tiles[idx].textColor = color
-                            tabs[selectedTabIndex].tiles[idx].textCapitalization = caps
-                            tabs[selectedTabIndex].tiles[idx].textJustification = justification
-                            tabs[selectedTabIndex].tiles[idx].textVerticalAlignment = verticalAlignment
-                        }
-                    }
-                } else {
-                    var tile = tileBinding.wrappedValue
+                commitTileEdit("Edit Text Formatting", toSelection: isMultiTileEdit) { tile in
                     tile.textFontSize = size
                     tile.textFontWeight = weight
                     tile.textColor = color
                     tile.textCapitalization = caps
                     tile.textJustification = justification
                     tile.textVerticalAlignment = verticalAlignment
-                    tileBinding.wrappedValue = tile
                 }
-
-                markUnsavedAndScheduleSave()
             },
 
             initialTileSizeWidthText: initialTileSizeWidthSnapshot,
@@ -656,6 +597,14 @@ struct DashboardInspectorPanelView: View {
                 }
 
                 markUnsavedAndScheduleSave()
+            },
+
+            onContinuousEditChanged: { isEditing in
+                if isEditing {
+                    undoCoalescing.coalescer.beginContinuousEdit()
+                } else {
+                    undoCoalescing.coalescer.endContinuousEdit()
+                }
             },
 
             onUpdatePCOModuleConfig: { moduleID, newConfig in
@@ -754,6 +703,38 @@ struct DashboardInspectorPanelView: View {
 #endif
     }
 
+    /// Applies `change` to the edited tile (or every selected tile), registering an
+    /// undo step only when something actually changes and the change doesn't fold
+    /// into the current one (see `InspectorUndoCoalescer`).
+    private func commitTileEdit(
+        _ actionName: String,
+        toSelection: Bool,
+        _ change: (inout DashboardTileModel) -> Void
+    ) {
+        if toSelection {
+            guard tabs.indices.contains(selectedTabIndex) else { return }
+            var tab = tabs[selectedTabIndex]
+            for idx in tab.tiles.indices where selectedTileIDs.contains(tab.tiles[idx].id) {
+                change(&tab.tiles[idx])
+            }
+            guard tab != tabs[selectedTabIndex] else { return }
+            registerUndoIfNeeded(actionName)
+            tabs[selectedTabIndex] = tab
+        } else {
+            var tile = tileBinding.wrappedValue
+            change(&tile)
+            guard tile != tileBinding.wrappedValue else { return }
+            registerUndoIfNeeded(actionName)
+            tileBinding.wrappedValue = tile
+        }
+        markUnsavedAndScheduleSave()
+    }
+
+    private func registerUndoIfNeeded(_ actionName: String) {
+        guard undoCoalescing.coalescer.shouldRegisterUndo(actionName: actionName) else { return }
+        pushUndoSnapshot(actionName)
+    }
+
     private func captureInitialTileSizeSnapshot(tileValue: DashboardTileModel) {
         guard tabs.indices.contains(selectedTabIndex) else {
             initialTileSizeWidthSnapshot = ""
@@ -792,4 +773,10 @@ struct DashboardInspectorPanelView: View {
             initialTileSizeSnapshot = nil
         }
     }
+}
+
+/// Holds the inspector's `InspectorUndoCoalescer` by reference, so updating it
+/// from edit callbacks doesn't invalidate the view.
+private final class InspectorUndoCoalescingBox {
+    var coalescer = InspectorUndoCoalescer()
 }

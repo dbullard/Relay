@@ -994,21 +994,21 @@ extension DashboardTileEditView {
 
             HStack {
                 Text(currentModel.weighting == .ca ? "Safe Color" : "Normal Color"); Spacer()
-                ColorPicker("", selection: Binding(
+                ColorPicker(currentModel.weighting == .ca ? "Safe Color" : "Normal Color", selection: Binding(
                     get: { currentModel.limitColorNormal.swiftUIColor },
                     set: { v in var u = currentModel; u.limitColorNormal = CodableColor(v); updateModel(u) }
                 )).labelsHidden()
             }
             HStack {
                 Text(currentModel.weighting == .ca ? "Limit Color" : "Warning Color"); Spacer()
-                ColorPicker("", selection: Binding(
+                ColorPicker(currentModel.weighting == .ca ? "Limit Color" : "Warning Color", selection: Binding(
                     get: { currentModel.limitColorWarning.swiftUIColor },
                     set: { v in var u = currentModel; u.limitColorWarning = CodableColor(v); updateModel(u) }
                 )).labelsHidden()
             }
             HStack {
                 Text(currentModel.weighting == .ca ? "Out of Range Color" : "Alert Color"); Spacer()
-                ColorPicker("", selection: Binding(
+                ColorPicker(currentModel.weighting == .ca ? "Out of Range Color" : "Alert Color", selection: Binding(
                     get: { currentModel.limitColorAlert.swiftUIColor },
                     set: { v in var u = currentModel; u.limitColorAlert = CodableColor(v); updateModel(u) }
                 )).labelsHidden()
@@ -1590,7 +1590,7 @@ extension DashboardTileEditView {
 
                 Spacer(minLength: 0)
 
-                ColorPicker("", selection: Binding(
+                ColorPicker("Transcript color for \(source.displayName.isEmpty ? "this input" : source.displayName)", selection: Binding(
                     get: { ctx.currentModel.sources.indices.contains(idx) ? ctx.currentModel.sources[idx].color.swiftUIColor : .white },
                     set: { v in
                         var updated = ctx.currentModel
@@ -1710,7 +1710,7 @@ extension DashboardTileEditView {
 
                 Spacer(minLength: 0)
 
-                ColorPicker("", selection: Binding(
+                ColorPicker("Transcript color for \(source.displayName.isEmpty ? "this input" : source.displayName)", selection: Binding(
                     get: { ctx.currentModel.sources.indices.contains(idx) ? ctx.currentModel.sources[idx].color.swiftUIColor : .white },
                     set: { v in
                         var updated = ctx.currentModel
