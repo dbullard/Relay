@@ -1400,28 +1400,47 @@ struct ButtonItemView: View {
         runtimeFailedRecently = false
         if !hasInternalAction { isRunning = config.feedback.showsRunningIndicator }
         Task {
+            var failures: [String] = []
             for (index, entry) in config.actions.enumerated() {
-                await MainActor.run { execute(entry: entry) }
+                let failure = await MainActor.run { execute(entry: entry) }
+                if let failure { failures.append(failure) }
                 if delayNs > 0 && index < (config.actions.count - 1) {
                     try? await Task.sleep(nanoseconds: delayNs)
                 }
             }
             await MainActor.run {
-                if !hasInternalAction { isRunning = false; markResult(success: true) }
+                if !failures.isEmpty {
+                    // Show the failure even when an internal command also ran.
+                    isRunning = false
+                    runtimeErrorMessage = failures.joined(separator: "\n")
+                    markResult(success: false)
+                } else if !hasInternalAction {
+                    isRunning = false
+                    markResult(success: true)
+                }
                 emitPressEvent(kind: "button.press")
             }
         }
     }
 
-    private func execute(entry: ButtonActionEntry) {
+    /// Runs one action. Returns a message when it couldn't be sent; nil otherwise.
+    /// Internal commands report their own result through the action-node notifications.
+    private func execute(entry: ButtonActionEntry) -> String? {
         switch entry.action {
         case .internalCommand(let command):
             onInternalCommand(command, entry.appControlRefreshDeviceOptions, config.id)
+            return nil
         case .osc(let action):
             let message = OSCMessage(address: action.address, args: action.argument.map { [$0.oscValue] } ?? [])
-            OSCManager.shared.send(to: action.endpoint, message: message)
+            guard OSCManager.shared.send(to: action.endpoint, message: message) else {
+                return "OSC \(action.address) wasn't sent: check the address, host and port."
+            }
+            return nil
         case .midi(let action):
-            MIDISendManager.shared.send(bytes: action.midiBytes, to: action.destinationID)
+            guard MIDISendManager.shared.send(bytes: action.midiBytes, to: action.destinationID) else {
+                return "MIDI wasn't sent: the destination isn't available."
+            }
+            return nil
         }
     }
 

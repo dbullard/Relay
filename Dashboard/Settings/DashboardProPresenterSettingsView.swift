@@ -35,6 +35,11 @@ struct DashboardProPresenterSettingsView: View {
 
     @State private var isPresentingSaveProfileSheet: Bool = false
     @State private var profileNameDraft: String = ""
+    // Add Profile edits these copies; they reach the live connection only on Save.
+    @State private var hostDraft: String = ""
+    @State private var portDraft: Int = 0
+    @State private var passwordDraft: String = ""
+    @State private var pollIntervalDraft: Double = 0.5
     @State private var editingProfile: ProPresenterConnectionProfile? = nil
     @State private var quickAddDevice: ProPresenterDiscoveredDevice? = nil
     @State private var isShowingHelp: Bool = false
@@ -62,6 +67,10 @@ struct DashboardProPresenterSettingsView: View {
                     Spacer()
                     Button {
                         profileNameDraft = ""
+                        hostDraft = host
+                        portDraft = port
+                        passwordDraft = password
+                        pollIntervalDraft = pollInterval
                         isPresentingSaveProfileSheet = true
                     } label: {
                         HStack(spacing: 8) {
@@ -397,12 +406,16 @@ struct DashboardProPresenterSettingsView: View {
         .sheet(isPresented: $isPresentingSaveProfileSheet) {
             ProPresenterSaveProfileSheet(
                 name: $profileNameDraft,
-                host: $host,
-                port: $port,
-                password: $password,
-                pollInterval: $pollInterval,
+                host: $hostDraft,
+                port: $portDraft,
+                password: $passwordDraft,
+                pollInterval: $pollIntervalDraft,
                 onCancel: { isPresentingSaveProfileSheet = false },
                 onSave: {
+                    host = hostDraft
+                    port = portDraft
+                    password = passwordDraft
+                    pollInterval = pollIntervalDraft
                     let saved = saveCurrentAsNewProfile(named: profileNameDraft)
                     isPresentingSaveProfileSheet = false
                     if let profile = saved {

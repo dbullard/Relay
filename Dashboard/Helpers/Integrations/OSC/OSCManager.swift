@@ -256,13 +256,21 @@ public final class OSCManager: ObservableObject {
     // MARK: - Public Send API
 
     /// Send one OSC message to an endpoint.
-    public func send(to endpoint: OSCEndpoint, message: OSCMessage) {
+    /// Returns false when the message can't be sent at all (bad address, no host or port).
+    /// True means it was handed to UDP; delivery is never confirmed.
+    @discardableResult
+    public func send(to endpoint: OSCEndpoint, message: OSCMessage) -> Bool {
         guard validate(address: message.address) else {
             emit("[OSC] Invalid address: \(message.address)")
-            return
+            return false
+        }
+        guard !endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, endpoint.port != 0 else {
+            emit("[OSC] Missing host or port for \(message.address)")
+            return false
         }
         let data = OSCCodec.encode(message: message)
         sendRaw(to: endpoint, data: data)
+        return true
     }
 
     /// Convenience: send with address + args.

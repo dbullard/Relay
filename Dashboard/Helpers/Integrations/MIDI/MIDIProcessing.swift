@@ -113,6 +113,11 @@ final class MIDISendManager {
         }
 
         if let uniqueID {
+            if let cached = destinationsByID[uniqueID] {
+                return cached
+            }
+            // A device connected after the last scan isn't cached yet: rescan once.
+            refreshDestinations()
             return destinationsByID[uniqueID]
         }
 

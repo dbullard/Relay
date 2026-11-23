@@ -148,6 +148,9 @@ struct DashboardTopToolbarView: View {
     @State private var hideTask: Task<Void, Never>? = nil
     @State private var savedLabelVisible: Bool = false
     @State private var savedHideTask: Task<Void, Never>? = nil
+    /// `lastSavedAt` when the current write began. "Saved" only shows if a write
+    /// moved it forward: a failed or cancelled save ends without touching it.
+    @State private var lastSavedAtWhenSaveBegan: Date? = nil
     @State private var isFlipHoldActive: Bool = false
     @State private var flipHoldTask: Task<Void, Never>? = nil
 
@@ -2510,7 +2513,11 @@ struct DashboardTopToolbarView: View {
             }
         }
         .onChange(of: saveState.isSaving) { _, saving in
-            if !saving {
+            if saving {
+                lastSavedAtWhenSaveBegan = saveState.lastSavedAt
+                return
+            }
+            if saveState.lastSavedAt != nil, saveState.lastSavedAt != lastSavedAtWhenSaveBegan {
                 savedLabelVisible = true
                 savedHideTask?.cancel()
                 savedHideTask = Task { @MainActor in

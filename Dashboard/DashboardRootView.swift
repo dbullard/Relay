@@ -241,6 +241,8 @@ struct DashboardRootView: View {
         case openPicker
         case openSpecific(URL)
         case newDashboard
+        /// New Dashboard chosen on Home, with the canvas size picked there.
+        case newBlankDashboard(CGSize)
         case closeWindow
         case quitApplication
     }
@@ -4604,6 +4606,7 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                     handleDocumentSaveCompletion(success: true, savedURL: url)
                 } else {
                     handleDocumentSaveCompletion(success: false, savedURL: nil)
+                    presentSaveFailedNotification(fileName: url.lastPathComponent)
                     print("❌ Failed to export dashboard to \(url.path)")
                 }
             }
@@ -4624,6 +4627,7 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                     print("✅ Dashboard exported successfully")
                 case .failure(let error):
                     handleDocumentSaveCompletion(success: false, savedURL: nil)
+                    presentSaveFailedNotification(fileName: nil)
                     print("❌ Failed to export dashboard: \(error)")
                     RelayDiagnosticsStore.shared.recordError(error.localizedDescription, tag: "Dashboard Export")
                 }
@@ -4675,6 +4679,11 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
         let d = c.alert("Unsaved Dashboard", isPresented: $showingOpenUnsavedAlert) {
                 Button("Cancel", role: .cancel) {
                     pendingDocumentContinuation = nil
+                    // Opened from Home: go back there rather than leaving it dismissed.
+                    if DashboardHomeScreenState.shared.openPickerLaunchedFromHome {
+                        DashboardHomeScreenState.shared.openPickerLaunchedFromHome = false
+                        NotificationCenter.default.post(name: .showHomeRequested, object: nil)
+                    }
                 }
                 Button("Don’t Save") {
                     continuePendingDocumentContinuationAfterDiscard()
@@ -4830,11 +4839,18 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                 showingSettings = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .createBlankDashboardRequested)) { note in
+                var size: CGSize?
                 if let w = note.userInfo?["width"] as? CGFloat,
                    let h = note.userInfo?["height"] as? CGFloat {
-                    canvasBoundsStore.size = CGSize(width: w, height: h)
+                    size = CGSize(width: w, height: h)
                 }
-                handleNewDashboardRequested()
+                // Home can be opened mid-session, so ask before replacing unsaved edits.
+                if saveState.hasUnsavedChanges && !isDefaultBlankDocument {
+                    pendingDocumentContinuation = .newBlankDashboard(size ?? canvasBoundsStore.size)
+                    isShowingNewDashboardAlert = true
+                } else {
+                    createBlankDashboard(size: size)
+                }
             }
             .onChange(of: showingSettings, initial: false) { _, showing in
                 if !showing {
@@ -4868,7 +4884,12 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                     continuePendingDocumentContinuationAfterDiscard()
                 }
                 Button("Cancel", role: .cancel) {
+                    let cameFromHome: Bool
+                    if case .newBlankDashboard = pendingDocumentContinuation { cameFromHome = true } else { cameFromHome = false }
                     pendingDocumentContinuation = nil
+                    if cameFromHome {
+                        NotificationCenter.default.post(name: .showHomeRequested, object: nil)
+                    }
                 }
             } message: {
                 Text("Your changes will be lost if you don’t save them.")
@@ -8162,8 +8183,8 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         saveState.currentFileName = url.deletingPathExtension().lastPathComponent
         saveState.hasAssociatedFile = true
         saveState.hasUnsavedChanges = false
-        saveState.isSaving = false
         saveState.lastSavedAt = Date()
+        saveState.isSaving = false
         saveThumbnail(for: url)
     }
 
@@ -8327,6 +8348,11 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
                     handleDocumentSaveCompletion(success: true, savedURL: url)
                 } else {
                     print("❌ Quick save failed for \(url.path). Falling back to Save As…")
+                    presentNotification(
+                        title: "Couldn't Save \(url.deletingPathExtension().lastPathComponent)",
+                        message: "Choose another location to save this dashboard.",
+                        durationSeconds: 7
+                    )
                     presentSavePanel(payload: payload)
                 }
             }
@@ -8391,6 +8417,15 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
     }
 #endif
 
+    private func presentSaveFailedNotification(fileName: String?) {
+        let target = fileName.map { "\($0) wasn't written to disk." } ?? "The dashboard wasn't written to disk."
+        presentNotification(
+            title: "Save Failed",
+            message: "\(target) Your changes are still open; try saving again or choose another location.",
+            durationSeconds: 7
+        )
+    }
+
     private func beginManualDocumentWrite() -> Bool {
         guard !isDocumentWriteInProgress else { return false }
         isDocumentWriteInProgress = true
@@ -8414,8 +8449,8 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
             saveState.hasAssociatedFile = true
             saveState.hasUnsavedChanges = false
             saveState.hasRealDocument = true
-            saveState.isSaving = false
             saveState.lastSavedAt = Date()
+            saveState.isSaving = false
             saveThumbnail(for: savedURL)
             continuePendingDocumentContinuationAfterSave()
         } else {
@@ -8463,6 +8498,8 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
             importDashboard(from: url)
         case .newDashboard:
             presentCanvasSizePrompt(.newDashboard)
+        case .newBlankDashboard(let size):
+            createBlankDashboard(size: size)
         case .closeWindow:
             windowCloseCoordinator.continuePendingClose()
         case .quitApplication:
@@ -9131,6 +9168,14 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         isInspectorVisible = false
 
         saveTabs()
+    }
+
+    /// Home's New Dashboard: applies the canvas size chosen there, then starts fresh.
+    private func createBlankDashboard(size: CGSize?) {
+        if let size {
+            canvasBoundsStore.size = size
+        }
+        handleNewDashboardRequested()
     }
 
     /// Handles the File > New Dashboard command by resetting all tabs,

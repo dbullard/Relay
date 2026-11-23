@@ -210,7 +210,7 @@ struct TextModuleView: View {
 
     var body: some View {
         VStack(alignment: resolvedStackAlignment, spacing: 6) {
-            if let header = model.header, !header.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let header = model.header?.trimmingCharacters(in: .whitespacesAndNewlines), !header.isEmpty {
                 headerView(header)
                     .frame(maxWidth: .infinity, alignment: resolvedHorizontalAlignment)
             }
@@ -340,6 +340,7 @@ struct TextModuleSettingsView: View {
     let onPersist: () -> Void
     @ObservedObject private var externalDevicesStore = ExternalDevicesStore.shared
     @State private var consoleSyncRevision = 0
+    @FocusState private var isHeaderFieldFocused: Bool
 
     #if os(macOS)
     @StateObject private var editor: RichTextEditorController
@@ -426,12 +427,18 @@ struct TextModuleSettingsView: View {
                 text: Binding(
                     get: { model.header ?? "" },
                     set: { newValue in
-                        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                        model.header = trimmed.isEmpty ? nil : trimmed
+                        // Keep spaces while typing ("Stage Notes"); trim when editing ends.
+                        let isBlank = newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        model.header = isBlank ? nil : newValue
                         onPersist()
                     }
                 )
             )
+            .focused($isHeaderFieldFocused)
+            .onSubmit { trimHeader() }
+            .onChange(of: isHeaderFieldFocused) { _, focused in
+                if !focused { trimHeader() }
+            }
 
             Toggle("Header background", isOn: Binding(
                 get: { model.showsHeaderBackground },
@@ -441,6 +448,15 @@ struct TextModuleSettingsView: View {
                 }
             ))
         }
+    }
+
+    private func trimHeader() {
+        guard let header = model.header else { return }
+        let trimmed = header.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved: String? = trimmed.isEmpty ? nil : trimmed
+        guard resolved != header else { return }
+        model.header = resolved
+        onPersist()
     }
 
     @ViewBuilder
