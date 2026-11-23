@@ -2006,6 +2006,16 @@ var body: some View {
     // MARK: - Center Canvas Layers
 
     /// Full-screen background with context menu, selection gestures, and drag-to-select.
+    /// When the empty canvas last saw a double-tap. The single-tap handlers run
+    /// simultaneously with the double-tap, and SwiftUI doesn't order the two on the
+    /// second tap, so the single tap skips itself just after a double-tap rather
+    /// than undoing it (deselecting the new tile, or re-hiding the live menu).
+    @State private var lastCanvasDoubleTapAt: Date = .distantPast
+
+    private var canvasDoubleTapJustHappened: Bool {
+        Date().timeIntervalSince(lastCanvasDoubleTapAt) < 0.4
+    }
+
     @ViewBuilder
     private func canvasBackgroundView() -> some View {
         if isLiveMode {
@@ -2016,7 +2026,7 @@ var body: some View {
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    guard isLiveModeChromeVisible else { return }
+                    guard isLiveModeChromeVisible, !canvasDoubleTapJustHappened else { return }
                     hideLiveModeChromeImmediately()
                 }
                 #if os(iOS)
@@ -2026,6 +2036,7 @@ var body: some View {
                 .simultaneousGesture(
                     TapGesture(count: 2).onEnded {
                         guard isIPad, !isLiveModeChromeVisible else { return }
+                        lastCanvasDoubleTapAt = Date()
                         showLiveModeChrome()
                         scheduleLiveModeChromeHide(delay: 4.0, respectsHover: false)
                     }
@@ -2040,6 +2051,7 @@ var body: some View {
                 .onTapGesture(count: 2) {
                     let isMirrorTabSelected = tabs.indices.contains(selectedTabIndex) && (tabs[selectedTabIndex].lanMirrorShareId != nil)
                     guard !isMirrorTabSelected else { return }
+                    lastCanvasDoubleTapAt = Date()
                     selectedTileIDs.removeAll()
                     editingTileID = nil
                     isInspectorVisible = false
@@ -2051,6 +2063,7 @@ var body: some View {
                 // double-tap above to fail (which lagged every deselect).
                 .simultaneousGesture(
                     TapGesture().onEnded {
+                        guard !canvasDoubleTapJustHappened else { return }
                         editingTileID = nil
                         isInspectorVisible = false
                         selectedTileIDs.removeAll()

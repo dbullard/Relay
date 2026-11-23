@@ -6,6 +6,18 @@ Method: 7 parallel code-reading audits by area, then spot verification. Items ma
 
 ---
 
+## Status — 23 November 2026
+
+All 15 top items and most of sections 3–4 are fixed in code (branches `fix/trust-items`, `feat/stale-display`, then `fix/live-mode-safety`, `feat/canvas-polish`, `feat/automation-safety`, `feat/module-polish`, `feat/settings-onboarding`). Both apps build and the covering unit tests pass. **None of it has been exercised in the running app yet.** The findings below are kept as written, for reference.
+
+Still open:
+- **Product decisions:** Shure Overview's severity-first sort (cards move when thresholds cross); renaming/merging the "External Connections / Integrations / External Devices / External Control" settings pages and splitting PCO setup across two of them; the spectrogram colour map (darkens toward its peak, no dB legend); the Access settings page being hidden on iPad.
+- **Not done (larger work):** iPad pan momentum and zoom rubber-banding; a ghost snap target while dragging tiles; edge auto-scroll while wiring in the graph; manual device add inside the setup wizard; replacing the remaining `asyncAfter`/`Task.sleep` sequencing (the toolbar device-menu ones were left deliberately); a full sweep of the 233 fixed font sizes, hit targets and `.help`-only text outside the files touched.
+- **Known existing bugs:** NDI "Retry Now" likely never appears (`NDIReceiver.runConnectionLoop` resets the retry count every attempt); one shared Resolume connection for all tiles, and its "active clips" include preview clips.
+- **Behaviour changes to know about:** Show Guides moved to ⌘' and Auto-Hide Menu to ⌃⌘M; a double-tap no longer exits Live Mode; DAW record needs a second tap within 3s; countdowns show "OVER +m:ss" after zero; Live Mode asks before countdown/timer Reset and before any automation Test/Run/Fire; the Integrations settings page now saves as you go.
+
+---
+
 ## 1. The short version
 
 Relay's interaction foundations are better than most apps:
