@@ -116,50 +116,67 @@ private struct WebpageModuleToolbar: View {
     @State private var canGoBack = false
     @State private var canGoForward = false
 
+    #if os(iOS)
+    private let hitTarget: CGFloat = 44
+    #else
+    private let hitTarget: CGFloat = 30
+    #endif
+
+    /// Icon-only label whose whole square is tappable, not just the glyph.
+    private func toolbarLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .labelStyle(.iconOnly)
+            .frame(width: hitTarget, height: hitTarget)
+            .contentShape(.rect)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Button {
                 NotificationCenter.default.post(name: .webpageModuleGoBack, object: model.id)
             } label: {
-                Image(systemName: "chevron.backward")
+                toolbarLabel("Back", systemImage: "chevron.backward")
             }
             .buttonStyle(.plain)
-            .frame(width: 30, height: 30)
+            .help("Back")
             .disabled(!canGoBack)
 
             Button {
                 NotificationCenter.default.post(name: .webpageModuleGoForward, object: model.id)
             } label: {
-                Image(systemName: "chevron.forward")
+                toolbarLabel("Forward", systemImage: "chevron.forward")
             }
             .buttonStyle(.plain)
-            .frame(width: 30, height: 30)
+            .help("Forward")
             .disabled(!canGoForward)
 
             Button {
                 NotificationCenter.default.post(name: .webpageModuleReload, object: model.id)
             } label: {
-                Image(systemName: "arrow.clockwise")
+                toolbarLabel("Reload", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.plain)
-            .frame(width: 30, height: 30)
+            .help("Reload")
 
             Button {
                 setWebpageViewportBypass(model.id, !webInteractionModeEnabled)
             } label: {
-                Image(systemName: webInteractionModeEnabled ? "hand.draw.fill" : "hand.draw")
+                toolbarLabel(
+                    "Webpage Gesture Mode",
+                    systemImage: webInteractionModeEnabled ? "hand.draw.fill" : "hand.draw"
+                )
+                .foregroundStyle(webInteractionModeEnabled ? Color.red : .primary)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(webInteractionModeEnabled ? Color.red.opacity(0.16) : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(webInteractionModeEnabled ? Color.red.opacity(0.45) : Color.clear, lineWidth: 1)
+                )
             }
             .buttonStyle(.plain)
-            .frame(width: 30, height: 30)
-            .foregroundStyle(webInteractionModeEnabled ? Color.red : .primary)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(webInteractionModeEnabled ? Color.red.opacity(0.16) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(webInteractionModeEnabled ? Color.red.opacity(0.45) : Color.clear, lineWidth: 1)
-            )
+            .accessibilityAddTraits(webInteractionModeEnabled ? .isSelected : [])
             .help(
                 webInteractionModeEnabled
                     ? "Disable webpage gesture mode"
@@ -176,15 +193,16 @@ private struct WebpageModuleToolbar: View {
                 UIApplication.shared.open(url)
                 #endif
             } label: {
-                Image(systemName: "safari")
+                toolbarLabel("Open in Browser", systemImage: "safari")
             }
             .buttonStyle(.plain)
-            .frame(width: 30, height: 30)
+            .help("Open in Browser")
             .disabled(model.normalizedURL == nil)
         }
         .font(.system(size: 15, weight: .semibold))
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        // Same overall bar height as before; iPad's taller targets take up the padding.
+        .padding(.vertical, hitTarget > 30 ? 3 : 10)
         .background(Color.white.opacity(0.06))
         .onReceive(NotificationCenter.default.publisher(for: .webpageModuleNavigationStateChanged)) { note in
             guard let payload = note.object as? WebpageNavigationState,
@@ -226,6 +244,7 @@ struct WebpageModuleSettingsView: View {
     @StateObject private var favoritesStore = WebpageFavoritesStore.shared
     @State private var favoritesExpanded = false
     @State private var urlInput: String = ""
+    @FocusState private var urlFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -234,19 +253,28 @@ struct WebpageModuleSettingsView: View {
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
+                // Commits on Return or focus loss, not per keystroke: every commit
+                // reloads the page.
                 TextField("https://example.com", text: $urlInput)
                     .textFieldStyle(.roundedBorder)
+                    .focused($urlFieldFocused)
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    #endif
+                    .onSubmit { commitURLInput() }
                     .onAppear {
                         urlInput = model.urlString
                     }
+                    .onDisappear { commitURLInput() }
+                    .onChange(of: urlFieldFocused) { _, focused in
+                        if !focused { commitURLInput() }
+                    }
                     .onChange(of: model.urlString, initial: false) { _, newValue in
-                        if urlInput != newValue {
+                        if urlInput != newValue && !urlFieldFocused {
                             urlInput = newValue
                         }
-                    }
-                    .onChange(of: urlInput, initial: false) { _, newValue in
-                        model.urlString = newValue
-                        onPersist()
                     }
 
                 Button {
@@ -396,6 +424,12 @@ struct WebpageModuleSettingsView: View {
         favoritesStore.contains(urlString: model.trimmedURLString)
     }
 
+    private func commitURLInput() {
+        guard urlInput != model.urlString else { return }
+        model.urlString = urlInput
+        onPersist()
+    }
+
     private func toggleCurrentFavorite() {
         guard let url = model.normalizedURL else { return }
 
@@ -424,10 +458,67 @@ private struct WebpageWebViewContainer: View {
     let webInteractionModeEnabled: Bool
 
     @State private var revision: Int = 0
+    @State private var isLoading = false
+    @State private var hasFinishedLoad = false
+    @State private var loadErrorMessage: String?
 
     var body: some View {
         let viewID = "\(model.id.uuidString)-\(revision)-\(model.sessionMode.rawValue)"
 
+        webView(viewID: viewID)
+            .overlay(alignment: .topTrailing) {
+                // In Live Mode only the first load shows a spinner, so auto-refresh
+                // doesn't flash one on a live screen.
+                if isLoading && (showsToolbar || !hasFinishedLoad) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(6)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(8)
+                        .accessibilityLabel("Loading webpage")
+                        .transition(.opacity)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let loadErrorMessage {
+                    HStack(spacing: 8) {
+                        Label {
+                            Text("Couldn't load page: \(loadErrorMessage)")
+                                .lineLimit(2)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                        .font(.caption)
+                        Spacer(minLength: 4)
+                        Button("Retry") {
+                            NotificationCenter.default.post(name: .webpageModuleReload, object: model.id)
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(8)
+                    .transition(.opacity)
+                }
+            }
+            .animation(.spring(duration: 0.3, bounce: 0), value: isLoading)
+            .animation(.spring(duration: 0.3, bounce: 0), value: loadErrorMessage)
+            .onReceive(NotificationCenter.default.publisher(for: .webpageModuleNavigationStateChanged)) { note in
+                guard let payload = note.object as? WebpageNavigationState,
+                      payload.moduleID == model.id else {
+                    return
+                }
+                isLoading = payload.isLoading
+                loadErrorMessage = payload.errorMessage
+                if !payload.isLoading && payload.errorMessage == nil && payload.hasContent {
+                    hasFinishedLoad = true
+                }
+            }
+    }
+
+    private func webView(viewID: String) -> some View {
         WebpageWebViewRepresentable(
             moduleID: model.id,
             url: model.normalizedURL,
@@ -555,7 +646,14 @@ private enum WebpageModuleFactory {
         coordinator.registerNotifications()
         NotificationCenter.default.post(
             name: .webpageModuleNavigationStateChanged,
-            object: WebpageNavigationState(moduleID: moduleID, canGoBack: false, canGoForward: false)
+            object: WebpageNavigationState(
+                moduleID: moduleID,
+                canGoBack: false,
+                canGoForward: false,
+                isLoading: false,
+                errorMessage: nil,
+                hasContent: false
+            )
         )
         return webView
     }
@@ -569,6 +667,8 @@ private final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var timer: Timer?
     private var configuredRefreshInterval: Double?
     private var notificationsRegistered = false
+    /// Last navigation error shown on the tile; cleared when the next load starts.
+    private var lastErrorMessage: String?
 
     init(moduleID: UUID) {
         self.moduleID = moduleID
@@ -608,6 +708,7 @@ private final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         if currentRevision != revision {
             currentRevision = revision
             lastLoadedURL = nil
+            lastErrorMessage = nil
         }
 
         if let url, lastLoadedURL != url || webView.url == nil {
@@ -657,9 +758,28 @@ private final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
             object: WebpageNavigationState(
                 moduleID: moduleID,
                 canGoBack: webView.canGoBack,
-                canGoForward: webView.canGoForward
+                canGoForward: webView.canGoForward,
+                isLoading: webView.isLoading,
+                errorMessage: lastErrorMessage,
+                hasContent: webView.url != nil
             )
         )
+    }
+
+    /// Cancelled navigations (a new load replacing one in flight) aren't failures.
+    private static func isIgnorableNavigationError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return true }
+        // WebKitErrorFrameLoadInterruptedByPolicyChange: e.g. a link we opened externally.
+        if nsError.domain == "WebKitErrorDomain" && nsError.code == 102 { return true }
+        return false
+    }
+
+    private func recordNavigationError(_ error: Error, for webView: WKWebView) {
+        if !Self.isIgnorableNavigationError(error) {
+            lastErrorMessage = error.localizedDescription
+        }
+        publishNavigationState(for: webView)
     }
 
     @objc private func goBack() {
@@ -671,7 +791,13 @@ private final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     @objc private func reloadPage() {
-        webView?.reload()
+        guard let webView else { return }
+        // After a failed first load there is nothing to reload; load the URL again.
+        if (webView.url == nil || lastErrorMessage != nil), let url = lastLoadedURL {
+            webView.load(URLRequest(url: url))
+        } else {
+            webView.reload()
+        }
     }
 
     @objc private func resetSession() {
@@ -684,19 +810,21 @@ private final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        lastErrorMessage = nil
         publishNavigationState(for: webView)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        lastErrorMessage = nil
         publishNavigationState(for: webView)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        publishNavigationState(for: webView)
+        recordNavigationError(error, for: webView)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        publishNavigationState(for: webView)
+        recordNavigationError(error, for: webView)
     }
 
     func webView(
@@ -745,6 +873,9 @@ private struct WebpageNavigationState {
     let moduleID: UUID
     let canGoBack: Bool
     let canGoForward: Bool
+    let isLoading: Bool
+    let errorMessage: String?
+    let hasContent: Bool
 }
 
 private enum WebpageSessionStore {

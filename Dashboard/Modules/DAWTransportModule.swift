@@ -2308,6 +2308,34 @@ final class DAWTransportViewModel: ObservableObject {
 
 }
 
+/// Makes starting a recording deliberate: the first tap arms Record for a few seconds
+/// and a second tap inside that window sends it. Stopping (tapping while already
+/// recording) sends straight away.
+struct DAWRecordArmGate: Equatable {
+    static let window: TimeInterval = 3
+
+    private(set) var armedUntil: Date?
+
+    func isArmed(at now: Date) -> Bool {
+        guard let armedUntil else { return false }
+        return now < armedUntil
+    }
+
+    /// Returns true when this tap should send Record to the DAW.
+    mutating func registerTap(at now: Date, isRecording: Bool) -> Bool {
+        if isRecording || isArmed(at: now) {
+            armedUntil = nil
+            return true
+        }
+        armedUntil = now.addingTimeInterval(Self.window)
+        return false
+    }
+
+    mutating func reset() {
+        armedUntil = nil
+    }
+}
+
 private let dawTransportReadProc: MIDIReadProc = { pktList, readProcRefCon, srcConnRefCon in
     guard let readProcRefCon else { return }
     let viewModel = Unmanaged<DAWTransportViewModel>.fromOpaque(readProcRefCon).takeUnretainedValue()
@@ -2324,8 +2352,10 @@ struct DAWTransportTileView: View {
 
     @Environment(\.tileTextFormatting) private var tileTextFormatting
     @Environment(\.tileCornerRadius) private var tileCornerRadius
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @StateObject private var viewModel: DAWTransportViewModel
+    @State private var recordArmGate = DAWRecordArmGate()
 
     init(moduleId: UUID, config: Binding<DAWTransportModuleConfiguration>, isLiveMode: Bool) {
         self._config = config
@@ -2407,6 +2437,9 @@ struct DAWTransportTileView: View {
                     }
                 }
                 Spacer()
+                if viewModel.isRecordEnabled {
+                    recordingBadge
+                }
                 statusIndicator
             }
 
@@ -2437,14 +2470,15 @@ struct DAWTransportTileView: View {
                 HStack(spacing: 8) {
                     ForEach(DAWTransportCommand.allCases) { command in
                         Button {
-                            viewModel.send(command, isLiveMode: isLiveMode)
+                            handleTransportTap(command)
                         } label: {
                             VStack(spacing: 4) {
-                                Image(systemName: command.systemImage)
+                                Image(systemName: buttonSystemImage(for: command))
                                     .font(.system(size: buttonIconSize, weight: .semibold))
-                                Text(command.title)
+                                Text(buttonTitle(for: command))
                                     .font(.system(size: buttonLabelSize, weight: .medium))
                                     .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
                             }
                             .frame(maxWidth: .infinity, minHeight: buttonMinHeight)
                             .background(
@@ -2457,8 +2491,20 @@ struct DAWTransportTileView: View {
                         .buttonStyle(.bordered)
                         .disabled(!isLiveMode || !viewModel.isOutputConnected)
                         .tint(buttonTintColor(for: command))
-                        .help(isLiveMode ? command.title : "Switch to Live Mode to control transport.")
+                        .help(isLiveMode ? buttonHelp(for: command) : "Switch to Live Mode to control transport.")
+                        .accessibilityLabel(command.title)
+                        .accessibilityValue(buttonAccessibilityValue(for: command))
+                        .accessibilityAddTraits(isCommandActive(command) ? .isSelected : [])
                     }
+                }
+                .task(id: recordArmGate.armedUntil) {
+                    guard let armedUntil = recordArmGate.armedUntil else { return }
+                    try? await Task.sleep(for: .seconds(max(0, armedUntil.timeIntervalSinceNow)))
+                    guard !Task.isCancelled else { return }
+                    recordArmGate.reset()
+                }
+                .onChange(of: isLiveMode) { _, _ in
+                    recordArmGate.reset()
                 }
             }
 
@@ -2500,12 +2546,77 @@ struct DAWTransportTileView: View {
         }
     }
 
+    private var isRecordArmed: Bool {
+        recordArmGate.isArmed(at: Date())
+    }
+
+    private func handleTransportTap(_ command: DAWTransportCommand) {
+        guard command == .record else {
+            recordArmGate.reset()
+            viewModel.send(command, isLiveMode: isLiveMode)
+            return
+        }
+        if recordArmGate.registerTap(at: Date(), isRecording: viewModel.isRecordEnabled) {
+            viewModel.send(.record, isLiveMode: isLiveMode)
+        }
+    }
+
+    private func isCommandActive(_ command: DAWTransportCommand) -> Bool {
+        switch command {
+        case .play: return viewModel.isPlaying
+        case .record: return viewModel.isRecordEnabled
+        case .rewind, .stop, .fastForward: return false
+        }
+    }
+
+    private func buttonTitle(for command: DAWTransportCommand) -> String {
+        switch command {
+        case .play:
+            return viewModel.isPlaying ? "Playing" : command.title
+        case .record:
+            if viewModel.isRecordEnabled { return "Recording" }
+            return isRecordArmed ? "Tap again" : command.title
+        case .rewind, .stop, .fastForward:
+            return command.title
+        }
+    }
+
+    private func buttonSystemImage(for command: DAWTransportCommand) -> String {
+        switch command {
+        case .play:
+            return viewModel.isPlaying ? "play.circle.fill" : command.systemImage
+        case .record:
+            if viewModel.isRecordEnabled { return command.systemImage }
+            return isRecordArmed ? "exclamationmark.circle.fill" : "record.circle"
+        case .rewind, .stop, .fastForward:
+            return command.systemImage
+        }
+    }
+
+    private func buttonHelp(for command: DAWTransportCommand) -> String {
+        guard command == .record, !viewModel.isRecordEnabled else { return command.title }
+        return isRecordArmed ? "Tap again to start recording." : "Tap twice to start recording."
+    }
+
+    private func buttonAccessibilityValue(for command: DAWTransportCommand) -> String {
+        switch command {
+        case .play:
+            return viewModel.isPlaying ? "Playing" : ""
+        case .record:
+            if viewModel.isRecordEnabled { return "Recording" }
+            return isRecordArmed ? "Armed, activate again to record" : ""
+        case .rewind, .stop, .fastForward:
+            return ""
+        }
+    }
+
     private func buttonTintColor(for command: DAWTransportCommand) -> Color? {
         switch command {
         case .play:
             return viewModel.isPlaying ? .green : nil
         case .record:
-            return viewModel.isRecordEnabled ? .red : nil
+            if viewModel.isRecordEnabled { return .red }
+            return isRecordArmed ? .orange : nil
         case .rewind, .stop, .fastForward:
             return nil
         }
@@ -2516,23 +2627,54 @@ struct DAWTransportTileView: View {
         case .play:
             return viewModel.isPlaying ? Color.green.opacity(0.20) : .clear
         case .record:
-            guard viewModel.isRecordEnabled else { return .clear }
+            guard viewModel.isRecordEnabled else {
+                return isRecordArmed ? Color.orange.opacity(0.22) : .clear
+            }
+            // Reduce Motion: a steady fill instead of the flash.
+            if reduceMotion { return Color.red.opacity(0.24) }
             return viewModel.isRecordFlashVisible ? Color.red.opacity(0.28) : Color.red.opacity(0.12)
         case .rewind, .stop, .fastForward:
             return .clear
         }
     }
 
+    private var recordingBadge: some View {
+        Label("REC", systemImage: "record.circle.fill")
+            .font(.system(size: max(11, baseFontSize * 0.46), weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.red, in: Capsule(style: .continuous))
+            .accessibilityLabel("Recording")
+    }
+
+    private var statusForeground: Color {
+        switch viewModel.connectionState {
+        case .connected: return .green
+        case .stale: return .orange
+        case .paused, .disconnected: return secondaryColor
+        }
+    }
+
     private var statusIndicator: some View {
-        Image(systemName: viewModel.connectionState.systemImage)
-            .font(.system(size: baseFontSize * 0.52, weight: .semibold))
-            .foregroundStyle(viewModel.connectionState.tint)
-            .frame(width: 28, height: 28)
-            .background(
-                Circle()
-                    .fill(viewModel.connectionState.tint.opacity(0.14))
-            )
-            .help(viewModel.connectionStatusText)
+        Label {
+            Text(viewModel.connectionStatusText)
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: viewModel.connectionState.systemImage)
+        }
+        .font(.system(size: max(11, baseFontSize * 0.46), weight: .semibold))
+        .foregroundStyle(statusForeground)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule(style: .continuous)
+                .fill(viewModel.connectionState.tint.opacity(0.14))
+        )
+        .help(viewModel.connectionStatusText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Connection")
+        .accessibilityValue(viewModel.connectionStatusText)
     }
 }
 

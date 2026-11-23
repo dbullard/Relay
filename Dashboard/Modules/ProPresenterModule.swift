@@ -2911,12 +2911,11 @@ struct ProPresenterModuleView: View {
     @AppStorage("propresenter_profiles") private var profilesData: Data = Data()
 
     private var profiles: [ProPresenterConnectionProfile] {
-        guard !profilesData.isEmpty else { return [] }
-        return (try? JSONDecoder().decode([ProPresenterConnectionProfile].self, from: profilesData)) ?? []
+        ProPresenterProfilesDecodeCache.profiles(from: profilesData)
     }
 
     private var sortedProfiles: [ProPresenterConnectionProfile] {
-        profiles.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        ProPresenterProfilesDecodeCache.sortedProfiles(from: profilesData)
     }
 
     private func preferredProfileID() -> UUID? {
@@ -2994,15 +2993,16 @@ struct ProPresenterModuleView: View {
         }
     }
 
-    private var messageTimestampFormatter: DateFormatter {
+    /// Built once: `body` runs on every poll, and DateFormatter is expensive to create.
+    private static let messageTimestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "h:mm:ss a"
         return formatter
-    }
+    }()
 
     private func formattedMessageTimestamp(_ date: Date?) -> String? {
         guard let date else { return nil }
-        return messageTimestampFormatter.string(from: date)
+        return Self.messageTimestampFormatter.string(from: date)
     }
 
     private func thumbnailImage(from data: Data?) -> Image? {
@@ -3940,12 +3940,11 @@ struct ProPresenterModuleEditView: View {
     @AppStorage("propresenter_profiles") private var profilesData: Data = Data()
 
     private var profiles: [ProPresenterConnectionProfile] {
-        guard !profilesData.isEmpty else { return [] }
-        return (try? JSONDecoder().decode([ProPresenterConnectionProfile].self, from: profilesData)) ?? []
+        ProPresenterProfilesDecodeCache.profiles(from: profilesData)
     }
 
     private var sortedProfiles: [ProPresenterConnectionProfile] {
-        profiles.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        ProPresenterProfilesDecodeCache.sortedProfiles(from: profilesData)
     }
 
     private func preferredProfileID() -> UUID? {
@@ -4284,5 +4283,33 @@ struct ProPresenterModulePlugin: DashboardModulePlugin {
             }
             .padding()
         )
+    }
+}
+
+/// Decodes the saved ProPresenter profiles once per change of the stored blob instead of
+/// on every `body` pass (the tile re-renders on every poll). Main-actor only, like the views.
+enum ProPresenterProfilesDecodeCache {
+    private static var lastData: Data?
+    private static var lastProfiles: [ProPresenterConnectionProfile] = []
+    private static var lastSortedProfiles: [ProPresenterConnectionProfile] = []
+
+    static func profiles(from data: Data) -> [ProPresenterConnectionProfile] {
+        refreshIfNeeded(data)
+        return lastProfiles
+    }
+
+    static func sortedProfiles(from data: Data) -> [ProPresenterConnectionProfile] {
+        refreshIfNeeded(data)
+        return lastSortedProfiles
+    }
+
+    private static func refreshIfNeeded(_ data: Data) {
+        guard data != lastData else { return }
+        lastData = data
+        let decoded: [ProPresenterConnectionProfile] = data.isEmpty
+            ? []
+            : ((try? JSONDecoder().decode([ProPresenterConnectionProfile].self, from: data)) ?? [])
+        lastProfiles = decoded
+        lastSortedProfiles = decoded.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }

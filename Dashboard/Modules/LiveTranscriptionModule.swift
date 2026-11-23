@@ -905,6 +905,10 @@ final class LiveTranscriptionController: ObservableObject {
 
     @Published private(set) var state: LiveTranscriptionState = .idle
     @Published private(set) var entries: [TranscriptEntry] = []
+    /// True while the transcript removed by the last Clear can be restored.
+    @Published private(set) var canUndoClear = false
+    private var clearedEntriesSnapshot: [TranscriptEntry] = []
+    private var clearedRecentFinalsSnapshot: [UUID: [RecentFinalRecord]] = [:]
     let levelCell = LiveTranscriptionLevelCell()
     /// Not `@Published`; see `LiveTranscriptionLevelCell`. Still feeds the output payload.
     private(set) var inputLevel: Double = 0 {
@@ -1122,9 +1126,41 @@ final class LiveTranscriptionController: ObservableObject {
     /// cumulative text, so dropping that state would make already-cleared lines reappear
     /// on the next partial result.
     func clearOutputs() {
+        // Keep what was cleared so "Undo Clear" can put it back. An empty transcript
+        // keeps the previous snapshot, so a second Clear doesn't lose the undo.
+        if !entries.isEmpty {
+            clearedEntriesSnapshot = entries
+            clearedRecentFinalsSnapshot = recentFinals
+            canUndoClear = true
+        }
         entries.removeAll()
         recentFinals.removeAll()
         LiveTranscriptionOutputStore.shared.clear(tileId: tileId)
+    }
+
+    /// Restores the transcript removed by the last Clear, merged in time order with
+    /// anything transcribed since.
+    func undoClear() {
+        guard canUndoClear else { return }
+        let restored = Self.trimmedEntries(
+            Self.entriesRestoringClear(clearedEntriesSnapshot, into: entries),
+            retention: settings.retention
+        )
+        recentFinals.merge(clearedRecentFinalsSnapshot) { current, _ in current }
+        clearedEntriesSnapshot = []
+        clearedRecentFinalsSnapshot = [:]
+        canUndoClear = false
+        entries = restored
+        publishOutputs(entries: restored)
+    }
+
+    /// Cleared entries put back ahead of (and sorted with) the current ones, without duplicates.
+    nonisolated static func entriesRestoringClear(
+        _ cleared: [TranscriptEntry],
+        into current: [TranscriptEntry]
+    ) -> [TranscriptEntry] {
+        let currentIDs = Set(current.map(\.id))
+        return sortedByTimestamp(cleared.filter { !currentIDs.contains($0.id) } + current)
     }
 
     private func resetStreamTracking() {
@@ -2215,6 +2251,7 @@ struct LiveTranscriptionTileView: View {
     @State private var scrollerAlpha: CGFloat = 0.0
     @State private var scrollerHideWorkItem: DispatchWorkItem?
     @State private var relativeTimestampRefreshDate: Date = Date()
+    @State private var showsClearUndoBanner = false
     private let chromeTextColor = Color.white.opacity(0.72)
 
     private var effectiveLiveMode: Bool {
@@ -2632,6 +2669,27 @@ struct LiveTranscriptionTileView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+                if showsClearUndoBanner && controller.canUndoClear {
+                    HStack(spacing: 8) {
+                        Label("Transcript cleared", systemImage: "trash")
+                            .font(.system(size: metadataFontSize, weight: .medium))
+                            .foregroundStyle(chromeTextColor)
+                            .lineLimit(1)
+                        Button("Undo") {
+                            controller.undoClear()
+                            showsClearUndoBanner = false
+                        }
+                        .font(.system(size: metadataFontSize, weight: .semibold))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .task {
+                        try? await Task.sleep(for: .seconds(10))
+                        guard !Task.isCancelled else { return }
+                        showsClearUndoBanner = false
+                    }
+                }
+
                 if let warning = controller.sourceWarning, effectiveLiveMode {
                     Text(warning)
                         .font(.caption2)
@@ -2668,11 +2726,24 @@ struct LiveTranscriptionTileView: View {
             Menu {
                 Button("Export Transcript (.txt)") { exportTranscript(model: model) }
                 Button("Copy Transcript") { copyTranscript(model: model) }
-                Button("Clear") { controller.clearOutputs() }
+                Divider()
+                if controller.canUndoClear {
+                    Button("Undo Clear") {
+                        controller.undoClear()
+                        showsClearUndoBanner = false
+                    }
+                }
+                Button("Clear Transcript", role: .destructive) {
+                    controller.clearOutputs()
+                    showsClearUndoBanner = controller.canUndoClear
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .frame(minWidth: 28, minHeight: 28)
+                    .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Transcript actions")
         }
     }
 

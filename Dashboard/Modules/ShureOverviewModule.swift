@@ -1159,16 +1159,21 @@ private struct ShureOverviewLiveAudioIndicator: View {
 private struct ShureOverviewAlertBorder: View {
     @ObservedObject var hub: ShureOverviewHub
     let tint: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let blinkOn = hub.blinkPhase
+        // Reduce Motion: no blinking; a steady, heavier, high-contrast border instead.
+        let blinkOn = reduceMotion || hub.blinkPhase
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .strokeBorder(tint.opacity(blinkOn ? 0.9 : 0.35), lineWidth: blinkOn ? 1.8 : 1.0)
+            .strokeBorder(
+                tint.opacity(reduceMotion ? 1.0 : (blinkOn ? 0.9 : 0.35)),
+                lineWidth: reduceMotion ? 2.4 : (blinkOn ? 1.8 : 1.0)
+            )
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(tint.opacity(blinkOn ? 0.08 : 0.03))
             )
-            .animation(.easeInOut(duration: 0.3), value: blinkOn)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: blinkOn)
     }
 }
 
