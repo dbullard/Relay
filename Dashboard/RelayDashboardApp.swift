@@ -191,13 +191,13 @@ struct RelayDashboardApp: App {
             )) {
                 RelayLaunchScreenView(
                     onOpenRecent: { url in
-                        // User hasn't touched the blank canvas — discard it silently.
-                        DashboardSaveState.shared.hasUnsavedChanges = false
+                        // Don't clear hasUnsavedChanges here: Home can be opened mid-session
+                        // (⌘⇧0), and the root's open path already skips the save prompt for
+                        // the untouched default blank document.
                         DashboardDocumentController.shared.openSpecificDocument(url)
                         launchScreenDismissed = true
                     },
                     onNewDashboard: { size in
-                        DashboardSaveState.shared.hasUnsavedChanges = false
                         launchScreenDismissed = true
                         // Delay so the home sheet finishes dismissing, then create the blank document.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -209,7 +209,6 @@ struct RelayDashboardApp: App {
                         }
                     },
                     onOpenFile: {
-                        DashboardSaveState.shared.hasUnsavedChanges = false
                         launchScreenDismissed = true
                         DashboardHomeScreenState.shared.openPickerLaunchedFromHome = true
                         // Delay so the home sheet finishes dismissing before the
@@ -246,7 +245,6 @@ struct RelayDashboardApp: App {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .showHomeRequested)) { _ in
-                DashboardSaveState.shared.hasUnsavedChanges = false
                 launchScreenDismissed = false
             }
             .onReceive(NotificationCenter.default.publisher(for: .dismissHomeRequested)) { _ in

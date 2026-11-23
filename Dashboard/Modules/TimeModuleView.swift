@@ -116,11 +116,16 @@ struct TimeModuleView: View {
     private struct CountdownRuntimeState {
         var remainingSeconds: Int
         var isRunning: Bool
+        /// When a running countdown reaches zero. Time is derived from this, so ticks
+        /// skipped while typing, off-screen or with the ticker paused don't lose time.
+        var endDate: Date?
     }
 
     private struct TimerRuntimeState {
         var elapsedSeconds: Int
         var isRunning: Bool
+        /// When a running timer would have started from zero (now − elapsed).
+        var startDate: Date?
     }
 
     private final class CountdownRuntimeStore {
@@ -219,6 +224,7 @@ struct TimeModuleView: View {
     }
     @State private var remainingSeconds: Int = 300
     @State private var isCountdownRunning: Bool = false
+    @State private var countdownEndDate: Date? = nil
 
     // Clock settings
 
@@ -248,6 +254,7 @@ struct TimeModuleView: View {
     }
     @State private var timerSeconds: Int = 0
     @State private var isTimerRunning: Bool = false
+    @State private var timerStartDate: Date? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -296,13 +303,28 @@ struct TimeModuleView: View {
         .onChange(of: remainingSeconds, initial: false) { _, _ in
             persistCountdownRuntimeState()
         }
-        .onChange(of: isCountdownRunning, initial: false) { _, _ in
+        .onChange(of: isCountdownRunning, initial: false) { _, running in
+            if running {
+                // Keep an end date restored from the runtime store; otherwise anchor now.
+                if countdownEndDate == nil {
+                    countdownEndDate = Date().addingTimeInterval(TimeInterval(remainingSeconds))
+                }
+            } else {
+                countdownEndDate = nil
+            }
             persistCountdownRuntimeState()
         }
         .onChange(of: timerSeconds, initial: false) { _, _ in
             persistTimerRuntimeState()
         }
-        .onChange(of: isTimerRunning, initial: false) { _, _ in
+        .onChange(of: isTimerRunning, initial: false) { _, running in
+            if running {
+                if timerStartDate == nil {
+                    timerStartDate = Date().addingTimeInterval(-TimeInterval(timerSeconds))
+                }
+            } else {
+                timerStartDate = nil
+            }
             persistTimerRuntimeState()
         }
     }
@@ -380,11 +402,12 @@ struct TimeModuleView: View {
                 remainingSeconds = countdownSeconds
             }
         }
-        .onReceive(sharedTick) { _ in
+        .onReceive(sharedTick) { date in
+            // Skipping a tick only delays the redraw: the value comes from the end date.
             guard !isTextInputActive else { return }
             guard selectedMode == .countdown else { return }
-            guard isCountdownRunning, remainingSeconds > 0 else { return }
-            remainingSeconds -= 1
+            guard isCountdownRunning, let countdownEndDate else { return }
+            remainingSeconds = TimeModuleClock.countdownRemaining(endDate: countdownEndDate, now: date)
             if remainingSeconds <= 0 {
                 isCountdownRunning = false
             }
@@ -419,11 +442,11 @@ struct TimeModuleView: View {
         }
         .multilineTextAlignment(resolvedTextAlignment)
         .frame(maxWidth: .infinity, alignment: resolvedHorizontalAlignment)
-        .onReceive(sharedTick) { _ in
+        .onReceive(sharedTick) { date in
             guard !isTextInputActive else { return }
             guard selectedMode == .timer else { return }
-            guard isTimerRunning else { return }
-            timerSeconds += 1
+            guard isTimerRunning, let timerStartDate else { return }
+            timerSeconds = TimeModuleClock.timerElapsed(startDate: timerStartDate, now: date)
         }
     }
 
@@ -447,15 +470,24 @@ struct TimeModuleView: View {
             persistCountdownRuntimeState()
             return
         }
-        remainingSeconds = state.remainingSeconds
-        isCountdownRunning = state.isRunning
+        if state.isRunning, let endDate = state.endDate {
+            // Catch up on time that passed while this tile wasn't on screen.
+            let remaining = TimeModuleClock.countdownRemaining(endDate: endDate, now: Date())
+            remainingSeconds = remaining
+            countdownEndDate = remaining > 0 ? endDate : nil
+            isCountdownRunning = remaining > 0
+        } else {
+            remainingSeconds = state.remainingSeconds
+            isCountdownRunning = state.isRunning
+        }
     }
 
     private func persistCountdownRuntimeState() {
         CountdownRuntimeStore.shared.setState(
             CountdownRuntimeState(
                 remainingSeconds: remainingSeconds,
-                isRunning: isCountdownRunning
+                isRunning: isCountdownRunning,
+                endDate: countdownEndDate
             ),
             for: moduleID
         )
@@ -467,7 +499,12 @@ struct TimeModuleView: View {
             persistTimerRuntimeState()
             return
         }
-        timerSeconds = state.elapsedSeconds
+        if state.isRunning, let startDate = state.startDate {
+            timerSeconds = TimeModuleClock.timerElapsed(startDate: startDate, now: Date())
+            timerStartDate = startDate
+        } else {
+            timerSeconds = state.elapsedSeconds
+        }
         isTimerRunning = state.isRunning
     }
 
@@ -475,7 +512,8 @@ struct TimeModuleView: View {
         TimerRuntimeStore.shared.setState(
             TimerRuntimeState(
                 elapsedSeconds: timerSeconds,
-                isRunning: isTimerRunning
+                isRunning: isTimerRunning,
+                startDate: timerStartDate
             ),
             for: moduleID
         )
@@ -515,6 +553,19 @@ struct TimeModuleView: View {
 
     // formattedClockTime(_:) and formattedClockDate(_:) removed: replaced by formatter cache and precomputed strings.
 }
+/// Wall-clock math for the Time module's countdown and timer.
+enum TimeModuleClock {
+    /// Whole seconds left, rounded up so the display reads 0:00 only once time is really up.
+    static func countdownRemaining(endDate: Date, now: Date) -> Int {
+        max(0, Int((endDate.timeIntervalSince(now)).rounded(.up)))
+    }
+
+    /// Whole seconds elapsed since `startDate`.
+    static func timerElapsed(startDate: Date, now: Date) -> Int {
+        max(0, Int(now.timeIntervalSince(startDate).rounded(.down)))
+    }
+}
+
 private struct TimeModePicker: View {
     @Binding var config: TimeModuleConfig
     let onPersist: () -> Void

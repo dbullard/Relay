@@ -41,6 +41,9 @@ struct ExternalDevicesSettingsView: View {
     @State private var showingEditor = false
     @State private var pendingNewDeviceID: ExternalDeviceConfig.ID? = nil
     @State private var didConfirmNewDevice: Bool = false
+    /// The device as it was when the editor opened. Edits apply live, so Cancel
+    /// (or dismissing without Save) restores this copy.
+    @State private var editorSnapshot: ExternalDeviceConfig?
     @State private var showsDiscoverySheet: Bool = false
     @State private var isRefreshingShureAfterScan: Bool = false
     @State private var shureRefreshStatus: String = "Refreshing Shure device names…"
@@ -462,6 +465,10 @@ struct ExternalDevicesSettingsView: View {
             guard store.devices.contains(where: { $0.id == id }) else { return }
             openEditor(for: id, proxy: proxy)
         }
+        .onChange(of: showingEditor) { _, isShowing in
+            guard isShowing else { return }
+            editorSnapshot = selectedDeviceID.flatMap { id in store.devices.first(where: { $0.id == id }) }
+        }
         .sheet(isPresented: $showingEditor, onDismiss: handleEditorDismiss) {
             if let binding = selectedBinding {
                 VStack(spacing: 0) {
@@ -476,7 +483,7 @@ struct ExternalDevicesSettingsView: View {
                         .keyboardShortcut(.cancelAction)
                         Button("Save") {
                             // Changes are applied live via onChange in the editor,
-                            // so Save simply closes the sheet.
+                            // so Save keeps them; Cancel restores `editorSnapshot`.
                             didConfirmNewDevice = true
                             showingEditor = false
                         }
@@ -1696,13 +1703,17 @@ struct ExternalDevicesSettingsView: View {
                 Text("Edit Device")
                     .font(.headline)
                 Spacer()
-                Button("Close") {
+                Button("Cancel") {
+                    // Changes are applied live; put the device back the way it was.
+                    if let snapshot = editorSnapshot {
+                        store.updateDevice(snapshot)
+                    }
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
 
                 Button("Save") {
-                    // Changes are applied live; Save just closes this presentation.
+                    // Changes are applied live; Save keeps them.
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -1741,6 +1752,7 @@ struct ExternalDevicesSettingsView: View {
                store.devices.contains(where: { $0.id == id }) {
                 selectedDeviceID = id
             }
+            captureEditOnlySnapshotIfNeeded()
         }
         .onChange(of: store.devices.map(\.id)) { _, _ in
             // Re-apply selection once devices load.
@@ -1750,10 +1762,19 @@ struct ExternalDevicesSettingsView: View {
                     selectedDeviceID = id
                 }
             }
+            captureEditOnlySnapshotIfNeeded()
         }
     }
 
     // MARK: - Helpers
+
+    /// Edit-only mode: remember the device the first time it is available, so Cancel can restore it.
+    private func captureEditOnlySnapshotIfNeeded() {
+        guard editorSnapshot == nil,
+              let id = selectedDeviceID,
+              let device = store.devices.first(where: { $0.id == id }) else { return }
+        editorSnapshot = device
+    }
 
     private var selectedBinding: Binding<ExternalDeviceConfig>? {
         guard let id = selectedDeviceID else { return nil }
@@ -1794,12 +1815,21 @@ struct ExternalDevicesSettingsView: View {
     }
 
     private func handleEditorDismiss() {
-        guard let newID = pendingNewDeviceID else { return }
-        if !didConfirmNewDevice {
-            deleteDevices(withIDs: [newID])
-        }
-        pendingNewDeviceID = nil
+        let confirmed = didConfirmNewDevice
+        let snapshot = editorSnapshot
+        editorSnapshot = nil
         didConfirmNewDevice = false
+        if let newID = pendingNewDeviceID {
+            if !confirmed {
+                deleteDevices(withIDs: [newID])
+            }
+            pendingNewDeviceID = nil
+            return
+        }
+        // Existing device: undo the live edits unless the user pressed Save.
+        if !confirmed, let snapshot {
+            store.updateDevice(snapshot)
+        }
     }
 
     private func deleteDevice(_ device: ExternalDeviceConfig) {

@@ -1004,47 +1004,55 @@ struct DashboardTileContainer: View {
                     actions.draggingTilesChanged(false)
                 }
 
-        let tileWithGestures = Group {
-            if isLiveMode {
-                interactiveTile
-            } else {
-                interactiveTile
-                    // Let explicit child controls, like rundown column resize handles,
-                    // own their drag gestures without also moving the entire tile.
-                    .gesture(dragGesture, including: .gesture)
-                    .onTapGesture(count: 2) {
-                        if !(selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id)) {
-                            actions.primarySelect(tileID: tile.id)
-                        }
-                        actions.editRequested(tileID: tile.id, selectFirstModule: true)
-                    }
-                    .onTapGesture {
+        // One view tree for both modes: switching between two branches here would give
+        // `interactiveTile` a new identity on every Live Mode toggle, rebuilding every
+        // module (webpages reload, NDI reconnects, meters reset) at the moment of going live.
+        // In Live Mode the editing gestures are masked off (`.subviews` keeps the module's
+        // own controls working) and the context menu is empty, so none of it appears.
+        let editingGestureMask: GestureMask = isLiveMode ? .subviews : .all
+        let tileWithGestures = interactiveTile
+            // Let explicit child controls, like rundown column resize handles,
+            // own their drag gestures without also moving the entire tile.
+            .gesture(dragGesture, including: isLiveMode ? .subviews : .gesture)
+            .gesture(
+                TapGesture(count: 2).onEnded {
+                    if !(selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id)) {
                         actions.primarySelect(tileID: tile.id)
                     }
-                    .contextMenu {
-                        DashboardTileContextMenu(
-                            tile: tileBinding,
-                            tab: tabBinding,
-                            isEmptyTile: isEmptyTile,
-                            isLiveMode: isLiveMode,
-                            snapToGrid: snapToGrid,
-                            gridSize: gridSize,
-                            selectedTileIDs: selectedTileIDs,
-                            onEditRequested: { selectFirstModule in
-                                actions.editRequested(tileID: tile.id, selectFirstModule: selectFirstModule)
-                            },
-                            onDelete: { actions.delete(tileID: tile.id) },
-                            onPersist: { reconcileGraphNodes in
-                                actions.persist(reconcileGraphNodes: reconcileGraphNodes)
-                            },
-                            onAlignSelectedTilesToGrid: alignSelectedTilesToGrid,
-                            onResolveTileOverlapsToGrid: resolveTileOverlapsToGrid,
-                            onDistributeSpacingHorizontally: distributeSpacingHorizontally,
-                            onDistributeSpacingVertically: distributeSpacingVertically
-                        )
-                    }
+                    actions.editRequested(tileID: tile.id, selectFirstModule: true)
+                },
+                including: editingGestureMask
+            )
+            .gesture(
+                TapGesture().onEnded {
+                    actions.primarySelect(tileID: tile.id)
+                },
+                including: editingGestureMask
+            )
+            .contextMenu {
+                if !isLiveMode {
+                    DashboardTileContextMenu(
+                        tile: tileBinding,
+                        tab: tabBinding,
+                        isEmptyTile: isEmptyTile,
+                        isLiveMode: isLiveMode,
+                        snapToGrid: snapToGrid,
+                        gridSize: gridSize,
+                        selectedTileIDs: selectedTileIDs,
+                        onEditRequested: { selectFirstModule in
+                            actions.editRequested(tileID: tile.id, selectFirstModule: selectFirstModule)
+                        },
+                        onDelete: { actions.delete(tileID: tile.id) },
+                        onPersist: { reconcileGraphNodes in
+                            actions.persist(reconcileGraphNodes: reconcileGraphNodes)
+                        },
+                        onAlignSelectedTilesToGrid: alignSelectedTilesToGrid,
+                        onResolveTileOverlapsToGrid: resolveTileOverlapsToGrid,
+                        onDistributeSpacingHorizontally: distributeSpacingHorizontally,
+                        onDistributeSpacingVertically: distributeSpacingVertically
+                    )
+                }
             }
-        }
 
         tileWithGestures
             .modifier(

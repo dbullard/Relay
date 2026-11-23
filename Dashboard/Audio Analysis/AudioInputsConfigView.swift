@@ -811,6 +811,11 @@ struct AudioInputCalibrationSheet: View {
     @State private var captureTask: Task<Void, Never>? = nil
     @State private var splTask: Task<Void, Never>? = nil
     @State private var splSubID: UUID? = nil
+    /// The offset when the sheet opened; Cancel (or closing without Done) restores it.
+    @State private var originalOffset: Double? = nil
+    /// The offset before the current capture zeroed it; restored if the capture fails.
+    @State private var offsetBeforeCapture: Double = 0
+    @State private var didConfirm = false
 
     private let captureDuration: TimeInterval = 5
     private let captureTick: TimeInterval = 0.1
@@ -906,8 +911,10 @@ struct AudioInputCalibrationSheet: View {
             // Cancel / Done
             HStack {
                 Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Done") {
+                    didConfirm = true
                     if let v = Double(offsetText) { applyOffset(v) }
                     if let captured = capturedRawDbFS {
                         let newOffset = targetDb - captured
@@ -916,11 +923,14 @@ struct AudioInputCalibrationSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.bordered)
+                // Mid-capture the offset is temporarily 0; Done would save that.
+                .disabled(isCapturing)
             }
         }
         .padding(20)
         .frame(minWidth: 340)
         .onAppear {
+            if originalOffset == nil { originalOffset = input.calibrationOffsetDb }
             offsetDisplay = input.calibrationOffsetDb
             offsetText = String(format: "%.1f", input.calibrationOffsetDb)
             startSPLSubscription()
@@ -928,6 +938,10 @@ struct AudioInputCalibrationSheet: View {
         .onDisappear {
             stopSPLSubscription()
             captureTask?.cancel()
+            // Cancel, Esc or swipe-to-dismiss: put the calibration back as it was.
+            if !didConfirm, let originalOffset, input.calibrationOffsetDb != originalOffset {
+                applyOffset(originalOffset)
+            }
         }
     }
 
@@ -975,6 +989,7 @@ struct AudioInputCalibrationSheet: View {
         capturedRawDbFS = nil
         warningText = ""
         // Zero the current offset so capture measures raw
+        offsetBeforeCapture = input.calibrationOffsetDb
         applyOffset(0.0)
         captureRemaining = captureDuration
         isCapturing = true
@@ -997,13 +1012,19 @@ struct AudioInputCalibrationSheet: View {
 
     private func finishCapture() {
         isCapturing = false
-        guard !captureValues.isEmpty else { return }
+        guard !captureValues.isEmpty else {
+            warningText = "No signal detected. Check the input and the calibrator, then try again."
+            applyAfterCapture = false
+            applyOffset(offsetBeforeCapture)
+            return
+        }
         let minVal = captureValues.min() ?? 0
         let maxVal = captureValues.max() ?? 0
         let variance = maxVal - minVal
         guard variance <= 2.0 else {
             warningText = "Signal varied by \(String(format: "%.1f", variance)) dB. Keep it within ±1 dB."
             applyAfterCapture = false
+            applyOffset(offsetBeforeCapture)
             return
         }
         // Energy average: a plain mean of dB values reads low when the level fluctuates.
