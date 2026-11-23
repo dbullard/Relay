@@ -337,6 +337,9 @@ struct RelayDashboardApp: App {
         .defaultSize(width: 760, height: 620)
         .restorationBehavior(.disabled)
         .windowLevel(.floating)
+        // The Window menu's own "Variables" item (RelayCommands, ⌥⌘V) opens this
+        // window; without this the scene adds a second, shortcut-less entry.
+        .commandsRemoved()
 #else
         WindowGroup {
             appRootView
