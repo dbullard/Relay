@@ -263,6 +263,99 @@ struct DashboardTopToolbarView: View {
         pendingDeleteLocalTabIndex = index
         showDeleteTabConfirm = true
     }
+
+    // MARK: - Actions shared by the toolbar buttons, tab menus and the menu bar
+
+    /// Selects the tab (like clicking it), then opens Tab Settings once the context menu
+    /// has dismissed.
+    private func openTabSettings(forTabAt index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        selectedLANShareId = nil
+        selectedLANDeviceName = nil
+        if selectedTabIndex != index {
+            withAnimation(selectionPillAnimation) {
+                selectedTabIndex = index
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            showingPCOConfigForTab = true
+        }
+    }
+
+    private func toggleTileOverview() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            isTileOverviewVisible.toggle()
+        }
+    }
+
+    private func toggleInspector() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            if isInspectorVisible {
+                isInspectorVisible = false
+                editingTileID = nil
+                clearEditFocusOffsetsX()
+            } else {
+                openInspectorOnSelection()
+            }
+        }
+    }
+
+    /// Opens the inspector on the tile already being edited if it's still selected,
+    /// otherwise on the first selected tile.
+    private func openInspectorOnSelection() {
+        if let currentEditing = bindingForEditingTile(),
+           selectedTileIDs.contains(currentEditing.wrappedValue.id) {
+            let id = currentEditing.wrappedValue.id
+            isInspectorVisible = true
+            focusTileForInspector(id)
+        } else if let firstSelectedID = selectedTileIDs.first {
+            editingTileID = firstSelectedID
+            isInspectorVisible = true
+            focusTileForInspector(firstSelectedID)
+        }
+    }
+
+    private var isMirrorOrLANTabSelected: Bool {
+        selectedLANShareId != nil || selectedTabSafe?.lanMirrorShareId != nil
+    }
+
+    /// Menu bar commands that need the toolbar's own state (inline rename, the delete
+    /// confirmation) or mirror its buttons. The toolbar isn't shown in Live Mode, so none
+    /// of these run there.
+    private var menuCommandReceivers: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardToggleTileOverviewRequested)) { _ in
+                guard !isGraphMode, canToggleOverview || isTileOverviewVisible else { return }
+                toggleTileOverview()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardToggleInspectorRequested)) { _ in
+                guard !isGraphMode, !isMirrorOrLANTabSelected,
+                      canToggleInspector || isInspectorVisible else { return }
+                toggleInspector()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardEditSelectedTilesRequested)) { _ in
+                guard !isGraphMode, !isMirrorOrLANTabSelected, canToggleInspector else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    openInspectorOnSelection()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardRenameSelectedTabRequested)) { _ in
+                guard !isGraphMode, !isRenamingTab, selectedLANShareId == nil,
+                      let tab = selectedTabSafe, tab.lanMirrorShareId == nil else { return }
+                beginRename(tabID: tab.id, currentName: tab.name)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardDeleteSelectedTabRequested)) { _ in
+                guard selectedLANShareId == nil, hasSelectedTab, tabs.count > 1 else { return }
+                if tabs[selectedTabIndex].lanMirrorShareId != nil {
+                    // Mirrored tabs have no confirmation (matches their context menu).
+                    deleteTab(selectedTabIndex)
+                } else {
+                    requestDeleteTab(at: selectedTabIndex)
+                }
+            }
+    }
     private var hasSelectedTab: Bool {
         tabs.indices.contains(selectedTabIndex)
     }
@@ -1308,7 +1401,7 @@ struct DashboardTopToolbarView: View {
             NotificationCenter.default.post(name: .relayStartOnboardingWizard, object: nil)
             resumeAfterMenuSelection()
         } label: {
-            Label("Setup Wizard…", systemImage: "wand.and.stars")
+            Label("New from Setup Wizard…", systemImage: "wand.and.stars")
         }
 
         Button {
@@ -1360,7 +1453,7 @@ struct DashboardTopToolbarView: View {
             Label("Group Selected Tiles…", systemImage: DashboardSystemImage.name("rectangle.3.group"))
         }
         .keyboardShortcut("g", modifiers: [.command])
-        .disabled(selectedTileIDs.isEmpty)
+        .disabled(isGraphMode || selectedTileIDs.isEmpty)
 
         Button {
             NotificationCenter.default.post(name: .prodLinkToggleVisibilityRequested, object: nil)
@@ -1419,7 +1512,7 @@ struct DashboardTopToolbarView: View {
                 }
                 .keyboardShortcut("n", modifiers: [.command])
 
-                commandsMenuRow("Setup Wizard…", systemImage: "wand.and.stars", enabledColor: menuEnabledColor, disabledColor: menuDisabledColor) {
+                commandsMenuRow("New from Setup Wizard…", systemImage: "wand.and.stars", enabledColor: menuEnabledColor, disabledColor: menuDisabledColor) {
                     NotificationCenter.default.post(name: .relayStartOnboardingWizard, object: nil)
                     resumeAfterMenuSelection()
                 }
@@ -1469,7 +1562,7 @@ struct DashboardTopToolbarView: View {
                 commandsMenuRow(
                     "Group Selected Tiles…",
                     systemImage: "rectangle.3.group",
-                    isEnabled: !selectedTileIDs.isEmpty,
+                    isEnabled: !isGraphMode && !selectedTileIDs.isEmpty,
                     enabledColor: menuEnabledColor,
                     disabledColor: menuDisabledColor
                 ) {
@@ -1478,7 +1571,7 @@ struct DashboardTopToolbarView: View {
                 }
                 .keyboardShortcut("g", modifiers: [.command])
 
-                commandsMenuRow("Resize Dashboard Canvas…", enabledColor: menuEnabledColor, disabledColor: menuDisabledColor) {
+                commandsMenuRow("Canvas Size…", enabledColor: menuEnabledColor, disabledColor: menuDisabledColor) {
                     NotificationCenter.default.post(name: .changeDashboardSizeRequested, object: nil)
                     resumeAfterMenuSelection()
                 }
@@ -1488,9 +1581,10 @@ struct DashboardTopToolbarView: View {
                     resumeAfterMenuSelection()
                 }
 
+                // The root view routes this to the graph's node delete in Automation view.
                 commandsMenuRow(
-                    "Delete Selected Tiles",
-                    isEnabled: !selectedTileIDs.isEmpty,
+                    DashboardMenuTitles.deleteSelection(isAutomation: isGraphMode),
+                    isEnabled: isGraphMode || !selectedTileIDs.isEmpty,
                     enabledColor: menuEnabledColor,
                     disabledColor: menuDisabledColor
                 ) {
@@ -1514,9 +1608,8 @@ struct DashboardTopToolbarView: View {
 
                 commandsMenuSectionHeader("View", disabledColor: menuDisabledColor)
                 commandsMenuRow(
-                    "Auto-Hide Menu",
-                    isChecked: iPadAutoHideToolbarEnabled
-                    ,
+                    "Auto-hide Toolbar",
+                    isChecked: iPadAutoHideToolbarEnabled,
                     enabledColor: menuEnabledColor,
                     disabledColor: menuDisabledColor
                 ) {
@@ -1765,9 +1858,7 @@ struct DashboardTopToolbarView: View {
 
                 if !isGraphMode {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            isTileOverviewVisible.toggle()
-                        }
+                        toggleTileOverview()
                     } label: {
                         DashboardSymbolImage("sidebar.leading")
                             .imageScale(iconScale)
@@ -2035,11 +2126,14 @@ struct DashboardTopToolbarView: View {
                                                                 beginRename(tabID: tabID, currentName: currentName)
                                                             }
                                                         } label: {
-                                                            Label("Rename Tab", systemImage: "pencil")
+                                                            Label("Rename Tab…", systemImage: "pencil")
                                                         }
                                                         Button { duplicateTab(idx) } label: { Label("Duplicate Tab", systemImage: "square.on.square") }
-                                                        Button(role: .destructive) { deleteTab(idx) } label: { Label("Delete Tab", systemImage: "trash") }
-                                                        Divider()
+                                                        Button {
+                                                            openTabSettings(forTabAt: idx)
+                                                        } label: {
+                                                            Label("Tab Settings…", systemImage: "slider.horizontal.below.rectangle")
+                                                        }
                                                         Button {
                                                             presentCanvasSizeForTab(idx)
                                                         } label: {
@@ -2072,8 +2166,11 @@ struct DashboardTopToolbarView: View {
                                                                 Label("Make Synced Tab", systemImage: "arrow.triangle.2.circlepath")
                                                             }
                                                         }
+                                                        Divider()
+                                                        Button(role: .destructive) { deleteTab(idx) } label: { Label("Delete Tab", systemImage: "trash") }
                                                     } else {
                                                         Text("LAN mirrored tab")
+                                                        Divider()
                                                         Button(role: .destructive) { deleteTab(idx) } label: { Label("Delete Tab", systemImage: "trash") }
                                                     }
                                                 }
@@ -2359,24 +2456,7 @@ struct DashboardTopToolbarView: View {
 
                     if !isGraphMode {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                if isInspectorVisible {
-                                    isInspectorVisible = false
-                                    editingTileID = nil
-                                    clearEditFocusOffsetsX()
-                                } else {
-                                    if let currentEditing = bindingForEditingTile(),
-                                       selectedTileIDs.contains(currentEditing.wrappedValue.id) {
-                                        let id = currentEditing.wrappedValue.id
-                                        isInspectorVisible = true
-                                        focusTileForInspector(id)
-                                    } else if let firstSelectedID = selectedTileIDs.first {
-                                        editingTileID = firstSelectedID
-                                        isInspectorVisible = true
-                                        focusTileForInspector(firstSelectedID)
-                                    }
-                                }
-                            }
+                            toggleInspector()
                         } label: {
                             DashboardSymbolImage("sidebar.trailing")
                                 .imageScale(iconScale)
@@ -2624,6 +2704,7 @@ struct DashboardTopToolbarView: View {
         .onDisappear {
             cancelAllScheduledToolbarTasks()
         }
+        .background(menuCommandReceivers)
         #else
         // iOS/iPadOS:
         ZStack {
@@ -2782,6 +2863,7 @@ struct DashboardTopToolbarView: View {
         .onDisappear {
             cancelAllScheduledToolbarTasks()
         }
+        .background(menuCommandReceivers)
         #endif
     }
     #if os(iOS)
@@ -2807,9 +2889,7 @@ struct DashboardTopToolbarView: View {
 
                 if !isGraphMode {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            isTileOverviewVisible.toggle()
-                        }
+                        toggleTileOverview()
                     } label: {
                         DashboardSymbolImage("sidebar.leading")
                             .imageScale(iconScale)
@@ -2958,9 +3038,13 @@ struct DashboardTopToolbarView: View {
                                         .contentShape(Capsule())
                                         .contextMenu {
                                             if !isMirror {
+                                                // No Rename here: the iPad tab strip has no inline rename field.
                                                 Button { duplicateTab(idx) } label: { Label("Duplicate Tab", systemImage: "square.on.square") }
-                                                Button(role: .destructive) { deleteTab(idx) } label: { Label("Delete Tab", systemImage: "trash") }
-                                                Divider()
+                                                Button {
+                                                    openTabSettings(forTabAt: idx)
+                                                } label: {
+                                                    Label("Tab Settings…", systemImage: "slider.horizontal.below.rectangle")
+                                                }
                                                 Button {
                                                     presentCanvasSizeForTab(idx)
                                                 } label: {
@@ -2984,8 +3068,11 @@ struct DashboardTopToolbarView: View {
                                                         Label("Make Synced Tab", systemImage: "arrow.triangle.2.circlepath")
                                                     }
                                                 }
+                                                Divider()
+                                                Button(role: .destructive) { deleteTab(idx) } label: { Label("Delete Tab", systemImage: "trash") }
                                             } else {
                                                 Text("LAN mirrored tab")
+                                                Divider()
                                                 Button(role: .destructive) { deleteTab(idx) } label: { Label("Delete Tab", systemImage: "trash") }
                                             }
                                         }
@@ -3155,24 +3242,7 @@ struct DashboardTopToolbarView: View {
 
                 if !isGraphMode {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            if isInspectorVisible {
-                                isInspectorVisible = false
-                                editingTileID = nil
-                                clearEditFocusOffsetsX()
-                            } else {
-                                if let currentEditing = bindingForEditingTile(),
-                                   selectedTileIDs.contains(currentEditing.wrappedValue.id) {
-                                    let id = currentEditing.wrappedValue.id
-                                    isInspectorVisible = true
-                                    focusTileForInspector(id)
-                                } else if let firstSelectedID = selectedTileIDs.first {
-                                    editingTileID = firstSelectedID
-                                    isInspectorVisible = true
-                                    focusTileForInspector(firstSelectedID)
-                                }
-                            }
-                        }
+                        toggleInspector()
                     } label: {
                         DashboardSymbolImage("sidebar.trailing")
                             .imageScale(iconScale)

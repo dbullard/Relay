@@ -923,6 +923,14 @@ var body: some View {
                                 tabs[tabIndex].tiles.move(fromOffsets: indices, toOffset: newOffset)
                                 scheduleTabsSaveDebounced()
                             },
+                            // Same paths as the tile context menu's Edit and Delete.
+                            onEditTile: { tileID in
+                                canvasActions.editRequested(tileID: tileID, selectFirstModule: false)
+                            },
+                            onDeleteTile: { tileID in
+                                guard !isLiveMode else { return }
+                                canvasActions.delete(tileID: tileID)
+                            },
                             onEditGroup: { group in
                                 beginEditTileGroup(group)
                             },
@@ -1015,7 +1023,8 @@ var body: some View {
         let d = withPCOHandlers(c)
         let e = withLayoutModeHandlers(d)
         let f = withGraphSnapshotHandlers(e)
-        return f
+        let g = withMenuCommandHandlers(f)
+        return g
             .autoHideCursorInLiveMode(isLiveMode)
             .animation(.easeInOut(duration: 0.25), value: isInspectorVisible)
             .onAppear {
@@ -2111,7 +2120,58 @@ var body: some View {
                             selectionCurrentPoint = nil
                         }
                 )
+                // Right-click (long-press on iPad) on empty canvas. Tiles and guides sit above
+                // this background with their own context menus, so they keep theirs.
+                .contextMenu {
+                    canvasBackgroundContextMenu()
+                }
         }
+    }
+
+    /// Empty-canvas context menu (edit mode only; Live Mode uses the other branch above).
+    @ViewBuilder
+    private func canvasBackgroundContextMenu() -> some View {
+        let isMirrorTab = selectedLANShareId != nil
+            || (tabs.indices.contains(selectedTabIndex) && tabs[selectedTabIndex].lanMirrorShareId != nil)
+
+        Button {
+            // Same as double-clicking the canvas.
+            selectedTileIDs.removeAll()
+            editingTileID = nil
+            isInspectorVisible = false
+            addEmptyTile(openModuleCatalog: true)
+        } label: {
+            Label("Add Tile", systemImage: "plus")
+        }
+        .disabled(isMirrorTab)
+
+        Button {
+            selectAllTiles()
+        } label: {
+            Label("Select All", systemImage: "checkmark.circle")
+        }
+        .disabled(isMirrorTab || (selectedTabSafe?.tiles.isEmpty ?? true))
+
+        Divider()
+
+        Toggle(isOn: $showGridEnabled) {
+            Label("Show Grid", systemImage: "grid")
+        }
+        Toggle(isOn: $snapToGridEnabled) {
+            Label("Snap to Grid", systemImage: "dot.square")
+        }
+        Toggle(isOn: $showGuidesEnabled) {
+            Label("Show Guides", systemImage: "ruler")
+        }
+
+        Divider()
+
+        Button {
+            presentCanvasSizeForTab(at: selectedTabIndex)
+        } label: {
+            Label("Canvas Size…", systemImage: "aspectratio")
+        }
+        .disabled(isMirrorTab)
     }
 
     /// True when `viewportPoint` lands inside the 28×28 resize-handle halo of any
@@ -3366,55 +3426,7 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
         .onChange(of: isTileOverviewVisible, initial: false) { _, _ in
             updateCanvasViewportSize(for: proxy.size)
         }
-        //
-        //        .contextMenu {
-        //            // Canvas-level Add menu when not in Live Mode.
-        //            if !isLiveMode && !draggingDisabled {
-        //                Button {
-        //                    addEmptyTile(openModuleCatalog: true)
-        //                } label: {
-        //                    Label("Add Tile", systemImage: "plus")
-        //                }
-        //
-        //                Divider()
-        //
-        //                Button("Add Horizontal Guide") {
-        //                    canvasGuides.addGuide(
-        //                        .horizontal,
-        //                        canvasSize: canvasSize,
-        //                        gridSize: CGFloat(gridSizeSetting)
-        //                    )
-        //                    saveGuides()
-        //                }
-        //
-        //                Button("Add Vertical Guide") {
-        //                    canvasGuides.addGuide(
-        //                        .vertical,
-        //                        canvasSize: canvasSize,
-        //                        gridSize: CGFloat(gridSizeSetting)
-        //                    )
-        //                    saveGuides()
-        //                }
-        //                Divider()
-        //
-        //                Button("Clear guides") {
-        //                    canvasGuides.removeAll()
-        //                }
-        //                .disabled(canvasGuides.isEmpty)
-        //            }
-        //        }
-        //
-        //        .simultaneousGesture(
-        //            LongPressGesture(minimumDuration: 0.35)
-        //                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
-        //                .onEnded { value in
-        //                    guard !isLiveMode else { return }
-        //                    if case .second(true, let drag?) = value {
-        //                        canvasMenuLocation = drag.location
-        //                        isCanvasMenuPresented = true
-        //                    }
-        //                }
-        //        )
+        // The empty-canvas context menu lives on `canvasBackgroundView()`.
         .overlay(alignment: .bottomTrailing) {
             let hiddenGraphNodeCount = hiddenGraphNodeCountForAddMenu
             let hiddenTileCount = hiddenTileCountForAddMenu
@@ -3866,7 +3878,12 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
             }
             .onReceive(NotificationCenter.default.publisher(for: .prodLinkDeleteSelectionRequested)) { _ in
                 guard !shouldBlockDelete else { return }
-                deleteSelectedTiles()
+                // Edit ▸ Delete acts on whatever the visible view has selected.
+                if layoutMode == .graph {
+                    NotificationCenter.default.post(name: .prodLinkDeleteGraphSelectionRequested, object: nil)
+                } else {
+                    deleteSelectedTiles()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .prodLinkGraphSelectionCountChanged)) { note in
                 selectedGraphNodeCount = (note.object as? Int) ?? 0
@@ -4258,6 +4275,138 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
             #endif
 
         return f
+    }
+
+    // MARK: - Menu bar commands (Edit ▸ Arrange, View zoom, Window, Tabs)
+
+    /// What the menu bar shows and enables; pushed into `DashboardMenuState`.
+    private var menuSnapshot: DashboardMenuSnapshot {
+        let tab = selectedTabSafe
+        let isLocalTabShowing = selectedLANShareId == nil && tab != nil
+        return DashboardMenuSnapshot(
+            selectedTileCount: selectedTileIDs.count,
+            isInspectorVisible: isInspectorVisible,
+            isTileOverviewVisible: isTileOverviewVisible,
+            hasTilesInTab: !(tab?.tiles.isEmpty ?? true),
+            isEditableTabSelected: isLocalTabShowing && tab?.lanMirrorShareId == nil,
+            canDeleteSelectedTab: isLocalTabShowing && tabs.count > 1
+        )
+    }
+
+    /// Menu-bar canvas edits apply only to a local tab's canvas, outside Live Mode.
+    private var canApplyCanvasMenuEdit: Bool {
+        layoutMode == .canvas && !isLiveMode && selectedLANShareId == nil
+            && tabs.indices.contains(selectedTabIndex)
+            && tabs[selectedTabIndex].lanMirrorShareId == nil
+    }
+
+    private func withMenuCommandHandlers<Content: View>(_ content: Content) -> some View {
+        let a = content
+            .onChange(of: menuSnapshot, initial: true) { _, snapshot in
+                DashboardMenuState.shared.update(snapshot)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardViewportZoomRequested)) { note in
+                guard !isLiveMode, let command = note.object as? ViewportZoomCommand else { return }
+                if layoutMode == .graph {
+                    // Only the showing graph zooms: on iPad the canvas side's graph stays built.
+                    NotificationCenter.default.post(name: .dashboardGraphZoomRequested, object: command)
+                } else {
+                    applyCanvasZoomCommand(command)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardShowRostersRequested)) { _ in
+                showingRosters = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardShowTabSettingsRequested)) { _ in
+                showingPCOConfigForTab = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardDuplicateSelectedTabRequested)) { _ in
+                guard !isLiveMode, selectedLANShareId == nil,
+                      tabs.indices.contains(selectedTabIndex),
+                      tabs[selectedTabIndex].lanMirrorShareId == nil else { return }
+                duplicateTab(at: selectedTabIndex)
+            }
+
+        let b = a
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardDistributeSelectedTilesRequested)) { note in
+                guard canApplyCanvasMenuEdit, let axis = note.object as? DistributeAxis else { return }
+                distributeSelectedTiles(axis: axis)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardAlignSelectedTilesToGridRequested)) { _ in
+                guard canApplyCanvasMenuEdit else { return }
+                alignSelectedTilesToGridFromMenu()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardResolveTileOverlapsRequested)) { _ in
+                guard canApplyCanvasMenuEdit else { return }
+                resolveTileOverlapsFromMenu()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardHideTilesRequested)) { note in
+                guard !isLiveMode, layoutMode == .canvas,
+                      let ids = note.object as? Set<UUID>, !ids.isEmpty else { return }
+                toggleVisibility(forTileIDs: ids)
+            }
+            .background(zoomInAlternateShortcut)
+
+        return b
+    }
+
+    /// ⌘= for Zoom In alongside the menu item's ⌘+ (a menu item takes only one shortcut),
+    /// so zooming in doesn't need Shift on layouts where + is shifted.
+    private var zoomInAlternateShortcut: some View {
+        Button("Zoom In") {
+            guard !isLiveMode else { return }
+            NotificationCenter.default.post(name: .dashboardViewportZoomRequested, object: ViewportZoomCommand.zoomIn)
+        }
+        .keyboardShortcut("=", modifiers: [.command])
+        .buttonStyle(.plain)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    /// View ▸ Zoom In / Zoom Out / Actual Size on the canvas viewport, with the same limits
+    /// and step as the zoom controls.
+    private func applyCanvasZoomCommand(_ command: ViewportZoomCommand) {
+        guard let target = command.applied(
+            zoom: canvasViewportZoom,
+            pan: canvasViewportPan,
+            contentSize: canvasSize,
+            viewportSize: canvasViewportSize,
+            range: 0.25...3.00
+        ) else { return }
+        canvasViewportZoom = target.zoom
+        canvasViewportPan = target.pan
+    }
+
+    /// Edit ▸ Arrange ▸ Align to Grid: the tile context menu's Align, with undo.
+    private func alignSelectedTilesToGridFromMenu() {
+        guard tabs.indices.contains(selectedTabIndex), !selectedTileIDs.isEmpty else { return }
+        let current = tabs[selectedTabIndex].tiles
+        guard let aligned = DashboardTileArrangeOperations.alignedToGrid(
+            current, selectedIDs: selectedTileIDs, gridSize: CGFloat(gridSizeSetting)
+        ), aligned != current else { return }
+
+        pushUndoSnapshot("Align to Grid")
+        tabs[selectedTabIndex].tiles = aligned
+        saveState.hasUnsavedChanges = true
+        scheduleTabsSaveDebounced(reconcileGraphNodes: false)
+    }
+
+    /// Edit ▸ Arrange ▸ Resolve Overlaps: the tile context menu's Resolve Overlaps.
+    private func resolveTileOverlapsFromMenu() {
+        guard tabs.indices.contains(selectedTabIndex) else { return }
+        guard let resolved = DashboardTileArrangeOperations.overlapsResolved(
+            tabs[selectedTabIndex].tiles,
+            selectedIDs: selectedTileIDs,
+            gridSize: CGFloat(gridSizeSetting),
+            canvasSize: canvasSize,
+            defaultTileSize: defaultTileSize
+        ), resolved.didChange else { return }
+
+        pushUndoSnapshot("Resolve Tile Overlaps")
+        tabs[selectedTabIndex].tiles = resolved.tiles
+        saveState.hasUnsavedChanges = true
+        scheduleTabsSaveDebounced(reconcileGraphNodes: false)
     }
 
     // MARK: - Debug Logging for Imported External Devices
@@ -7374,11 +7523,16 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         }
 
         private func toggleVisibilityForSelectedTiles() {
+            toggleVisibility(forTileIDs: selectedTileIDs)
+        }
+
+        /// Hides the given tiles if any of them is visible, otherwise shows them all.
+        private func toggleVisibility(forTileIDs ids: Set<UUID>) {
             guard tabs.indices.contains(selectedTabIndex) else { return }
-            guard !selectedTileIDs.isEmpty else { return }
+            guard !ids.isEmpty else { return }
 
             var tab = tabs[selectedTabIndex]
-            let selectedIDs = selectedTileIDs
+            let selectedIDs = ids
             let shouldHide = tab.tiles.contains { tile in
                 selectedIDs.contains(tile.id) && !tile.isHidden
             }

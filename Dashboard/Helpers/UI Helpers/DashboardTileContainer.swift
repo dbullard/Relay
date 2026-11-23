@@ -2446,24 +2446,12 @@ struct DashboardTileContainer: View {
     /// grid intersection, using the current grid size. Has no effect if the grid size is
     /// zero or negative.
     private func alignSelectedTilesToGrid() {
-        guard gridSize > 0 else { return }
+        guard let tiles = DashboardTileArrangeOperations.alignedToGrid(
+            tab.tiles, selectedIDs: selectedTileIDs, gridSize: gridSize
+        ) else { return }
 
         var updatedTab = tab
-        for idx in updatedTab.tiles.indices {
-            let id = updatedTab.tiles[idx].id
-            guard selectedTileIDs.contains(id) else { continue }
-
-            var t = updatedTab.tiles[idx]
-            let x = t.offset.width
-            let y = t.offset.height
-
-            let snappedX = (x / gridSize).rounded() * gridSize
-            let snappedY = (y / gridSize).rounded() * gridSize
-
-            t.offset.width = snappedX
-            t.offset.height = snappedY
-            updatedTab.tiles[idx] = t
-        }
+        updatedTab.tiles = tiles
         actions.setTab(updatedTab)
 
         actions.persist(reconcileGraphNodes: false)
@@ -2534,100 +2522,20 @@ struct DashboardTileContainer: View {
     /// If there is a selection, only selected (visible) tiles are moved. Otherwise,
     /// all visible tiles are considered. Hidden tiles are ignored.
     private func resolveTileOverlapsToGrid() {
-        guard gridSize > 0 else { return }
+        guard let resolved = DashboardTileArrangeOperations.overlapsResolved(
+            tab.tiles,
+            selectedIDs: selectedTileIDs,
+            gridSize: gridSize,
+            canvasSize: canvasSize,
+            defaultTileSize: defaultTileSize
+        ) else { return }
+
+        if resolved.didChange {
+            actions.undoSnapshot("Resolve Tile Overlaps")
+        }
 
         var updatedTab = tab
-        let visibleTiles = updatedTab.tiles.filter { !$0.isHidden }
-        guard !visibleTiles.isEmpty else { return }
-
-        let selectedIDs = selectedTileIDs
-        let targetIDs: Set<UUID> = selectedIDs.isEmpty
-            ? Set(visibleTiles.map(\.id))
-            : selectedIDs
-
-        guard !targetIDs.isEmpty else { return }
-
-        func rectFor(tile: DashboardTileModel, offset: CGSize? = nil) -> CGRect {
-            let size = DashboardTileSnappingHelper.effectiveSize(for: tile, defaultTileSize: defaultTileSize)
-            let origin = offset ?? tile.offset
-            return CGRect(x: origin.width, y: origin.height, width: size.width, height: size.height)
-        }
-
-        var occupiedRects: [CGRect] = []
-        for tile in updatedTab.tiles where !tile.isHidden && !targetIDs.contains(tile.id) {
-            occupiedRects.append(rectFor(tile: tile))
-        }
-
-        let canvasWidth = canvasSize.width > 0 ? canvasSize.width : 1200
-        let canvasHeight = canvasSize.height > 0 ? canvasSize.height : 800
-        let maxRadius = Int(ceil(max(canvasWidth, canvasHeight) / gridSize)) + 2
-
-        func findNearestFreeOffset(
-            baseOffset: CGSize,
-            size: CGSize
-        ) -> CGSize {
-            let maxX = max(0, canvasWidth - size.width)
-            let maxY = max(0, canvasHeight - size.height)
-
-            func clamped(_ offset: CGSize) -> CGSize {
-                CGSize(
-                    width: min(max(offset.width, 0), maxX),
-                    height: min(max(offset.height, 0), maxY)
-                )
-            }
-
-            func fits(_ offset: CGSize) -> Bool {
-                let rect = CGRect(x: offset.width, y: offset.height, width: size.width, height: size.height)
-                return !occupiedRects.contains { $0.intersects(rect) }
-            }
-
-            let snappedBase = CGSize(
-                width: (baseOffset.width / gridSize).rounded() * gridSize,
-                height: (baseOffset.height / gridSize).rounded() * gridSize
-            )
-            let start = clamped(snappedBase)
-            if fits(start) { return start }
-
-            for radius in 1...maxRadius {
-                for dx in -radius...radius {
-                    for dy in -radius...radius {
-                        if max(abs(dx), abs(dy)) != radius { continue }
-                        let candidate = CGSize(
-                            width: start.width + CGFloat(dx) * gridSize,
-                            height: start.height + CGFloat(dy) * gridSize
-                        )
-                        let clampedCandidate = clamped(candidate)
-                        if fits(clampedCandidate) {
-                            return clampedCandidate
-                        }
-                    }
-                }
-            }
-
-            return start
-        }
-
-        var didPushUndo = false
-
-        for index in updatedTab.tiles.indices {
-            var tile = updatedTab.tiles[index]
-            guard !tile.isHidden, targetIDs.contains(tile.id) else { continue }
-
-            let size = DashboardTileSnappingHelper.effectiveSize(for: tile, defaultTileSize: defaultTileSize)
-            let newOffset = findNearestFreeOffset(baseOffset: tile.offset, size: size)
-
-            if newOffset != tile.offset {
-                if !didPushUndo {
-                    actions.undoSnapshot("Resolve Tile Overlaps")
-                    didPushUndo = true
-                }
-
-                tile.offset = newOffset
-                updatedTab.tiles[index] = tile
-            }
-
-            occupiedRects.append(rectFor(tile: tile, offset: newOffset))
-        }
+        updatedTab.tiles = resolved.tiles
         actions.setTab(updatedTab)
 
         actions.persist(reconcileGraphNodes: false)
