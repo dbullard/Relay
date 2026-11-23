@@ -45,4 +45,10 @@ struct InspectorUndoCoalescer {
         currentActionName = actionName
         return true
     }
+
+    /// Coalescing key for an edit to one module's settings: edits to the same module fold
+    /// together, while the same kind of edit on another module starts its own undo step.
+    static func moduleKey(actionName: String, moduleID: UUID) -> String {
+        "\(actionName)#\(moduleID.uuidString)"
+    }
 }

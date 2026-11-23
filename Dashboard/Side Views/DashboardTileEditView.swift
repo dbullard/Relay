@@ -99,6 +99,10 @@ struct DashboardTileEditView: View {
     /// When present, we can warn if a module's fixed Height exceeds the tile height.
     let tileHeightPoints: CGFloat?
     let isMultiTileEdit: Bool
+    /// The edited tile's name, shown in the header.
+    let tileName: String
+    /// How many tiles the inspector is editing; more than one shows "3 Tiles" in the header.
+    let selectedTileCount: Int
     let initialPerson: PersonTileModel?
     let hasPCORundown: Bool
     let hasShureWireless: Bool
@@ -113,6 +117,9 @@ struct DashboardTileEditView: View {
     let initialShureSelection: ExternalDevicesStore.ShureSelectedChannel?
     let onUpdatePCOModuleConfig: (UUID, PCOModuleConfig) -> Void
     let onUpdateShureModuleConfig: (UUID, ShureModuleConfig) -> Void
+    /// Applies a change to one module through the inspector's undo path. The owner names
+    /// the undo step and folds a drag or a burst of typing into one step.
+    let onCommitModuleChange: (UUID, String, (inout DashboardModuleModel) -> Void) -> Void
     /// Current modules on this tile, in any order. The inspector will sort by
     /// `order` for display.
     let modules: [DashboardModuleModel]
@@ -186,8 +193,6 @@ struct DashboardTileEditView: View {
     let onDismiss: () -> Void
     let initialShowsTitle: Bool
     let onSaveShowsTitle: (Bool) -> Void
-    
-    let onSaveShureModuleShowsTitle: (Bool) -> Void
 
     let initialShureShowDeviceName: Bool
     let initialShureShowChannelName: Bool
@@ -237,7 +242,6 @@ struct DashboardTileEditView: View {
     @State private var selectedInspectorTab: InspectorTab = .modules
 
     @State private var showsTitle: Bool = true
-    @State var shureModuleShowsTitle: Bool = true
     @State var shureChannelDescriptors: [ShureChannelDescriptor] = []
     /// Currently selected module in the Modules tab. When nil, the first
     /// module (if any) will be treated as the active one for details.
@@ -247,6 +251,11 @@ struct DashboardTileEditView: View {
     /// The source of truth still lives in the parent; this lets the settings UI update
     /// immediately without attempting to mutate the `let modules` input.
     @State var editableModules: [DashboardModuleModel] = []
+    /// Bumped when an undo or redo changes this tile's modules, so the selected module's
+    /// settings view is rebuilt from the restored values instead of keeping stale local state.
+    @State private var moduleSettingsRevision: Int = 0
+    /// When the last undo or redo ran; a module change that arrives just after it is a restore.
+    @State private var lastUndoRedoAt: Date? = nil
     @State var liveTranscriptionInputLevel: Double = 0
     @State var liveTranscriptionProcessedPeak: Double = 0
     @StateObject var liveTranscriptionLevelMonitor = LiveTranscriptionLevelMonitor()
@@ -260,6 +269,10 @@ struct DashboardTileEditView: View {
     @State private var showsModuleAppearanceHelp: Bool = false
     @State private var showsTextFormattingHelp: Bool = false
     @State private var showsTileSizeHelp: Bool = false
+    @State private var showsModuleSpacingHelp: Bool = false
+
+    static let backgroundColorDisabledReason = "Turn off the gradient to pick a single color."
+    static let moduleSpacingHelpText = "Adjust the height and the extra space above and below this module inside the tile."
     
     /// Local per-module height (pt) cache so the slider can move immediately.
     /// The real persistence still happens via `onUpdateModuleScale` (currently reused as height callback).
@@ -316,24 +329,14 @@ struct DashboardTileEditView: View {
             .liquidGlassIfAvailable()
     }
 
-    @ViewBuilder
-    private var inspectorFooterBackground: some View {
-        let panelShape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-        let overlayShape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-
-        panelShape
-            .fill(.ultraThinMaterial)
-            .overlay {
-                overlayShape.fill(inspectorPanelOverlayColor)
-            }
-            .liquidGlassIfAvailable()
-    }
 
 
     init(
         tileID: UUID,
         tileHeightPoints: CGFloat? = nil,
         isMultiTileEdit: Bool = false,
+        tileName: String = "",
+        selectedTileCount: Int = 1,
         initialPerson: PersonTileModel?,
         hasPCORundown: Bool,
         hasShureWireless: Bool,
@@ -396,9 +399,9 @@ struct DashboardTileEditView: View {
         onContinuousEditChanged: @escaping (Bool) -> Void = { _ in },
         onUpdatePCOModuleConfig: @escaping (UUID, PCOModuleConfig) -> Void,
         onUpdateShureModuleConfig: @escaping (UUID, ShureModuleConfig) -> Void,
+        onCommitModuleChange: @escaping (UUID, String, (inout DashboardModuleModel) -> Void) -> Void = { _, _, _ in },
         initialShowsTitle: Bool,
         onSaveShowsTitle: @escaping (Bool) -> Void,
-        onSaveShureModuleShowsTitle: @escaping (Bool) -> Void = { _ in },
         initialShureShowDeviceName: Bool = true,
         initialShureShowChannelName: Bool = true,
         initialShureShowIPPort: Bool = true,
@@ -411,6 +414,8 @@ struct DashboardTileEditView: View {
         self.tileID = tileID
         self.tileHeightPoints = tileHeightPoints
         self.isMultiTileEdit = isMultiTileEdit
+        self.tileName = tileName
+        self.selectedTileCount = selectedTileCount
         self.initialPerson = initialPerson
         self.hasPCORundown = hasPCORundown
         self.hasShureWireless = hasShureWireless
@@ -472,9 +477,9 @@ struct DashboardTileEditView: View {
         self.onContinuousEditChanged = onContinuousEditChanged
         self.onUpdatePCOModuleConfig = onUpdatePCOModuleConfig
         self.onUpdateShureModuleConfig = onUpdateShureModuleConfig
+        self.onCommitModuleChange = onCommitModuleChange
         self.initialShowsTitle = initialShowsTitle
         self.onSaveShowsTitle = onSaveShowsTitle
-        self.onSaveShureModuleShowsTitle = onSaveShureModuleShowsTitle
         self.initialShureShowDeviceName = initialShureShowDeviceName
         self.initialShureShowChannelName = initialShureShowChannelName
         self.initialShureShowIPPort = initialShureShowIPPort
@@ -485,7 +490,6 @@ struct DashboardTileEditView: View {
         self.allPersonNames = allPersonNames
 
         _showsTitle = State(initialValue: initialShowsTitle)
-        _shureModuleShowsTitle = State(initialValue: true)
         _backgroundOpacity = State(initialValue: initialBackgroundOpacity)
         _cornerRadius = State(initialValue: Double(initialCornerRadius))
         _backgroundColor = State(initialValue: initialBackgroundColor?.swiftUIColor ?? initialBackgroundStyle.color)
@@ -1578,9 +1582,15 @@ extension DashboardTileEditView {
             #endif
         }()) {
             HStack {
-                Text("Edit Tile")
+                Text(TileEditorCopy.headerTitle(
+                    tileName: tileName,
+                    selectedTileCount: isMultiTileEdit ? selectedTileCount : 1
+                ))
                     .font(.title2.bold())
-                Spacer()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
                 Button("Close") {
                     onDismiss()
                 }
@@ -1684,10 +1694,24 @@ extension DashboardTileEditView {
             NSColorPanel.shared.close()
             #endif
         }
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
+            lastUndoRedoAt = Date()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { _ in
+            lastUndoRedoAt = Date()
+        }
         .onChange(of: modules, initial: false) { _, newValue in
+            // Edits made here update `editableModules` before they reach the tile, so a
+            // difference right after an undo/redo means the modules were restored.
+            let restoredByUndo = newValue != editableModules
+                && (lastUndoRedoAt.map { Date().timeIntervalSince($0) < 1 } ?? false)
             editableModules = newValue
             moduleHeightByID = Dictionary(uniqueKeysWithValues: newValue.map { ($0.id, $0.moduleHeightPoints ?? defaultModuleHeightDisplayPoints(for: $0)) })
             syncModuleSelection(with: newValue)
+            if restoredByUndo {
+                lastUndoRedoAt = nil
+                moduleSettingsRevision &+= 1
+            }
         }
         .onChange(of: initialTileSizeWidthText, initial: false) { _, newValue in
             guard tileSizeFieldFocus == nil, !hasStartedTileSizeEdit else { return }
@@ -1723,17 +1747,6 @@ extension DashboardTileEditView {
             .padding(.vertical, contentVPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .controlSize(isIPadRegularWidth ? .regular : .small)
-            .padding(.bottom, 64)
-            .overlay(alignment: .bottom) {
-                footerButtons
-                    .padding(.horizontal, contentHPadding)
-                    .padding(.vertical, 12)
-                    .background {
-                        inspectorFooterBackground
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.bottom, 6)
-            }
             .background {
                 inspectorPanelBackground
             }
@@ -1751,7 +1764,8 @@ extension DashboardTileEditView {
         content
             .padding(.horizontal, 24)
             .padding(.vertical, 20)
-            .frame(minWidth: 420, minHeight: 340)
+            // The owner sizes the panel; a larger minimum width here overflowed it.
+            .frame(maxWidth: .infinity, minHeight: 340)
             .background {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(.ultraThinMaterial)
@@ -1851,11 +1865,7 @@ extension DashboardTileEditView {
            let found = sortedModules.first(where: { $0.id == id }) {
             return found
         }
-        #if os(iOS)
-        return nil
-        #else
         return sortedModules.first
-        #endif
     }
 
     /// Detail section for the currently selected module in the Modules tab.
@@ -1869,12 +1879,6 @@ extension DashboardTileEditView {
                 modulePaddingSection(for: detailModule)
             }
             .id(moduleDetailIdentity(for: detailModule))
-        } else if !sortedModules.isEmpty {
-            ContentUnavailableView(
-                "Select a Module",
-                systemImage: "slider.horizontal.3",
-                description: Text("Choose a module above to load its settings.")
-            )
         } else {
             // No modules at all; nothing to show.
             EmptyView()
@@ -2005,6 +2009,8 @@ extension DashboardTileEditView {
                     }
                     #endif
 
+                    // Delete sits at the far end, away from Duplicate. It's also in each
+                    // row's context menu (and swipe/Delete key on macOS).
                     HStack(spacing: 12) {
                         Button {
                             duplicateModules(selectedModuleIDs)
@@ -2013,11 +2019,20 @@ extension DashboardTileEditView {
                         }
                         .disabled(selectedModuleIDs.isEmpty)
 
+                        if selectedModuleIDs.isEmpty {
+                            Text("Select a module")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer(minLength: 12)
+
                         Button(role: .destructive) {
                             deleteModules(selectedModuleIDs)
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
+                        .foregroundStyle(selectedModuleIDs.isEmpty ? Color.secondary : Color.red)
                         .disabled(selectedModuleIDs.isEmpty)
                     }
                     .font(.callout)
@@ -2213,13 +2228,9 @@ extension DashboardTileEditView {
         if let id = selectedModuleID {
             return module.id == id
         }
-        #if os(iOS)
-        return false
-        #else
         // When nothing is explicitly selected, treat the first module
         // as the active one for highlighting/details.
         return module.id == sortedModules.first?.id
-        #endif
     }
 
     private var sortedModules: [DashboardModuleModel] {
@@ -2264,7 +2275,7 @@ extension DashboardTileEditView {
 
     private func moduleDetailIdentity(for module: DashboardModuleModel) -> String {
         let moduleIDs = sortedModules.map(\.id.uuidString).joined(separator: ",")
-        return "\(module.id.uuidString)|\(moduleKindIdentifier(for: module))|\(moduleIDs)"
+        return "\(module.id.uuidString)|\(moduleKindIdentifier(for: module))|\(moduleIDs)|\(moduleSettingsRevision)"
     }
 
     private func moduleKindIdentifier(for module: DashboardModuleModel) -> String {
@@ -2312,18 +2323,15 @@ extension DashboardTileEditView {
             return
         }
 
-        #if os(iOS)
-        selectedModuleID = nil
-        selectedModuleIDs = []
-        #else
-        selectedModuleID = modules.first?.id
-        selectedModuleIDs = modules.first.map { [$0.id] } ?? []
-        #endif
+        // Both platforms open on the first module (in display order), so its
+        // settings show straight away instead of a "Select a Module" placeholder.
+        let first = modules.sorted { $0.order < $1.order }.first
+        selectedModuleID = first?.id
+        selectedModuleIDs = first.map { [$0.id] } ?? []
     }
 
-    /// Explicitly selects the first module when this tile was opened via double-click.
-    /// Runs after `syncModuleSelection`, which otherwise leaves iOS unselected to avoid
-    /// eagerly rendering a module's settings before the tile has finished loading.
+    /// Explicitly selects the first module when this tile was opened via double-click,
+    /// replacing any surviving selection from a previous visit.
     private func consumePendingFirstModuleSelectionIfNeeded() {
         guard pendingFirstModuleSelectTileID == tileID else { return }
         pendingFirstModuleSelectTileID = nil
@@ -2482,14 +2490,25 @@ extension DashboardTileEditView {
             isShowingHelp: $showsTileAppearanceHelp
         )) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Background Color")
-                    ColorPicker("Background color", selection: $backgroundColor, supportsOpacity: false)
-                        .labelsHidden()
-                        .disabled(useGradientBackground)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("Background Color")
+                        ColorPicker("Background color", selection: $backgroundColor, supportsOpacity: false)
+                            .labelsHidden()
+                            .disabled(useGradientBackground)
+                    }
+                    if useGradientBackground {
+                        Text(Self.backgroundColorDisabledReason)
+                            #if os(iOS)
+                            .font(tertiaryLabelFont)
+                            #else
+                            .font(.caption2)
+                            #endif
+                            .foregroundStyle(.secondary)
+                    }
                 }
 #if os(macOS)
-                .help("Set the tile background color.")
+                .help(useGradientBackground ? Self.backgroundColorDisabledReason : "Set the tile background color.")
 #endif
 
                 Toggle("Use gradient background", isOn: $useGradientBackground)
@@ -2667,25 +2686,26 @@ extension DashboardTileEditView {
             isShowingHelp: $showsTileSizeHelp
         )) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text("W")
+                HStack(spacing: 6) {
+                    Text("Width")
                     TextField("Width", text: $tileSizeWidthText)
-                        .frame(width: 70)
+                        .frame(width: 56)
                         .textFieldStyle(.roundedBorder)
                         .monospacedDigit()
                         .focused($tileSizeFieldFocus, equals: .width)
                         .onSubmit { commitTileSizeFields() }
 
-                    Text("×")
-                        .foregroundStyle(.secondary)
-
-                    Text("H")
+                    Text("Height")
+                        .padding(.leading, 4)
                     TextField("Height", text: $tileSizeHeightText)
-                        .frame(width: 70)
+                        .frame(width: 56)
                         .textFieldStyle(.roundedBorder)
                         .monospacedDigit()
                         .focused($tileSizeFieldFocus, equals: .height)
                         .onSubmit { commitTileSizeFields() }
+
+                    Text("pt")
+                        .foregroundStyle(.secondary)
 
                     Spacer(minLength: 0)
 
@@ -2894,7 +2914,7 @@ extension DashboardTileEditView {
                     Picker("Alignment", selection: $textJustification) {
                         ForEach(TextJustificationStyle.allCases) { style in
                             DashboardSymbolImage(style.systemImageName)
-                                .accessibilityLabel(style.label)
+                                .accessibilityLabel(style.accessibilityLabel)
                                 .tag(style)
                         }
                     }
@@ -2909,8 +2929,8 @@ extension DashboardTileEditView {
                     Text("Vertical Align")
                     Picker("Vertical alignment", selection: $textVerticalAlignment) {
                         ForEach(TextVerticalAlignmentStyle.allCases) { style in
-                            DashboardSymbolImage(style.systemImageName)
-                                .accessibilityLabel(style.rawValue.capitalized)
+                            DashboardSymbolImage(style.inspectorSymbolName)
+                                .accessibilityLabel(style.inspectorAccessibilityLabel)
                                 .tag(style)
                         }
                     }
@@ -2970,42 +2990,54 @@ extension DashboardTileEditView {
             Text(title)
             Spacer()
 #if os(iOS)
-            let isPad = UIDevice.current.userInterfaceIdiom == .pad
-            let helpContent = VStack(alignment: .leading, spacing: 12) {
-                Text(title)
-                    .font(.headline)
-                Text(helpText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Close") {
-                    isShowingHelp.wrappedValue = false
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .padding(20)
-
-            let helpButton = Button {
-                isShowingHelp.wrappedValue = true
-            } label: {
-                Image(systemName: "info.circle")
-            }
-            .buttonStyle(.plain)
-
-            if isPad {
-                helpButton
-                    .popover(isPresented: isShowingHelp, arrowEdge: .top) {
-                        helpContent.frame(width: 320)
-                    }
-            } else {
-                helpButton
-                    .sheet(isPresented: isShowingHelp) {
-                        helpContent
-                    }
-            }
+            sectionHelpButton(title: title, helpText: helpText, isShowingHelp: isShowingHelp)
 #endif
         }
     }
+
+#if os(iOS)
+    /// The iPad/iPhone "info" button that shows a section's help in a popover (iPad) or sheet.
+    @ViewBuilder
+    private func sectionHelpButton(
+        title: String,
+        helpText: String,
+        isShowingHelp: Binding<Bool>
+    ) -> some View {
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        let helpContent = VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+            Text(helpText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Close") {
+                isShowingHelp.wrappedValue = false
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(20)
+
+        let helpButton = Button {
+            isShowingHelp.wrappedValue = true
+        } label: {
+            Image(systemName: "info.circle")
+        }
+        .buttonStyle(.plain)
+
+        if isPad {
+            helpButton
+                .popover(isPresented: isShowingHelp, arrowEdge: .top) {
+                    helpContent.frame(width: 320)
+                }
+        } else {
+            helpButton
+                .sheet(isPresented: isShowingHelp) {
+                    helpContent
+                }
+        }
+    }
+#endif
 
     var productionSection: some View {
         GroupBox("Production Module") {
@@ -3016,18 +3048,6 @@ extension DashboardTileEditView {
         }
     }
 
-    var footerButtons: some View {
-        HStack {
-            Spacer()
-            Button("Close") {
-                onDismiss()
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        #if os(macOS)
-        .padding(.top, 8)
-        #endif
-    }
 }
 
 // MARK: - Live Preview Helpers
@@ -3041,11 +3061,19 @@ extension DashboardTileEditView {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+#if os(macOS)
                 Image(systemName: "info.circle")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-#if os(macOS)
-                    .help("Adjust the height and the extra space above and below this module inside the tile.")
+                    .help(Self.moduleSpacingHelpText)
+#else
+                sectionHelpButton(
+                    title: "Module Spacing",
+                    helpText: Self.moduleSpacingHelpText,
+                    isShowingHelp: $showsModuleSpacingHelp
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 #endif
 
                 Spacer()
@@ -3552,9 +3580,18 @@ enum TextJustificationStyle: String, CaseIterable, Identifiable, Codable {
     }
     var systemImageName: String {
         switch self {
-        case .leading: return "distribute.horizontal.left"
-        case .center: return "distribute.horizontal.center"
-        case .trailing: return "distribute.horizontal.right"
+        case .leading: return "text.alignleft"
+        case .center: return "text.aligncenter"
+        case .trailing: return "text.alignright"
+        }
+    }
+
+    /// Spoken name for the icon-only alignment segment.
+    var accessibilityLabel: String {
+        switch self {
+        case .leading: return "Align Left"
+        case .center: return "Align Center"
+        case .trailing: return "Align Right"
         }
     }
 
@@ -3563,6 +3600,26 @@ enum TextJustificationStyle: String, CaseIterable, Identifiable, Codable {
         case .leading: return .leading
         case .center: return .center
         case .trailing: return .trailing
+        }
+    }
+}
+
+extension TextVerticalAlignmentStyle {
+    /// Symbol for the inspector's icon-only Vertical Align segment.
+    fileprivate var inspectorSymbolName: String {
+        switch self {
+        case .top: return "align.vertical.top"
+        case .center: return "align.vertical.center"
+        case .bottom: return "align.vertical.bottom"
+        }
+    }
+
+    /// Spoken name for the icon-only Vertical Align segment.
+    fileprivate var inspectorAccessibilityLabel: String {
+        switch self {
+        case .top: return "Align Top"
+        case .center: return "Align Middle"
+        case .bottom: return "Align Bottom"
         }
     }
 }

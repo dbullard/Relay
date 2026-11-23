@@ -906,7 +906,7 @@ struct PCOModuleSettingsInspector: View {
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Show header (Planning Center)", isOn: persistedBinding(for: \.showHeader))
+                    Toggle("Show title", isOn: persistedBinding(for: \.showHeader))
 
                     Toggle("Show summary line", isOn: persistedBinding(for: \.showSummaryLine))
 

@@ -458,6 +458,7 @@
 				Diagnostics/GitHubIssueReport.swift,
 				Settings/DashboardIntegrationsSettingsView.swift,
 				Settings/LiveModeBehavior.swift,
+				"Helpers/UI Helpers/TileEditorCopy.swift",
 			);
 			target = 6FEBD39C2EFAE80A0086D78A /* Relay Mobile */;
 		};
