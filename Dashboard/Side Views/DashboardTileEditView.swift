@@ -24,6 +24,8 @@ import CoreAudio
 
 struct DashboardTileEditView: View {
     @Environment(\.colorScheme) private var colorScheme
+    /// The dashboard's undo manager; only its undo/redo re-seeds the editor.
+    @Environment(\.undoManager) private var dashboardUndoManager
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -120,6 +122,8 @@ struct DashboardTileEditView: View {
     /// Applies a change to one module through the inspector's undo path. The owner names
     /// the undo step and folds a drag or a burst of typing into one step.
     let onCommitModuleChange: (UUID, String, (inout DashboardModuleModel) -> Void) -> Void
+    /// Asks the owner to register no undo steps for the given number of seconds.
+    let onSuppressUndoRegistration: (TimeInterval) -> Void
     /// Current modules on this tile, in any order. The inspector will sort by
     /// `order` for display.
     let modules: [DashboardModuleModel]
@@ -404,6 +408,7 @@ struct DashboardTileEditView: View {
         onUpdatePCOModuleConfig: @escaping (UUID, PCOModuleConfig) -> Void,
         onUpdateShureModuleConfig: @escaping (UUID, ShureModuleConfig) -> Void,
         onCommitModuleChange: @escaping (UUID, String, (inout DashboardModuleModel) -> Void) -> Void = { _, _, _ in },
+        onSuppressUndoRegistration: @escaping (TimeInterval) -> Void = { _ in },
         initialShowsTitle: Bool,
         onSaveShowsTitle: @escaping (Bool) -> Void,
         initialShureShowDeviceName: Bool = true,
@@ -482,6 +487,7 @@ struct DashboardTileEditView: View {
         self.onUpdatePCOModuleConfig = onUpdatePCOModuleConfig
         self.onUpdateShureModuleConfig = onUpdateShureModuleConfig
         self.onCommitModuleChange = onCommitModuleChange
+        self.onSuppressUndoRegistration = onSuppressUndoRegistration
         self.initialShowsTitle = initialShowsTitle
         self.onSaveShowsTitle = onSaveShowsTitle
         self.initialShureShowDeviceName = initialShureShowDeviceName
@@ -1188,7 +1194,9 @@ extension DashboardTileEditView {
 
     /// Records an undo/redo so the next change to this tile's modules or formatting is
     /// treated as a restore and re-seeds the editor.
-    private func noteUndoOrRedo() {
+    private func noteUndoOrRedo(_ note: Notification) {
+        // Only the dashboard's undo manager; text fields and other views have their own.
+        guard let manager = note.object as? UndoManager, manager === dashboardUndoManager else { return }
         let now = Date()
         lastUndoRedoAt = now
         lastFormattingUndoRedoAt = now
@@ -1198,6 +1206,13 @@ extension DashboardTileEditView {
     func handleContinuousEditChanged(_ isEditing: Bool) {
         isContinuousEditInProgress = isEditing
         onContinuousEditChanged(isEditing)
+    }
+
+    /// A slider removed mid-drag (closing the inspector, switching tiles) never reports the
+    /// end of its drag; end it here so the flag can't stay stuck.
+    func endContinuousEditIfNeeded() {
+        guard isContinuousEditInProgress else { return }
+        handleContinuousEditChanged(false)
     }
 
     /// The tile's formatting as passed in by the owner; a change right after an undo/redo
@@ -1757,12 +1772,13 @@ extension DashboardTileEditView {
             #if os(macOS)
             NSColorPanel.shared.close()
             #endif
+            endContinuousEditIfNeeded()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
-            noteUndoOrRedo()
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { note in
+            noteUndoOrRedo(note)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { _ in
-            noteUndoOrRedo()
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { note in
+            noteUndoOrRedo(note)
         }
         .onChange(of: formattingInputs, initial: false) { _, _ in
             // The tile's formatting changed. Right after an undo/redo that is a restore:
@@ -1777,13 +1793,20 @@ extension DashboardTileEditView {
         .onChange(of: modules, initial: false) { _, newValue in
             // Edits made here update `editableModules` before they reach the tile, so a
             // difference right after an undo/redo means the modules were restored.
-            let restoredByUndo = newValue != editableModules
-                && (lastUndoRedoAt.map { Date().timeIntervalSince($0) < 1 } ?? false)
+            let restoredByUndo = InspectorModuleRestore.isRestore(
+                local: editableModules,
+                incoming: newValue,
+                lastUndoRedoAt: lastUndoRedoAt,
+                isDragging: isContinuousEditInProgress
+            )
             editableModules = newValue
             moduleHeightByID = Dictionary(uniqueKeysWithValues: newValue.map { ($0.id, $0.moduleHeightPoints ?? defaultModuleHeightDisplayPoints(for: $0)) })
             syncModuleSelection(with: newValue)
             if restoredByUndo {
                 lastUndoRedoAt = nil
+                // The rebuilt settings view may write defaults as it appears (e.g. a first
+                // Shure channel); those must not register a step and clear redo.
+                onSuppressUndoRegistration(0.5)
                 moduleSettingsRevision &+= 1
             }
         }
@@ -1806,6 +1829,7 @@ extension DashboardTileEditView {
             hasStartedTileSizeEdit = false
         }
         .onChange(of: tileID, initial: false) { _, _ in
+            endContinuousEditIfNeeded()
             // Switching tiles should re-seed inspector state; reset handles gating.
             resetEditorStateFromInitialValues()
             moduleHeightByID = Dictionary(uniqueKeysWithValues: modules.map { ($0.id, $0.moduleHeightPoints ?? defaultModuleHeightDisplayPoints(for: $0)) })
@@ -3335,18 +3359,34 @@ extension DashboardTileEditView {
     }
 }
 extension DashboardTileEditView {
+    // Each of these updates `editableModules` first, like the module settings, so the
+    // inspector can tell its own edits apart from an undo/redo restore.
+
     private func updateModulePadding(moduleID: UUID, top: CGFloat?, bottom: CGFloat?) {
+        if let idx = editableModules.firstIndex(where: { $0.id == moduleID }) {
+            if let top { editableModules[idx].paddingTop = top }
+            if let bottom { editableModules[idx].paddingBottom = bottom }
+        }
         onUpdateModulePadding(moduleID, top, bottom)
     }
 
     private func updateModuleHeightPoints(moduleID: UUID, heightPoints: CGFloat?) {
+        applyLocalModuleHeight(moduleID: moduleID, heightPoints: heightPoints)
         // Reuse the existing callback signature for now.
         onUpdateModuleScale(moduleID, heightPoints)
     }
 
     private func updateModuleScale(moduleID: UUID, scale: CGFloat?) {
+        applyLocalModuleHeight(moduleID: moduleID, heightPoints: scale)
         // Back-compat shim: treat scale as "height points" if this is still called.
         onUpdateModuleScale(moduleID, scale)
+    }
+
+    /// Mirrors what the owner's `onUpdateModuleScale` writes to the tile.
+    private func applyLocalModuleHeight(moduleID: UUID, heightPoints: CGFloat?) {
+        guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
+        editableModules[idx].moduleHeightPoints = heightPoints
+        editableModules[idx].moduleScale = nil
     }
 
     private func moduleHeightSliderMaxPoints(for module: DashboardModuleModel) -> CGFloat {

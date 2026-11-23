@@ -49,6 +49,9 @@ struct DashboardInspectorPanelView: View {
     /// A reference box: updating it must not re-render the inspector.
     @State private var undoCoalescing = InspectorUndoCoalescingBox()
 
+    /// The dashboard's undo manager (the one `pushUndoSnapshot` registers with).
+    @Environment(\.undoManager) private var undoManager
+
     // MARK: - Body
 
     var body: some View {
@@ -558,6 +561,10 @@ struct DashboardInspectorPanelView: View {
                 commitModuleEdit(moduleID, actionName, change)
             },
 
+            onSuppressUndoRegistration: { duration in
+                undoCoalescing.coalescer.suppressRegistrations(until: Date().addingTimeInterval(duration))
+            },
+
             initialShowsTitle: tileValue.showsTitle,
 
             onSaveShowsTitle: { newValue in
@@ -605,6 +612,15 @@ struct DashboardInspectorPanelView: View {
         }
         .onChange(of: editingTileID, initial: false) { _, _ in
             captureInitialTileSizeSnapshot(tileValue: tileValue)
+        }
+        // After an undo/redo the step being coalesced is gone; the next edit must open a new one.
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { note in
+            guard let manager = note.object as? UndoManager, manager === undoManager else { return }
+            undoCoalescing.coalescer.reset()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { note in
+            guard let manager = note.object as? UndoManager, manager === undoManager else { return }
+            undoCoalescing.coalescer.reset()
         }
         .tutorialAnchor("root.inspector")
         .frame(width: inspectorPanelWidth)
