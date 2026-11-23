@@ -108,3 +108,19 @@ enum FrequencyScale: String, Codable, CaseIterable {
     case logarithmic
 }
 
+
+// MARK: - Decibel math
+
+nonisolated enum DecibelMath {
+    /// Energy average of decibel readings: 10·log10(mean(10^(dB/10))). Averaging the dB
+    /// numbers directly under-reads whenever the level fluctuates (e.g. 60 and 70 dB
+    /// average to 65 dB arithmetically but 67.4 dB in energy). Returns nil for no values.
+    static func powerMean(_ values: [Double]) -> Double? {
+        let finite = values.filter(\.isFinite)
+        guard !finite.isEmpty else { return nil }
+        // Factor out the loudest value so 10^(dB/10) can't overflow for large levels.
+        let reference = finite.max()!
+        let meanRelative = finite.reduce(0.0) { $0 + pow(10, ($1 - reference) / 10) } / Double(finite.count)
+        return reference + 10 * log10(meanRelative)
+    }
+}

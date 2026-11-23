@@ -1006,7 +1006,8 @@ struct AudioInputCalibrationSheet: View {
             applyAfterCapture = false
             return
         }
-        capturedRawDbFS = captureValues.reduce(0, +) / Double(captureValues.count)
+        // Energy average: a plain mean of dB values reads low when the level fluctuates.
+        capturedRawDbFS = DecibelMath.powerMean(captureValues)
         if applyAfterCapture {
             applyAfterCapture = false
             applyCalibration()

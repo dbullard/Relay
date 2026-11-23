@@ -84,6 +84,18 @@ final class AudioAnalysisAccuracyTests: XCTestCase {
         XCTAssertEqual(band1k?.energyDb ?? -999, 0, accuracy: 0.1)
     }
 
+    // MARK: - Decibel averaging
+
+    func testPowerMeanOfDecibels() {
+        XCTAssertEqual(DecibelMath.powerMean([70, 70, 70])!, 70, accuracy: 1e-9)
+        // 60 and 70 dB: energy mean is 67.40 dB, not the arithmetic 65.
+        XCTAssertEqual(DecibelMath.powerMean([60, 70])!, 67.40, accuracy: 0.01)
+        XCTAssertEqual(DecibelMath.powerMean([-60, -50])!, -52.60, accuracy: 0.01)
+        XCTAssertEqual(DecibelMath.powerMean([140, 140])!, 140, accuracy: 1e-9, "No overflow at high levels")
+        XCTAssertNil(DecibelMath.powerMean([]))
+        XCTAssertEqual(DecibelMath.powerMean([70, .nan])!, 70, accuracy: 1e-9)
+    }
+
     // MARK: - FFT sizing
 
     func testFFTSizeScalesWithSampleRate() {
