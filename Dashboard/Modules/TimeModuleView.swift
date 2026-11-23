@@ -336,9 +336,14 @@ struct TimeModuleView: View {
         }
         .onChange(of: isCountdownRunning, initial: false) { _, running in
             if running {
-                // Keep an end date restored from the runtime store; otherwise anchor now.
+                // Keep an end date restored from the runtime store; otherwise anchor now
+                // (in the past when resuming a paused overrun, so it keeps counting up).
                 if countdownEndDate == nil {
-                    countdownEndDate = Date().addingTimeInterval(TimeInterval(remainingSeconds))
+                    countdownEndDate = TimeModuleClock.countdownEndDate(
+                        resumingAt: Date(),
+                        remainingSeconds: remainingSeconds,
+                        overrunSeconds: overrunSeconds
+                    )
                 }
             } else {
                 countdownEndDate = nil
@@ -427,7 +432,10 @@ struct TimeModuleView: View {
 
                 if !hidesCountdownStartButtonInLiveMode {
                     Button(isCountdownRunning ? "Pause" : "Start") {
-                        if remainingSeconds <= 0 {
+                        // Pause keeps everything, overrun included; Start from a paused
+                        // overrun resumes it. Only a countdown stopped at exactly zero
+                        // (nothing to resume) starts over from the full duration.
+                        if !isCountdownRunning && remainingSeconds <= 0 && !isCountdownOver {
                             remainingSeconds = countdownSeconds
                             overrunSeconds = 0
                         }
@@ -642,6 +650,15 @@ enum TimeModuleClock {
     /// 0:01 → 0:00 → +0:01 without skipping or repeating a second.
     static func countdownOverrun(endDate: Date, now: Date) -> Int {
         timerElapsed(startDate: endDate, now: now)
+    }
+
+    /// End date for a countdown (re)started at `now`: ahead by the time left, or, when
+    /// resuming a paused overrun, behind by the overrun so it continues from there.
+    static func countdownEndDate(resumingAt now: Date, remainingSeconds: Int, overrunSeconds: Int) -> Date {
+        if remainingSeconds > 0 {
+            return now.addingTimeInterval(TimeInterval(remainingSeconds))
+        }
+        return now.addingTimeInterval(-TimeInterval(max(0, overrunSeconds)))
     }
 }
 

@@ -1126,6 +1126,11 @@ struct ButtonItemView: View {
                     errorBadgeButton
                 }
             }
+            .onChange(of: runtimeErrorMessage) { _, message in
+                // Cleared elsewhere (e.g. the next run starting): drop the popover request
+                // too, so the next failure doesn't pop it open by itself.
+                if message == nil { showsErrorDetail = false }
+            }
             .animation(.easeInOut(duration: 0.18), value: isStateActive)
             .animation(.easeInOut(duration: 0.12), value: isPressed)
             .simultaneousGesture(pressGesture)
