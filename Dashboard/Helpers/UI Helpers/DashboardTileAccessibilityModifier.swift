@@ -9,6 +9,8 @@ struct DashboardTileAccessibilityModifier: ViewModifier {
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onExitLiveMode: () -> Void
+    var onMove: ((DashboardTileAccessibilityAdjustment.Move) -> Void)?
+    var onResize: ((DashboardTileAccessibilityAdjustment.Resize) -> Void)?
 
     private var title: String {
         let tileName = tile.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,6 +50,9 @@ struct DashboardTileAccessibilityModifier: ViewModifier {
         }
 
         parts.append("Position \(Int(tile.offset.width.rounded())), \(Int(tile.offset.height.rounded()))")
+        if let size = tile.size {
+            parts.append("Size \(Int(size.width.rounded())) by \(Int(size.height.rounded()))")
+        }
         return parts.joined(separator: ", ")
     }
 
@@ -55,7 +60,7 @@ struct DashboardTileAccessibilityModifier: ViewModifier {
         if isLiveMode {
             return "Use the Exit Live Mode action to edit this tile."
         }
-        return "Use actions to select, edit, or delete this tile."
+        return "Use actions to select, edit, move, resize, or delete this tile."
     }
 
     private var traits: AccessibilityTraits {
@@ -83,6 +88,28 @@ struct DashboardTileAccessibilityModifier: ViewModifier {
                 .accessibilityAction(named: Text("Select"), onSelect)
                 .accessibilityAction(named: Text("Edit"), onEdit)
                 .accessibilityAction(named: Text("Delete"), onDelete)
+                .modifier(MoveResizeActions(onMove: onMove, onResize: onResize))
+        }
+    }
+}
+
+/// The VoiceOver "Move …" and "Make …" actions, one per direction.
+private struct MoveResizeActions: ViewModifier {
+    let onMove: ((DashboardTileAccessibilityAdjustment.Move) -> Void)?
+    let onResize: ((DashboardTileAccessibilityAdjustment.Resize) -> Void)?
+
+    func body(content: Content) -> some View {
+        content.accessibilityActions {
+            if let onMove {
+                ForEach(DashboardTileAccessibilityAdjustment.Move.allCases, id: \.self) { move in
+                    Button(move.actionName) { onMove(move) }
+                }
+            }
+            if let onResize {
+                ForEach(DashboardTileAccessibilityAdjustment.Resize.allCases, id: \.self) { resize in
+                    Button(resize.actionName) { onResize(resize) }
+                }
+            }
         }
     }
 }

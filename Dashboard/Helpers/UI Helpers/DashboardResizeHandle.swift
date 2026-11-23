@@ -24,6 +24,8 @@ struct ResizeHandleController {
     let onDragBegan: () -> Void
     let onDragChanged: (CGPoint) -> Void
     let onDragEnded: () -> Void
+    /// Hit radius in canvas points (constant on screen; see `DashboardTileResizeHitTarget`).
+    let hitRadius: CGFloat
 }
 #endif
 
@@ -70,12 +72,16 @@ final class ResizeHandleDragState {
     var dragStartLocation: CGPoint?
     var dragStartBottom: CGFloat?
     var dragStartRight: CGFloat?
+    /// Set once the drag first changes the tile. Until then nothing has been
+    /// reported, so a tap on a handle registers no "Resize Tile" undo step.
+    var didBeginResize = false
 
     func reset() {
         dragStartSize = nil
         dragStartLocation = nil
         dragStartBottom = nil
         dragStartRight = nil
+        didBeginResize = false
     }
 }
 
@@ -174,7 +180,6 @@ struct ResizeHandle: View {
         }
 
         if dragState.dragStartSize == nil {
-            onResizeBegan()
             dragState.dragStartSize = size ?? defaultSize
         }
 
@@ -214,6 +219,21 @@ struct ResizeHandle: View {
 
         interactionSession.activeSmartGuides = result.activeGuides
 
+        if !dragState.didBeginResize {
+            // `onResizeBegan` registers the undo step, so hold it back until the
+            // tile actually changes: iPad's gesture starts at distance 0, and a tap
+            // near a selected tile's edge used to leave an empty "Resize Tile" step.
+            guard DashboardTileResizeHitTarget.resizeChangesTile(
+                startSize: baseSize,
+                startOffset: tileOffset,
+                newSize: result.size,
+                newOffsetY: result.newOffsetY,
+                newOffsetX: result.newOffsetX
+            ) else { return }
+            dragState.didBeginResize = true
+            onResizeBegan()
+        }
+
         var t = Transaction()
         t.disablesAnimations = true
         withTransaction(t) {
@@ -226,8 +246,18 @@ struct ResizeHandle: View {
             resetDragState()
             return
         }
+        let didBeginResize = dragState.didBeginResize
         resetDragState()
-        onResizeEnded()
+        if didBeginResize {
+            onResizeEnded()
+        } else {
+            interactionSession.activeSmartGuides.removeAll()
+        }
+    }
+
+    /// Hit radius in canvas points, constant on screen at any zoom.
+    var hitRadius: CGFloat {
+        DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: size ?? defaultSize)
     }
 
     @ViewBuilder
@@ -267,9 +297,9 @@ struct ResizeHandle: View {
         }
     }
     var body: some View {
-        // Keep the hover/cursor target larger than the visible knob so the resize
-        // affordance is easy to acquire with the mouse on macOS.
-        let handleHitSize = min(max(28 / max(viewportZoom, 0.0001), 28), 56)
+        // Keep the touch target larger than the visible knob and the same size on
+        // screen at any zoom (44pt on iPad; macOS hit-tests in the AppKit surface).
+        let handleHitSize = hitRadius * 2
         let gesture = DragGesture(minimumDistance: 0, coordinateSpace: .named("dashboardCanvas"))
             .onChanged { value in
                 if dragState.dragStartLocation == nil {
@@ -328,7 +358,8 @@ extension ResizeHandle {
             },
             onDragEnded: {
                 finishResizeDrag()
-            }
+            },
+            hitRadius: hitRadius
         )
     }
 }
@@ -543,9 +574,12 @@ struct DashboardResizeInteractionSurface: NSViewRepresentable {
             guard isEnabled else { return nil }
             let layoutPoint = CGPoint(x: point.x - halo, y: (bounds.height - point.y) - halo)
             let layout = DashboardTileResizeHandleLayout(size: size)
+            // Constant on-screen radius. Points further than `halo` outside the tile
+            // never reach this view, since its frame only extends that far.
+            let hitRadius = controllers.values.map(\.hitRadius).max() ?? DashboardTileResizeHandleLayout.hitHalo
             guard let hit = layout.closestHandle(
                 to: layoutPoint,
-                within: DashboardTileResizeHandleLayout.hitHalo,
+                within: hitRadius,
                 allowedOrientations: allowedOrientations
             ) else {
                 return nil

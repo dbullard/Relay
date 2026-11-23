@@ -18,9 +18,19 @@ struct SelectionActionToolbarView: View {
     private static let regionSections = ["Half", "Thirds", "Fourths", "Quarters", "Full"]
 
     private var safeZoom: CGFloat { max(0.0001, viewportZoom) }
-    /// Keeps toolbar chrome a constant on-screen size regardless of canvas zoom —
-    /// same fix as CanvasGuide's labelScale: cap only the upper bound, never floor it.
-    private var chromeScale: CGFloat { min(1 / safeZoom, 2) }
+    /// Keeps toolbar chrome a constant on-screen size at every canvas zoom. The
+    /// toolbar renders inside the zoomed canvas layer, so it is counter-scaled by
+    /// the full 1/zoom; the old 2x cap let it shrink below 50% zoom.
+    private var chromeScale: CGFloat { 1 / safeZoom }
+
+    /// Minimum on-screen hit size for the toolbar buttons.
+    private static var minimumHitSize: CGFloat {
+        #if os(iOS)
+        return 44
+        #else
+        return 28
+        #endif
+    }
 
     private var showsSizeButton: Bool { selectedTileCount == 1 }
     private var showsDistributeButtons: Bool { selectedTileCount >= 2 }
@@ -60,6 +70,8 @@ struct SelectionActionToolbarView: View {
                         isRegionPickerPresented = true
                     } label: {
                         Label("Size", systemImage: "rectangle.grid.2x2")
+                            .frame(minWidth: Self.minimumHitSize, minHeight: Self.minimumHitSize)
+                            .contentShape(Rectangle())
                     }
                     .popover(isPresented: $isRegionPickerPresented, arrowEdge: shouldFlipBelow ? .bottom : .top) {
                         regionPickerPopover
@@ -70,6 +82,8 @@ struct SelectionActionToolbarView: View {
                         onDistribute(.horizontal)
                     } label: {
                         DistributeGridPreview(shape: previewShape(axis: .horizontal))
+                            .frame(minWidth: Self.minimumHitSize, minHeight: Self.minimumHitSize)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Distribute Horizontally")
                     .help(canDistributeHorizontally ? "Distribute Horizontally" : "Too many tiles to fit at minimum size")
@@ -79,6 +93,8 @@ struct SelectionActionToolbarView: View {
                         onDistribute(.vertical)
                     } label: {
                         DistributeGridPreview(shape: previewShape(axis: .vertical))
+                            .frame(minWidth: Self.minimumHitSize, minHeight: Self.minimumHitSize)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Distribute Vertically")
                     .help(canDistributeVertically ? "Distribute Vertically" : "Too many tiles to fit at minimum size")
@@ -88,7 +104,9 @@ struct SelectionActionToolbarView: View {
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            // The buttons' hit frames already add height, so keep the bar close to
+            // its `SelectionToolbarPlacement.defaultToolbarLocalHeight` budget.
+            .padding(.vertical, 2)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -98,7 +116,11 @@ struct SelectionActionToolbarView: View {
             .scaleEffect(chromeScale)
             .position(
                 x: selectionRect.midX,
-                y: shouldFlipBelow ? selectionRect.maxY + SelectionToolbarPlacement.defaultAnchorOffset : selectionRect.minY - SelectionToolbarPlacement.defaultAnchorOffset
+                // The anchor offset is in toolbar points, so it scales with the chrome;
+                // otherwise the counter-scaled toolbar would cover the selection when zoomed out.
+                y: shouldFlipBelow
+                    ? selectionRect.maxY + SelectionToolbarPlacement.defaultAnchorOffset * chromeScale
+                    : selectionRect.minY - SelectionToolbarPlacement.defaultAnchorOffset * chromeScale
             )
             .allowsHitTesting(true)
         }

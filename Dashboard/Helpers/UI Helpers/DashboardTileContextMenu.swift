@@ -11,6 +11,8 @@ struct DashboardTileContextMenu: View {
     let onEditRequested: (Bool) -> Void
     let onDelete: () -> Void
     let onPersist: (_ reconcileGraphNodes: Bool) -> Void
+    /// Registers an undo step (call before the edit it undoes).
+    let onUndoSnapshot: (_ actionName: String) -> Void
     let onAlignSelectedTilesToGrid: () -> Void
     let onResolveTileOverlapsToGrid: () -> Void
     let onDistributeSpacingHorizontally: () -> Void
@@ -126,6 +128,7 @@ struct DashboardTileContextMenu: View {
             contentPadding: tile.contentPadding
         )
 
+        onUndoSnapshot("Duplicate Tile")
         tab.tiles.append(duplicate)
         onPersist(true)
     }
