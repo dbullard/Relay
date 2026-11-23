@@ -5,13 +5,9 @@ import AppKit
 #endif
 
 struct DashboardTileCanvas: View {
-    /// Max gap after an interactive-tile tap (see
-    /// `DashboardCanvasActionCoordinator.lastInteractiveTileTapAt`) during
-    /// which the canvas-wide double-tap-to-exit gesture stands down. Matches
-    /// the rough scale of the system double-tap window so it only suppresses
-    /// taps that could plausibly be the same two touches the exit gesture is
-    /// reacting to.
-    private static let interactiveTapSuppressionWindow: TimeInterval = 0.6
+    // There is deliberately no canvas-wide double-tap gesture here: a stray
+    // double-tap on a tile must never exit Live Mode. Leaving Live Mode goes
+    // only through its explicit control (toolbar / live menu / Cmd+L).
 
     /// Owned by the parent (`DashboardRootView`) so it can also read live drag
     /// state — e.g. to keep the selection action toolbar tracking a tile in
@@ -183,7 +179,11 @@ struct DashboardTileCanvas: View {
                                 remoteEditors: tileRemoteEditors[tileID] ?? []
                             )
                         }
-                        .zIndex(1)
+                        // The inner `.zIndex` in `DashboardTileContainer` only orders
+                        // views inside this host, so raise the host itself to keep a
+                        // selected (and therefore dragged -- drag-begin selects the
+                        // tile) or edited tile above later siblings.
+                        .zIndex(isEditingVisual ? 3 : (selectedTileIDs.contains(tileID) ? 2 : 1))
                         .onAppear {
                             recordCanvasTileMount(row.snapshot)
                         }
@@ -197,24 +197,6 @@ struct DashboardTileCanvas: View {
                     .zIndex(101)
             }
             .frame(width: w, height: h, alignment: .topLeading)
-            .simultaneousGesture(
-                TapGesture(count: 2)
-                    .onEnded {
-                        guard isLiveMode else { return }
-                        // This gesture sits on the ZStack that contains every
-                        // tile, so as a `.simultaneousGesture` it sees any two
-                        // taps anywhere in the canvas within the double-tap
-                        // window -- including one tap each on two different
-                        // button tiles. Back off if an interactive tile (e.g.
-                        // a button) was tapped moments ago; that's two
-                        // deliberate presses, not a double-tap on empty canvas.
-                        if let lastTap = actions.lastInteractiveTileTapAt,
-                           Date().timeIntervalSince(lastTap) < Self.interactiveTapSuppressionWindow {
-                            return
-                        }
-                        actions.exitLiveMode()
-                    }
-            )
         }
     }
 }

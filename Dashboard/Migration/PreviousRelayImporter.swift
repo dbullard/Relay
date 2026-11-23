@@ -100,11 +100,44 @@ enum PreviousRelayImporter {
 
     /// Stores read their settings when they are created, so the import is applied on the next
     /// launch, before any of them exist.
-    static func requestImportAndRelaunch(defaults: UserDefaults = .standard) {
+    ///
+    /// The relaunch ends this process directly (it can't go through the normal quit flow,
+    /// because the new instance is already starting), so when the open dashboard has unsaved
+    /// changes the user is asked first. Returns false, changing nothing, if they cancel.
+    @discardableResult
+    static func requestImportAndRelaunch(
+        defaults: UserDefaults = .standard,
+        hasUnsavedChanges: Bool = DashboardSaveState.shared.hasUnsavedChanges,
+        confirmDiscardingUnsavedChanges: (() -> Bool)? = nil,
+        relaunch performRelaunch: (() -> Void)? = nil
+    ) -> Bool {
+        if hasUnsavedChanges {
+            let confirm = confirmDiscardingUnsavedChanges ?? Self.confirmDiscardingUnsavedChanges
+            guard confirm() else { return false }
+        }
         defaults.set(true, forKey: pendingKey)
         defaults.set(true, forKey: promptAnsweredKey)
         defaults.synchronize()
-        relaunch()
+        (performRelaunch ?? Self.relaunch)()
+        return true
+    }
+
+    /// Asks before a restart that would lose unsaved dashboard changes. Cancel is the default
+    /// button (Return and Esc both cancel).
+    private static func confirmDiscardingUnsavedChanges() -> Bool {
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Restart without saving?"
+        alert.informativeText = "Relay restarts to finish the import, and the open dashboard has unsaved changes that will be lost. To keep them, cancel, save the dashboard, then import again."
+        alert.addButton(withTitle: "Cancel")
+        let discard = alert.addButton(withTitle: "Discard Changes and Restart")
+        discard.hasDestructiveAction = true
+        return alert.runModal() == .alertSecondButtonReturn
+        #else
+        // No relaunch on iPad (the import applies on the next launch), so nothing is lost.
+        return true
+        #endif
     }
 
     static func declineOffer(defaults: UserDefaults = .standard) {

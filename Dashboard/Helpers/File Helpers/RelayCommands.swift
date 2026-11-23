@@ -248,11 +248,13 @@ struct RelayCommands: Commands {
             Toggle("Live Mode", isOn: $liveModeEnabled)
                 .keyboardShortcut("l", modifiers: [.command])
 
+            // Cmd+; is the system Check Spelling shortcut and Option+Cmd+M is Minimize All,
+            // so these use free combinations instead (keep DashboardKeyboardShortcutsView in sync).
             Toggle("Show Guides", isOn: $showGuidesEnabled)
-                .keyboardShortcut(";", modifiers: [.command])
+                .keyboardShortcut("'", modifiers: [.command])
 
             Toggle("Auto-Hide Menu", isOn: $toolbarAutoHideEnabled)
-                .keyboardShortcut("m", modifiers: [.command, .option])
+                .keyboardShortcut("m", modifiers: [.command, .control])
 
             Divider()
 

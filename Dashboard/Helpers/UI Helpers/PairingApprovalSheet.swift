@@ -54,6 +54,8 @@ struct PairingApprovalSheet: View {
                     Text("Deny").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                // Esc denies: an explicit choice by the operator, never automatic.
+                .keyboardShortcut(.cancelAction)
 
                 Button {
                     onApprove()

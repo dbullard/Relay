@@ -327,6 +327,8 @@
 				"Helpers/UI Helpers/JoinSyncedTabAction.swift",
 				"Helpers/UI Helpers/LeaveSyncedTabAction.swift",
 				"Helpers/UI Helpers/LiveDataStatus.swift",
+				"Helpers/UI Helpers/LiveModeInterruptionPolicy.swift",
+				"Helpers/UI Helpers/LiveModeRevealHandle.swift",
 				"Helpers/UI Helpers/ModernCard.swift",
 				"Helpers/UI Helpers/ModifierTracker.swift",
 				"Helpers/UI Helpers/NameShortener.swift",

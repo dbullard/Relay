@@ -249,6 +249,7 @@ struct DashboardTopToolbarView: View {
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var selectionPillAnimation: Animation {
         .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.10)
@@ -286,6 +287,15 @@ struct DashboardTopToolbarView: View {
     private var canToggleOverview: Bool { hasTilesInTab }
     private var canToggleInspector: Bool { !selectedTileIDs.isEmpty }
 
+    /// Hit area for the tab close "x" (minimum target: 28 pt macOS, 44 pt iPad).
+    private var tabCloseHitSize: CGFloat {
+        #if os(macOS)
+        28
+        #else
+        44
+        #endif
+    }
+
 
    
     #if os(iOS)
@@ -295,15 +305,18 @@ struct DashboardTopToolbarView: View {
 
     // MARK: - Pill HUD animations
 
+    /// Same spring for showing and hiding, so the pill doesn't snap away faster than it came.
     private var pillShowAnimation: Animation {
-        .spring(response: 0.28, dampingFraction: 0.86, blendDuration: 0.10)
+        .spring(duration: 0.3, bounce: 0)
     }
 
     private var pillHideAnimation: Animation {
-        .easeInOut(duration: 0.18)
+        pillShowAnimation
     }
 
     private var pillTransition: AnyTransition {
+        // Reduce Motion: fade in place instead of sliding from the top edge.
+        if reduceMotion { return .opacity }
         #if os(macOS)
         // Avoid opacity-based transitions on glass materials to prevent flashing.
         return .asymmetric(
@@ -372,6 +385,8 @@ struct DashboardTopToolbarView: View {
     }
 
     private func triggerSelectionPulse(from oldIndex: Int, to newIndex: Int) {
+        // The squash-and-stretch pulse is decorative motion; skip it under Reduce Motion.
+        guard !reduceMotion else { return }
         selectionPulseDirection = (newIndex >= oldIndex) ? 1.0 : -1.0
         isSelectionPulsing = true
         // Short pulse; keep it subtle so it feels Apple, not “cartoon”.
@@ -1667,13 +1682,13 @@ struct DashboardTopToolbarView: View {
         guard !isIPadToolbarVisible else { return }
         iPadHideTask?.cancel()
         iPadHideTask = nil
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.86, blendDuration: 0.10)) {
+        withAnimation(pillShowAnimation) {
             isIPadToolbarVisible = true
         }
     }
 
     private func hideIPadToolbar() {
-        withAnimation(.easeInOut(duration: 0.18)) {
+        withAnimation(pillHideAnimation) {
             isIPadToolbarVisible = false
         }
     }
@@ -1763,7 +1778,11 @@ struct DashboardTopToolbarView: View {
                             .toolbarIconChrome(isActive: isTileOverviewVisible)
                             .tutorialAnchor("root.overviewButton")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ToolbarIconButtonStyle())
+                    .toolbarButtonAccessibility(
+                        isTileOverviewVisible ? "Hide Tile Overview" : "Show Tile Overview",
+                        isOn: isTileOverviewVisible
+                    )
                     .disabled(!canToggleOverview)
                     .opacity(canToggleOverview ? 1.0 : 0.35)
                 }
@@ -1975,11 +1994,13 @@ struct DashboardTopToolbarView: View {
                                                                         Image(systemName: "xmark")
                                                                             .font(.caption2.weight(.semibold))
                                                                             .opacity(showClose ? 0.70 : 0.0)
+                                                                            .frame(width: tabCloseHitSize, height: tabCloseHitSize)
                                                                             .contentShape(Rectangle())
                                                                     }
                                                                     .buttonStyle(.plain)
-                                                                    .frame(width: 18, height: 18)
-                                                                    .padding(.trailing, max(2, tabHPad - 6))
+                                                                    // Keep the glyph where the old 18 pt frame centred it.
+                                                                    .padding(.trailing, max(2, tabHPad - 6) - (tabCloseHitSize - 18) / 2)
+                                                                    .help("Delete Tab")
                                                                     .accessibilityLabel("Delete Tab")
                                                                     .allowsHitTesting(showClose)
                                                                 }
@@ -2220,8 +2241,10 @@ struct DashboardTopToolbarView: View {
                             Image(systemName: "plus.square.on.square")
                                 .imageScale(iconScale)
                                 .frame(width: iconW, height: iconH)
+                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(ToolbarIconButtonStyle())
+                        .toolbarButtonAccessibility("New Tab", help: "New Tab (⌘T)")
                     }
                     // No `maxWidth: 720` cap here: it stopped the pill from growing
                     // past ~7 tabs even with window space to spare.
@@ -2243,7 +2266,7 @@ struct DashboardTopToolbarView: View {
                             isLiveMode.toggle()
                         }
                     } label: {
-                        Image(systemName: "play.rectangle")
+                        Image(systemName: isLiveMode ? "play.rectangle.fill" : "play.rectangle")
                             .imageScale(iconScale)
                             .foregroundStyle(isLiveMode ? Color.accentColor : toolbarForeground)
                             .frame(width: iconW, height: iconH)
@@ -2252,7 +2275,12 @@ struct DashboardTopToolbarView: View {
                             .toolbarIconChrome(isActive: isLiveMode)
                             .tutorialAnchor("root.liveMode")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ToolbarIconButtonStyle())
+                    .toolbarButtonAccessibility(
+                        isLiveMode ? "Exit Live Mode" : "Enter Live Mode",
+                        help: isLiveMode ? "Exit Live Mode (⌘L)" : "Enter Live Mode (⌘L)",
+                        isOn: isLiveMode
+                    )
 
                     Button {
                         showingPCOConfigForTab = true
@@ -2268,7 +2296,8 @@ struct DashboardTopToolbarView: View {
                                 .tutorialAnchor("root.tabSettings")
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ToolbarIconButtonStyle())
+                    .toolbarButtonAccessibility("Tab Settings")
 
                     Button {
                         showingRosters = true
@@ -2284,7 +2313,8 @@ struct DashboardTopToolbarView: View {
                                 .tutorialAnchor("root.rosters")
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ToolbarIconButtonStyle())
+                    .toolbarButtonAccessibility("Rosters")
 
                     Button {
                         toggleGraphCanvas()
@@ -2305,10 +2335,10 @@ struct DashboardTopToolbarView: View {
                             "Switches between dashboard canvas and automation view."
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ToolbarIconButtonStyle())
                     .disabled(mirrorSelected)
                     .opacity(mirrorSelected ? 0.35 : 1.0)
-                    .help(isGraphMode ? "Switch to Canvas View" : "Switch to Graph View")
+                    .help(isGraphMode ? "Switch to Canvas View (⌘1)" : "Switch to Automation View (⌘2)")
                     .tutorialAnchor("root.graphToggle")
 
                     Button {
@@ -2323,7 +2353,8 @@ struct DashboardTopToolbarView: View {
                             .padding(.vertical, 6)
                             .toolbarIconChrome(isActive: false)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ToolbarIconButtonStyle())
+                    .toolbarButtonAccessibility("Settings", help: "Settings (⌘,)")
                     .tutorialAnchor("root.settings")
 
                     if !isGraphMode {
@@ -2356,7 +2387,11 @@ struct DashboardTopToolbarView: View {
                                 .toolbarIconChrome(isActive: isInspectorVisible)
                                 .tutorialAnchor("root.inspectorButton")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(ToolbarIconButtonStyle())
+                        .toolbarButtonAccessibility(
+                            isInspectorVisible ? "Hide Inspector" : "Show Inspector",
+                            isOn: isInspectorVisible
+                        )
                         .disabled(mirrorSelected || !canToggleInspector)
                         .opacity((mirrorSelected || !canToggleInspector) ? 0.35 : 1.0)
                     }
@@ -2582,7 +2617,7 @@ struct DashboardTopToolbarView: View {
                 if isSubscriber {
                     Text("You’ll stop receiving updates from ‘\(tabs[idx].name)’. Keep a local copy or remove it.")
                 } else {
-                    Text("This will permanently delete ‘\(tabs[idx].name)’.")
+                    Text("‘\(tabs[idx].name)’ and its tiles will be removed. You can undo this.")
                 }
             }
         }
@@ -2641,7 +2676,7 @@ struct DashboardTopToolbarView: View {
                             iconH: iconH,
                             tabsStripHeight: tabsStripHeight
                         )
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                         .onAppear {
                             isIPadToolbarVisible = true
                             scheduleIPadAutoHideIfNeeded(delay: 4.0)
@@ -2740,7 +2775,7 @@ struct DashboardTopToolbarView: View {
                 if isSubscriber {
                     Text("You’ll stop receiving updates from ‘\(tabs[idx].name)’. Keep a local copy or remove it.")
                 } else {
-                    Text("This will permanently delete ‘\(tabs[idx].name)’.")
+                    Text("‘\(tabs[idx].name)’ and its tiles will be removed. You can undo this.")
                 }
             }
         }
@@ -2783,7 +2818,11 @@ struct DashboardTopToolbarView: View {
                             .toolbarIconChrome(isActive: isTileOverviewVisible)
                             .tutorialAnchor("root.overviewButton")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ToolbarIconButtonStyle())
+                    .toolbarButtonAccessibility(
+                        isTileOverviewVisible ? "Hide Tile Overview" : "Show Tile Overview",
+                        isOn: isTileOverviewVisible
+                    )
                     .disabled(!canToggleOverview)
                     .opacity(canToggleOverview ? 1.0 : 0.35)
                 }
@@ -2902,11 +2941,12 @@ struct DashboardTopToolbarView: View {
                                                                 Image(systemName: "xmark")
                                                                     .font(.caption2.weight(.semibold))
                                                                     .opacity(showClose ? 0.70 : 0.0)
+                                                                    .frame(width: tabCloseHitSize, height: tabCloseHitSize)
                                                                     .contentShape(Rectangle())
                                                             }
                                                             .buttonStyle(.plain)
-                                                            .frame(width: 18, height: 18)
-                                                            .padding(.trailing, max(2, tabHPad - 6))
+                                                            // Keep the glyph where the old 18 pt frame centred it.
+                                                            .padding(.trailing, max(2, tabHPad - 6) - (tabCloseHitSize - 18) / 2)
                                                             .accessibilityLabel("Delete Tab")
                                                             .allowsHitTesting(showClose)
                                                         }
@@ -2968,8 +3008,10 @@ struct DashboardTopToolbarView: View {
                             Image(systemName: "plus.square.on.square")
                                 .imageScale(iconScale)
                                 .frame(width: iconW, height: iconH)
+                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(ToolbarIconButtonStyle())
+                        .toolbarButtonAccessibility("New Tab", help: "New Tab (⌘T)")
                     }
                     .frame(maxWidth: 720)
                     .frame(height: tabsStripHeight)
@@ -3017,14 +3059,19 @@ struct DashboardTopToolbarView: View {
                         isLiveMode.toggle()
                     }
                 } label: {
-                    Image(systemName: "play.rectangle")
+                    Image(systemName: isLiveMode ? "play.rectangle.fill" : "play.rectangle")
                         .imageScale(iconScale)
                         .foregroundStyle(isLiveMode ? Color.accentColor : toolbarForeground)
                         .frame(width: iconW, height: iconH)
                         .toolbarIconChrome(isActive: isLiveMode)
                         .tutorialAnchor("root.liveMode")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ToolbarIconButtonStyle())
+                .toolbarButtonAccessibility(
+                    isLiveMode ? "Exit Live Mode" : "Enter Live Mode",
+                    help: isLiveMode ? "Exit Live Mode (⌘L)" : "Enter Live Mode (⌘L)",
+                    isOn: isLiveMode
+                )
 
                 Button {
                     showingPCOConfigForTab = true
@@ -3037,7 +3084,8 @@ struct DashboardTopToolbarView: View {
                             .toolbarIconChrome(isActive: false)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ToolbarIconButtonStyle())
+                .toolbarButtonAccessibility("Tab Settings")
                 .tutorialAnchor("root.tabSettings")
 
                 Button {
@@ -3049,7 +3097,8 @@ struct DashboardTopToolbarView: View {
                         .frame(width: iconW, height: iconH)
                         .toolbarIconChrome(isActive: false)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ToolbarIconButtonStyle())
+                .toolbarButtonAccessibility("Rosters")
                 .tutorialAnchor("root.rosters")
 
                 if isGraphMode && canSendAllToConsoles && !mirrorSelected {
@@ -3084,9 +3133,10 @@ struct DashboardTopToolbarView: View {
                         "Switches between dashboard canvas and automation view."
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ToolbarIconButtonStyle())
                 .disabled(mirrorSelected)
                 .opacity(mirrorSelected ? 0.35 : 1.0)
+                .help(isGraphMode ? "Switch to Canvas View (⌘1)" : "Switch to Automation View (⌘2)")
                 .tutorialAnchor("root.graphToggle")
 
                 Button {
@@ -3099,7 +3149,8 @@ struct DashboardTopToolbarView: View {
                         .frame(width: iconW, height: iconH)
                         .toolbarIconChrome(isActive: false)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ToolbarIconButtonStyle())
+                .toolbarButtonAccessibility("Settings", help: "Settings (⌘,)")
                 .tutorialAnchor("root.settings")
 
                 if !isGraphMode {
@@ -3129,7 +3180,11 @@ struct DashboardTopToolbarView: View {
                             .frame(width: iconW, height: iconH)
                             .toolbarIconChrome(isActive: isInspectorVisible)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ToolbarIconButtonStyle())
+                    .toolbarButtonAccessibility(
+                        isInspectorVisible ? "Hide Inspector" : "Show Inspector",
+                        isOn: isInspectorVisible
+                    )
                     .disabled(mirrorSelected || !canToggleInspector)
                     .opacity((mirrorSelected || !canToggleInspector) ? 0.35 : 1.0)
                     .tutorialAnchor("root.inspectorButton")
@@ -3404,26 +3459,48 @@ private struct TabsScrollMinXKey: PreferenceKey {
 
 private struct ToolbarIconChrome: ViewModifier {
     var isActive: Bool
+    #if os(macOS)
+    @State private var isHovering = false
+    #endif
+
+    /// "On" is shown by a filled disc and a heavier ring, not by tint alone.
+    @ViewBuilder
+    private var activeIndicator: some View {
+        if isActive {
+            Circle()
+                .fill(Color.accentColor.opacity(0.22))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.45), lineWidth: 1.5))
+                .allowsHitTesting(false)
+        }
+    }
 
     func body(content: Content) -> some View {
         if #available(iOS 26.0, macOS 26.0, *) {
             #if os(macOS)
             content
                 .background(
-                    Circle()
-                        .fill(.regularMaterial)
-                        .opacity(0.85)
+                    ZStack {
+                        Circle()
+                            .fill(.regularMaterial)
+                            // Hover brightens the disc (pressed feedback comes from ToolbarIconButtonStyle).
+                            .opacity(isHovering ? 1.0 : 0.85)
+                        activeIndicator
+                    }
                 )
                 .overlay(
                     Circle()
-                        .stroke(Color.white.opacity(isActive ? 0.18 : 0.12), lineWidth: 0.6)
+                        .stroke(Color.white.opacity(isHovering ? 0.30 : (isActive ? 0.18 : 0.12)), lineWidth: 0.6)
                         .allowsHitTesting(false)
                 )
+                .onHover { isHovering = $0 }
             #else
             content
                 .background(
-                    Circle()
-                        .fill(.ultraThinMaterial)
+                    ZStack {
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                        activeIndicator
+                    }
                 )
                 .overlay(
                     Circle()
@@ -3452,8 +3529,11 @@ private struct ToolbarIconChrome: ViewModifier {
         } else {
             content
                 .background(
-                    Circle()
-                        .fill(Color.white.opacity(isActive ? 0.12 : 0.08))
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(isActive ? 0.12 : 0.08))
+                        activeIndicator
+                    }
                 )
                 .overlay(
                     Circle()
@@ -3472,6 +3552,28 @@ private struct ToolbarIconChrome: ViewModifier {
 private extension View {
     func toolbarIconChrome(isActive: Bool = false) -> some View {
         self.modifier(ToolbarIconChrome(isActive: isActive))
+    }
+
+    /// VoiceOver label, hover help (with the shortcut where one exists) and, for toggles,
+    /// the Selected trait so on/off isn't conveyed by colour alone.
+    func toolbarButtonAccessibility(_ label: String, help: String? = nil, isOn: Bool? = nil) -> some View {
+        self
+            .accessibilityLabel(label)
+            .help(help ?? label)
+            .accessibilityAddTraits(isOn == true ? .isSelected : [])
+    }
+}
+
+/// Plain-looking toolbar button with visible pressed feedback (dim, plus a slight shrink
+/// unless Reduce Motion is on).
+private struct ToolbarIconButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.6 : 1.0)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1.0)
+            .animation(.spring(duration: 0.3, bounce: 0), value: configuration.isPressed)
     }
 }
 

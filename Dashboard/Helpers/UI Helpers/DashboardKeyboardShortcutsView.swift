@@ -13,6 +13,7 @@ struct DashboardKeyboardShortcutsView: View {
         SectionModel(
             title: "Tabs",
             items: [
+                ("Cmd + T", "New Tab", nil),
                 ("Cmd + [", "Select Previous Tab", "Works in Live Mode"),
                 ("Cmd + ]", "Select Next Tab", "Works in Live Mode"),
                 ("Cmd + Option + [", "Select First Tab", "Works in Live Mode"),
@@ -22,12 +23,13 @@ struct DashboardKeyboardShortcutsView: View {
         SectionModel(
             title: "View",
             items: [
-                ("Cmd + L", "Toggle Live Mode", nil),
+                ("Cmd + L", "Toggle Live Mode", "Live Mode ends only with this or the live menu, never with a double-tap"),
                 ("Cmd + 1", "Switch to Canvas View", nil),
                 ("Cmd + 2", "Switch to Automation View", nil),
-                ("Cmd + ;", "Toggle Show Guides", nil),
-                ("Cmd + Option + M", "Toggle Auto-Hide Menu", nil),
-                ("Cmd + Option + G", "Toggle Snap to Grid", nil)
+                ("Cmd + '", "Toggle Show Guides", nil),
+                ("Cmd + Control + M", "Toggle Auto-Hide Menu", nil),
+                ("Cmd + Option + G", "Toggle Snap to Grid", nil),
+                ("Cmd + Option + V", "Show Variables", "Mac only")
             ]
         ),
         SectionModel(
@@ -42,10 +44,12 @@ struct DashboardKeyboardShortcutsView: View {
         SectionModel(
             title: "File",
             items: [
+                ("Cmd + Shift + 0", "Show or Close Home", nil),
                 ("Cmd + N", "New Dashboard", nil),
                 ("Cmd + O", "Open Dashboard", nil),
                 ("Cmd + S", "Save Dashboard", nil),
-                ("Cmd + Shift + S", "Save Dashboard As", nil)
+                ("Cmd + Shift + S", "Save Dashboard As", nil),
+                ("Cmd + ,", "Settings", nil)
             ]
         )
     ]
