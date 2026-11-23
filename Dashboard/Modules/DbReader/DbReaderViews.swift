@@ -143,6 +143,8 @@ struct DbReaderTileView: View {
                                 .font(.system(size: baseFontSize * 0.65, weight: primaryFontWeight))
                                 .foregroundStyle(secondaryTextColor)
 
+                            limitBadge(model: model, spl: displaySpl)
+
                             if model.averagingEnabled && (isLiveDisplay || displayAveragingProgress > 0) {
                                 AveragingProgressBar(progress: displayAveragingProgress)
                                     .frame(width: 90, height: 6)
@@ -158,6 +160,8 @@ struct DbReaderTileView: View {
                             Text(applyCapitalization(weightingLabel(model: model)))
                                 .font(.system(size: baseFontSize * 0.65, weight: primaryFontWeight))
                                 .foregroundStyle(secondaryTextColor)
+
+                            limitBadge(model: model, spl: displaySpl)
 
                             if model.averagingEnabled && (isLiveDisplay || displayAveragingProgress > 0) {
                                 AveragingProgressBar(progress: displayAveragingProgress)
@@ -444,32 +448,24 @@ struct DbReaderTileView: View {
     }
 
     private func splTextColor(model: DbReaderModuleModel, spl: Double) -> Color {
-        guard model.limitColorEnabled else { return primaryTextColor }
-        if model.weighting == .ca {
-            return caLimitColor(for: spl, model: model)
+        switch DbReaderLimitLevel.level(for: spl, model: model) {
+        case .alert?: return model.limitColorAlert.swiftUIColor
+        case .warning?: return model.limitColorWarning.swiftUIColor
+        case .normal?: return model.limitColorNormal.swiftUIColor
+        case nil: return primaryTextColor
         }
-        if spl >= model.limitAlertDb {
-            return model.limitColorAlert.swiftUIColor
-        }
-        if spl >= model.limitWarningDb {
-            return model.limitColorWarning.swiftUIColor
-        }
-        return model.limitColorNormal.swiftUIColor
     }
 
-    private func caLimitColor(for value: Double, model: DbReaderModuleModel) -> Color {
-        guard value.isFinite else { return primaryTextColor }
-        let upper = max(model.caUpperLimit, model.caLowerLimit)
-        let lower = min(model.caUpperLimit, model.caLowerLimit)
-        let boundaryTolerance = 0.05
-
-        if value < lower - boundaryTolerance || value > upper + boundaryTolerance {
-            return model.limitColorAlert.swiftUIColor
+    /// Words and a symbol alongside the limit colour, so the state doesn't rely on colour.
+    @ViewBuilder
+    private func limitBadge(model: DbReaderModuleModel, spl: Double) -> some View {
+        if let level = DbReaderLimitLevel.level(for: spl, model: model), level != .normal {
+            let title = level.title(isCA: model.weighting == .ca)
+            Label(applyCapitalization(title), systemImage: level.systemImage)
+                .font(.system(size: max(11, baseFontSize * 0.5), weight: .bold))
+                .foregroundStyle(splTextColor(model: model, spl: spl))
+                .accessibilityLabel(title)
         }
-        if abs(value - lower) <= boundaryTolerance || abs(value - upper) <= boundaryTolerance {
-            return model.limitColorWarning.swiftUIColor
-        }
-        return model.limitColorNormal.swiftUIColor
     }
 
     private func resetDisplay(keepHistoryAll: Bool) {
@@ -1192,5 +1188,45 @@ struct DbMiniTrendView: View {
         )
         let value = before.value + (after.value - before.value) * t
         return TrendPoint(sample: sample, value: value)
+    }
+}
+
+/// Where an SPL reading sits against the tile's limits. `nil` when limit colouring is off
+/// (or a C-A reading isn't a number). Drives both the colour and the word/symbol badge.
+enum DbReaderLimitLevel: Equatable {
+    case normal
+    case warning
+    case alert
+
+    static func level(for spl: Double, model: DbReaderModuleModel) -> DbReaderLimitLevel? {
+        guard model.limitColorEnabled else { return nil }
+        if model.weighting == .ca {
+            guard spl.isFinite else { return nil }
+            let upper = max(model.caUpperLimit, model.caLowerLimit)
+            let lower = min(model.caUpperLimit, model.caLowerLimit)
+            let boundaryTolerance = 0.05
+            if spl < lower - boundaryTolerance || spl > upper + boundaryTolerance { return .alert }
+            if abs(spl - lower) <= boundaryTolerance || abs(spl - upper) <= boundaryTolerance { return .warning }
+            return .normal
+        }
+        if spl >= model.limitAlertDb { return .alert }
+        if spl >= model.limitWarningDb { return .warning }
+        return .normal
+    }
+
+    func title(isCA: Bool) -> String {
+        switch self {
+        case .normal: return "OK"
+        case .warning: return isCA ? "At Limit" : "Near Limit"
+        case .alert: return isCA ? "Out of Range" : "Over Limit"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .normal: return "checkmark.circle"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .alert: return "exclamationmark.octagon.fill"
+        }
     }
 }

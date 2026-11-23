@@ -106,7 +106,7 @@ struct RTATileView: View {
         let cursorLocation = self.cursorLocation
         return Canvas { ctx, size in
             // Reserve bottom strip for frequency labels when enabled.
-            let axisH: CGFloat = model.showFrequencyAxis ? 18 : 0
+            let axisH: CGFloat = model.showFrequencyAxis ? 20 : 0
             let chartSize = CGSize(width: size.width, height: size.height - axisH)
 
             // Grid (background, drawn before data)
@@ -168,6 +168,9 @@ struct RTATileView: View {
 
         // Horizontal dB lines
         let step: Double = dbRange > 40 ? 10 : (dbRange > 20 ? 6 : 3)
+        // Readable labels where the grid leaves room; smaller only on short tiles.
+        let lineSpacing = (size.height - Self.topPad) * CGFloat(step / dbRange)
+        let dbLabelSize: CGFloat = lineSpacing >= 16 ? 11 : 9
         var dbVal = ceil(model.dBRangeLow / step) * step
         while dbVal <= model.dBRangeHigh {
             let y = Self.chartY(db: dbVal, model: model, height: size.height)
@@ -178,8 +181,8 @@ struct RTATileView: View {
             ctx.stroke(line, with: .color(.white.opacity(alpha)), lineWidth: 0.5)
             if model.showDBAxis {
                 let label = Text("\(Int(dbVal))")
-                    .font(.system(size: 7, design: .monospaced))
-                    .foregroundStyle(Color.white.opacity(0.35))
+                    .font(.system(size: dbLabelSize, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.75))
                 ctx.draw(label, at: CGPoint(x: 2, y: y - 1), anchor: .bottomLeading)
             }
             dbVal += step
@@ -342,8 +345,8 @@ struct RTATileView: View {
     /// Each entry in `lines` is drawn on its own row; entries with a non-nil `color` get a
     /// small color dot in front of the text (used to tie a level readout to its source trace).
     private static func drawReadoutLabel(ctx: inout GraphicsContext, size: CGSize, lines: [(color: Color?, text: String)], near point: CGPoint) {
-        let charWidth: CGFloat = 5.4
-        let lineH: CGFloat = 12
+        let charWidth: CGFloat = 6.7
+        let lineH: CGFloat = 14
         let vPadding: CGFloat = 4
 
         let maxChars = lines.map { $0.text.count + ($0.color != nil ? 2 : 0) }.max() ?? 0
@@ -368,7 +371,7 @@ struct RTATileView: View {
                 ctx.fill(Path(ellipseIn: dotRect), with: .color(color))
                 x += 10
             }
-            ctx.draw(Text(line.text).font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundStyle(.white),
+            ctx.draw(Text(line.text).font(.system(size: 11, weight: .medium, design: .monospaced)).foregroundStyle(.white),
                      at: CGPoint(x: x, y: rowY), anchor: .leading)
         }
     }
@@ -402,34 +405,41 @@ struct RTATileView: View {
     private func legendChip(id: UUID, model: RTAModuleModel) -> some View {
         let isHidden = model.hiddenSourceIDs.contains(id)
         let name = AudioInputsConfigStore.shared.input(for: id)?.name ?? "Input"
-        let chip = HStack(spacing: 4) {
-            Circle().fill(Self.sourceColor(for: id)).frame(width: 7, height: 7)
-            Text(name)
-                .font(.system(size: 9, weight: .medium))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(.black.opacity(0.4))
-        .clipShape(Capsule())
-        .opacity(isHidden ? 0.4 : 1.0)
-        .frame(maxWidth: 90, alignment: .leading)
-
-        return Group {
-            if isLiveMode {
-                chip.onTapGesture {
-                    var m = Self.resolveModel(module: module)
-                    if m.hiddenSourceIDs.contains(id) {
-                        m.hiddenSourceIDs.remove(id)
-                    } else {
-                        m.hiddenSourceIDs.insert(id)
-                    }
-                    module.kind = .rta(m)
-                }
+        return Button {
+            var m = Self.resolveModel(module: module)
+            if m.hiddenSourceIDs.contains(id) {
+                m.hiddenSourceIDs.remove(id)
             } else {
-                chip
+                m.hiddenSourceIDs.insert(id)
             }
+            module.kind = .rta(m)
+        } label: {
+            HStack(spacing: 4) {
+                // Hidden sources swap the colour dot for an eye-slash, not just a dimmer chip.
+                Image(systemName: isHidden ? "eye.slash" : "circle.fill")
+                    .font(.system(size: isHidden ? 9 : 7, weight: .semibold))
+                    .foregroundStyle(Self.sourceColor(for: id))
+                Text(name)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .strikethrough(isHidden)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(.black.opacity(0.4))
+            .clipShape(Capsule())
+            .opacity(isHidden ? 0.6 : 1.0)
+            .frame(maxWidth: 110, alignment: .leading)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        // Only Live Mode toggles sources; while editing, taps fall through to tile selection.
+        .allowsHitTesting(isLiveMode)
+        .accessibilityLabel(name)
+        .accessibilityValue(isHidden ? "Hidden" : "Shown")
+        .accessibilityAddTraits(isHidden ? [] : .isSelected)
+        .help(isLiveMode ? (isHidden ? "Show \(name)" : "Hide \(name)") : name)
     }
 
     // MARK: - Frequency axis
@@ -441,6 +451,8 @@ struct RTATileView: View {
             (1000, "1k"), (2000, "2k"), (4000, "4k"), (8000, "8k"), (16000, "16k")
         ]
         let n = CGFloat(bands.count)
+        // 11pt where the octave labels have room ("16k" needs ~22pt); smaller on narrow tiles.
+        let labelSize: CGFloat = size.width / CGFloat(labelFreqs.count) >= 26 ? 11 : 9
         var line = Path()
         line.move(to: CGPoint(x: 0, y: axisY))
         line.addLine(to: CGPoint(x: size.width, y: axisY))
@@ -458,9 +470,9 @@ struct RTATileView: View {
             guard bestDist / hz < 0.30 else { continue }
             let x = (CGFloat(bestIdx) + 0.5) * size.width / n
             let text = Text(label)
-                .font(.system(size: 8, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.45))
-            ctx.draw(text, at: CGPoint(x: x, y: axisY + 9), anchor: .center)
+                .font(.system(size: labelSize, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.75))
+            ctx.draw(text, at: CGPoint(x: x, y: axisY + 10), anchor: .center)
         }
     }
 

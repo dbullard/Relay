@@ -195,9 +195,9 @@ struct SpectrogramTileView: View {
             ctx.stroke(hLine, with: .color(.white.opacity(0.5)), lineWidth: 0.75)
 
             let text = "\(AudioReadoutFormatting.formatHz(hz))  \(AudioReadoutFormatting.formatDb(Double(db), unit: unit))"
-            let charWidth: CGFloat = 5.4
+            let charWidth: CGFloat = 6.7
             let labelW = CGFloat(text.count) * charWidth + 8
-            let labelH: CGFloat = 14
+            let labelH: CGFloat = 16
 
             var labelX = cursor.x + 6
             var labelY = cursor.y - labelH - 4
@@ -208,7 +208,7 @@ struct SpectrogramTileView: View {
 
             let bgRect = CGRect(x: labelX, y: labelY, width: labelW, height: labelH)
             ctx.fill(Path(roundedRect: bgRect, cornerRadius: 3), with: .color(.black.opacity(0.55)))
-            ctx.draw(Text(text).font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundStyle(.white),
+            ctx.draw(Text(text).font(.system(size: 11, weight: .medium, design: .monospaced)).foregroundStyle(.white),
                      at: CGPoint(x: bgRect.midX, y: bgRect.midY), anchor: .center)
         }
         .frame(width: width, height: height)
@@ -248,11 +248,13 @@ struct SpectrogramTileView: View {
         ].compactMap { entry in
             Self.axisFraction(forHz: entry.0, range: range, scale: scale).map { (entry.0, entry.1, $0) }
         }
+        // 11pt where the labels have room ("10k" needs ~22pt); smaller on narrow tiles.
+        let labelSize: CGFloat = width / CGFloat(max(1, labels.count)) >= 26 ? 11 : 9
         return ZStack {
             ForEach(labels, id: \.hz) { entry in
                 Text(entry.label)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .font(.system(size: labelSize, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.75))
                     .position(x: width * CGFloat(entry.xFrac), y: 10)
             }
         }

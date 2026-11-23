@@ -491,6 +491,8 @@ struct DashboardTutorialOverlay: View {
 
     @Namespace private var highlightNamespace
     @State private var highlightPulse: Bool = false
+    /// Reduce Motion: every looping pulse/drag in the tutorial holds its end state instead.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let debugAnchors: Bool = false
 
@@ -530,6 +532,10 @@ struct DashboardTutorialOverlay: View {
         .onChange(of: controller.isPresented, initial: true) { _, isPresented in
             if isPresented {
                 highlightPulse = false
+                guard !reduceMotion else {
+                    highlightPulse = true
+                    return
+                }
                 withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: true)) {
                     highlightPulse = true
                 }
@@ -927,6 +933,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialAddTileDemo: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var pulse: Bool = false
         @State private var tileVisible: Bool = false
 
@@ -953,6 +960,11 @@ struct DashboardTutorialOverlay: View {
                 }
             }
             .onAppear {
+                guard !reduceMotion else {
+                    pulse = true
+                    tileVisible = true
+                    return
+                }
                 withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
                     pulse = true
                     tileVisible = true
@@ -962,6 +974,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialCanvasDragDemo: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var dragOffset: CGFloat = -16
 
         var body: some View {
@@ -980,6 +993,10 @@ struct DashboardTutorialOverlay: View {
                 }
             }
             .onAppear {
+                guard !reduceMotion else {
+                    dragOffset = 18
+                    return
+                }
                 withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
                     dragOffset = 18
                 }
@@ -988,6 +1005,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialInspectorDemo: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var highlight: Bool = false
 
         var body: some View {
@@ -1044,6 +1062,10 @@ struct DashboardTutorialOverlay: View {
                 }
             }
             .onAppear {
+                guard !reduceMotion else {
+                    highlight = true
+                    return
+                }
                 withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
                     highlight = true
                 }
@@ -1063,6 +1085,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialPCOSetupDemo: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var pulse: Bool = false
 
         var body: some View {
@@ -1094,6 +1117,10 @@ struct DashboardTutorialOverlay: View {
                 .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
             }
             .onAppear {
+                guard !reduceMotion else {
+                    pulse = true
+                    return
+                }
                 withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
                     pulse = true
                 }
@@ -1102,6 +1129,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialSettingsDemo: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var pulse: Bool = false
 
         var body: some View {
@@ -1138,6 +1166,10 @@ struct DashboardTutorialOverlay: View {
                 }
             }
             .onAppear {
+                guard !reduceMotion else {
+                    pulse = true
+                    return
+                }
                 withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
                     pulse = true
                 }
@@ -1158,6 +1190,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialLiveModeDemo: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var pulse: Bool = false
 
         var body: some View {
@@ -1197,6 +1230,10 @@ struct DashboardTutorialOverlay: View {
                 }
             }
             .onAppear {
+                guard !reduceMotion else {
+                    pulse = true
+                    return
+                }
                 withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
                     pulse = true
                 }
@@ -1285,6 +1322,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialAutomationAddNodeDemo: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var pulse: Bool = false
 
         var body: some View {
@@ -1316,6 +1354,10 @@ struct DashboardTutorialOverlay: View {
                 }
             }
             .onAppear {
+                guard !reduceMotion else {
+                    pulse = true
+                    return
+                }
                 withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
                     pulse = true
                 }
@@ -1324,6 +1366,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialAutomationCanvasBackedDemo: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var pop: Bool = false
 
         var body: some View {
@@ -1378,6 +1421,10 @@ struct DashboardTutorialOverlay: View {
                 .frame(height: 120)
             }
             .onAppear {
+                guard !reduceMotion else {
+                    pop = true
+                    return
+                }
                 withAnimation(.easeInOut(duration: 1.35).repeatForever(autoreverses: true)) {
                     pop = true
                 }
@@ -1458,6 +1505,7 @@ struct DashboardTutorialOverlay: View {
     }
 
     private struct TutorialAutomationNodes: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         let showPulse: Bool
 
         @State private var pulse: Bool = false
@@ -1533,6 +1581,10 @@ struct DashboardTutorialOverlay: View {
             }
             .onAppear {
                 if showPulse {
+                    guard !reduceMotion else {
+                        pulse = true
+                        return
+                    }
                     withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
                         pulse = true
                     }

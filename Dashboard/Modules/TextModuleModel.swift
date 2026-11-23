@@ -504,6 +504,9 @@ struct TextModuleSettingsView: View {
                     editor.applyCase(mode)
                     onPersist()
                 },
+                isBold: editor.isBold,
+                isItalic: editor.isItalic,
+                isUnderline: editor.isUnderline,
                 fontOptions: fontOptions,
                 fontName: Binding(
                     get: {
@@ -855,6 +858,10 @@ extension VariableCompletionTextView: SharedValueInsertionTarget {
 /// to apply formatting to the selected range.
 final class RichTextEditorController: ObservableObject {
     weak var textView: NSTextView?
+    /// Bold/italic/underline at the selection (or typing attributes), shown on the toolbar.
+    @Published private(set) var isBold = false
+    @Published private(set) var isItalic = false
+    @Published private(set) var isUnderline = false
 
     @Published var currentFontName: String = "System"
     @Published var currentFontSize: Double = 16
@@ -919,6 +926,8 @@ final class RichTextEditorController: ObservableObject {
         let targetRange = selection.length > 0
             ? selection
             : NSRange(location: 0, length: tv.string.utf16.count)
+
+        refreshTraitState()
 
         guard targetRange.length > 0 else {
             fontSizeIsMixed = false
@@ -1128,12 +1137,34 @@ final class RichTextEditorController: ObservableObject {
         return converted.withSize(existing.pointSize)
     }
 
+    /// Reads B/I/U from the first selected character, or from the typing attributes
+    /// when nothing is selected.
+    private func refreshTraitState() {
+        guard let tv = textView else { return }
+        let selection = tv.selectedRange()
+        let attrs: [NSAttributedString.Key: Any]
+        if selection.length > 0, let storage = tv.textStorage, selection.location < storage.length {
+            attrs = storage.attributes(at: selection.location, effectiveRange: nil)
+        } else {
+            attrs = tv.typingAttributes
+        }
+        let traits = (attrs[.font] as? NSFont).map { NSFontManager.shared.traits(of: $0) } ?? []
+        let bold = traits.contains(.boldFontMask)
+        let italic = traits.contains(.italicFontMask)
+        let underline = ((attrs[.underlineStyle] as? Int) ?? 0) != 0
+        if isBold != bold { isBold = bold }
+        if isItalic != italic { isItalic = italic }
+        if isUnderline != underline { isUnderline = underline }
+    }
+
     func toggleBold() {
         toggleFontTrait(.boldFontMask)
+        refreshTraitState()
     }
 
     func toggleItalic() {
         toggleFontTrait(.italicFontMask)
+        refreshTraitState()
     }
 
     private func toggleFontTrait(_ trait: NSFontTraitMask) {
@@ -1171,6 +1202,7 @@ final class RichTextEditorController: ObservableObject {
             attrs[.underlineStyle] = (existing == 0) ? applyStyle : 0
             tv.typingAttributes = attrs
             tv.didChangeText()
+            refreshTraitState()
             return
         }
 
@@ -1187,6 +1219,7 @@ final class RichTextEditorController: ObservableObject {
         let newValue = anyUnderlined ? 0 : applyStyle
         tv.textStorage?.addAttribute(.underlineStyle, value: newValue, range: range)
         tv.didChangeText()
+        refreshTraitState()
     }
 
     func applyAlignment(_ alignment: ParagraphAlignment) {
@@ -1738,6 +1771,9 @@ private struct RichTextToolbar: View {
     let onFontChange: (String) -> Void
     let onFontWeightChange: (Int) -> Void
     let onCaseChange: (RichTextEditorController.CaseMode) -> Void
+    var isBold = false
+    var isItalic = false
+    var isUnderline = false
 
     let fontOptions: [String]
 
@@ -1783,6 +1819,30 @@ private struct RichTextToolbar: View {
             .frame(height: controlHeight)
             .background(toolbarButtonBackground)
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    /// B/I/U button whose "on" state is a filled background plus the selected trait,
+    /// not a colour change alone.
+    private func styleToggleButton(
+        _ title: String,
+        systemImage: String,
+        isOn: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
+                .font(.system(size: 14, weight: isOn ? .bold : .medium))
+                .foregroundStyle(isOn ? Color.white : Color.primary)
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isOn ? Color.accentColor : Color.clear)
+                )
+                .frame(minWidth: 28, minHeight: 28)
+                .contentShape(.rect)
+        }
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
     private func controlIcon(_ name: String) -> some View {
@@ -1864,29 +1924,17 @@ private struct RichTextToolbar: View {
             sectionLabel("Style")
 
             HStack(spacing: 4) {
-                Button { onBold() } label: {
-                    Image(systemName: "bold")
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(width: 24, height: 24)
-                }
-                .help("Bold (⌘B)")
-                .keyboardShortcut("b", modifiers: .command)
+                styleToggleButton("Bold", systemImage: "bold", isOn: isBold, action: onBold)
+                    .help("Bold (⌘B)")
+                    .keyboardShortcut("b", modifiers: .command)
 
-                Button { onItalic() } label: {
-                    Image(systemName: "italic")
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(width: 24, height: 24)
-                }
-                .help("Italic (⌘I)")
-                .keyboardShortcut("i", modifiers: .command)
+                styleToggleButton("Italic", systemImage: "italic", isOn: isItalic, action: onItalic)
+                    .help("Italic (⌘I)")
+                    .keyboardShortcut("i", modifiers: .command)
 
-                Button { onUnderline() } label: {
-                    Image(systemName: "underline")
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(width: 24, height: 24)
-                }
-                .help("Underline (⌘U)")
-                .keyboardShortcut("u", modifiers: .command)
+                styleToggleButton("Underline", systemImage: "underline", isOn: isUnderline, action: onUnderline)
+                    .help("Underline (⌘U)")
+                    .keyboardShortcut("u", modifiers: .command)
 
                 Divider().frame(height: 18)
                     .padding(.horizontal, 2)

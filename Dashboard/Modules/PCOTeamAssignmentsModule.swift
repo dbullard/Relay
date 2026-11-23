@@ -290,6 +290,16 @@ private func migratedAssignments(
 
 /// Container for all team-assignment-only configuration that is meaningful
 /// only on a dedicated PCO Team Assignments module.
+extension PCOTeamAssignmentsExtras {
+    /// What "Clear All Assignments" removes: every role rule, and the mic/IEM
+    /// assignments of each person who has any.
+    var clearableAssignmentCounts: (roleRules: Int, people: Int, total: Int) {
+        let roleRules = roleRulesByPosition.count
+        let people = byKey.values.filter { !$0.assignments.isEmpty }.count
+        return (roleRules, people, roleRules + people)
+    }
+}
+
 struct PCOTeamAssignmentsExtras: Codable, Equatable {
     /// Map of assignment match key -> metadata.
     var byKey: [String: PCOAssignmentMetadata]
@@ -1250,6 +1260,7 @@ struct PCOTeamAssignmentsSettingsInspector: View {
     @State private var roleSearchText: String = ""
     @State private var personSearchText: String = ""
     @State private var isAssignmentsEditorPresented: Bool = false
+    @State private var isClearAllConfirmationPresented: Bool = false
 
     private var hasPlanningCenterLogin: Bool { isConnected }
 
@@ -1516,6 +1527,19 @@ struct PCOTeamAssignmentsSettingsInspector: View {
         return trimmed.isEmpty ? "Unassigned Team" : trimmed
     }
 
+    /// "2 role rules and 5 people" — what Clear All Assignments would remove.
+    private var clearAllAssignmentsSummary: String {
+        let counts = extras().clearableAssignmentCounts
+        var parts: [String] = []
+        if counts.roleRules > 0 {
+            parts.append("\(counts.roleRules) role rule\(counts.roleRules == 1 ? "" : "s")")
+        }
+        if counts.people > 0 {
+            parts.append("\(counts.people) person assignment\(counts.people == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " and ")
+    }
+
     private func clearAllWirelessAssignments() {
         mutateExtras { extras in
             extras.roleRulesByPosition = [:]
@@ -1674,10 +1698,23 @@ struct PCOTeamAssignmentsSettingsInspector: View {
                             .buttonStyle(.plain)
                         }
 
-                        Button("Clear All Assignments", role: .destructive) {
-                            clearAllWirelessAssignments()
+                        Button("Clear All Assignments…", role: .destructive) {
+                            isClearAllConfirmationPresented = true
                         }
                         .font(.caption)
+                        .disabled(extras().clearableAssignmentCounts.total == 0)
+                        .confirmationDialog(
+                            "Clear all mic and IEM assignments?",
+                            isPresented: $isClearAllConfirmationPresented,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Clear \(clearAllAssignmentsSummary)", role: .destructive) {
+                                clearAllWirelessAssignments()
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("This removes \(clearAllAssignmentsSummary) from this tile. It can't be undone.")
+                        }
                     }
                 } label: {
                     Text("Assignments")
