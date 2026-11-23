@@ -256,6 +256,10 @@ struct DashboardTileEditView: View {
     @State private var moduleSettingsRevision: Int = 0
     /// When the last undo or redo ran; a module change that arrives just after it is a restore.
     @State private var lastUndoRedoAt: Date? = nil
+    /// Same, for the Formatting values (consumed separately from the module restore).
+    @State private var lastFormattingUndoRedoAt: Date? = nil
+    /// True while one of the inspector's sliders is being dragged.
+    @State private var isContinuousEditInProgress: Bool = false
     @State var liveTranscriptionInputLevel: Double = 0
     @State var liveTranscriptionProcessedPeak: Double = 0
     @StateObject var liveTranscriptionLevelMonitor = LiveTranscriptionLevelMonitor()
@@ -1182,9 +1186,49 @@ extension DashboardTileEditView {
         }
     }
 
-    func resetEditorStateFromInitialValues() {
+    /// Records an undo/redo so the next change to this tile's modules or formatting is
+    /// treated as a restore and re-seeds the editor.
+    private func noteUndoOrRedo() {
+        let now = Date()
+        lastUndoRedoAt = now
+        lastFormattingUndoRedoAt = now
+    }
+
+    /// Wraps the owner's drag callback so a restore never re-seeds a slider mid-drag.
+    func handleContinuousEditChanged(_ isEditing: Bool) {
+        isContinuousEditInProgress = isEditing
+        onContinuousEditChanged(isEditing)
+    }
+
+    /// The tile's formatting as passed in by the owner; a change right after an undo/redo
+    /// means the Formatting controls must be re-seeded.
+    fileprivate var formattingInputs: TileFormattingInputs {
+        TileFormattingInputs(
+            backgroundStyle: initialBackgroundStyle,
+            backgroundOpacity: initialBackgroundOpacity,
+            cornerRadius: initialCornerRadius,
+            backgroundColor: initialBackgroundColor,
+            backgroundGradient: initialBackgroundGradient,
+            contentPadding: initialTileContentPaddingValue,
+            moduleLayout: initialModuleLayout,
+            textFontSize: initialTextFontSize,
+            textFontWeight: initialTextFontWeight,
+            textColor: initialTextColor,
+            textCapitalization: initialTextCapitalization,
+            textJustification: initialTextJustification,
+            textVerticalAlignment: initialTextVerticalAlignment,
+            showsTitle: initialShowsTitle
+        )
+    }
+
+    /// Seeds the editor's @State from the tile. Pass `includingTileSize: false` for an
+    /// undo/redo restore: the size fields follow `currentTileSize` on their own, and
+    /// flushing or unfocusing them here could commit typed text as a new edit.
+    func resetEditorStateFromInitialValues(includingTileSize: Bool = true) {
         // A size typed without Return/Tab would be overwritten by the re-seed below.
-        flushPendingTileSizeEdit()
+        if includingTileSize {
+            flushPendingTileSizeEdit()
+        }
 
         // Disable change handlers while we seed @State from the model.
         isSeedingInspectorState = true
@@ -1210,10 +1254,12 @@ extension DashboardTileEditView {
         textVerticalAlignment = initialTextVerticalAlignment ?? .top
 
         // Tile size
-        tileSizeWidthText = initialTileSizeWidthText
-        tileSizeHeightText = initialTileSizeHeightText
-        hasStartedTileSizeEdit = false
-        tileSizeFieldFocus = nil
+        if includingTileSize {
+            tileSizeWidthText = initialTileSizeWidthText
+            tileSizeHeightText = initialTileSizeHeightText
+            hasStartedTileSizeEdit = false
+            tileSizeFieldFocus = nil
+        }
 
         // Title visibility
         showsTitle = initialShowsTitle
@@ -1231,6 +1277,24 @@ extension DashboardTileEditView {
             isSeedingInspectorState = false
         }
     }
+}
+
+/// The tile formatting values the inspector seeds its Formatting controls from.
+fileprivate struct TileFormattingInputs: Equatable {
+    var backgroundStyle: TileBackgroundStyle
+    var backgroundOpacity: Double
+    var cornerRadius: CGFloat
+    var backgroundColor: CodableColor?
+    var backgroundGradient: TileGradientBackground?
+    var contentPadding: CGFloat
+    var moduleLayout: TileModuleLayout
+    var textFontSize: Double?
+    var textFontWeight: PersonFontWeight?
+    var textColor: CodableColor?
+    var textCapitalization: TextCapitalizationStyle?
+    var textJustification: TextJustificationStyle?
+    var textVerticalAlignment: TextVerticalAlignmentStyle?
+    var showsTitle: Bool
 }
 
 struct DbReaderCalibrationSheet: View {
@@ -1695,10 +1759,20 @@ extension DashboardTileEditView {
             #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { _ in
-            lastUndoRedoAt = Date()
+            noteUndoOrRedo()
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { _ in
-            lastUndoRedoAt = Date()
+            noteUndoOrRedo()
+        }
+        .onChange(of: formattingInputs, initial: false) { _, _ in
+            // The tile's formatting changed. Right after an undo/redo that is a restore:
+            // re-seed the Formatting controls from the restored tile. Seeding disables the
+            // change handlers, so it doesn't write back or register an undo step.
+            guard let undoneAt = lastFormattingUndoRedoAt,
+                  Date().timeIntervalSince(undoneAt) < 1,
+                  !isContinuousEditInProgress else { return }
+            lastFormattingUndoRedoAt = nil
+            resetEditorStateFromInitialValues(includingTileSize: false)
         }
         .onChange(of: modules, initial: false) { _, newValue in
             // Edits made here update `editableModules` before they reach the tile, so a
@@ -2539,7 +2613,7 @@ extension DashboardTileEditView {
                 HStack {
                     Text("Opacity")
 
-                    Slider(value: $backgroundOpacity, in: 0.2...1.0, onEditingChanged: onContinuousEditChanged)
+                    Slider(value: $backgroundOpacity, in: 0.2...1.0, onEditingChanged: handleContinuousEditChanged)
 
                     // Editable percentage field (0–100%)
                     let opacityPercentBinding = Binding<Double>(
@@ -2587,7 +2661,7 @@ extension DashboardTileEditView {
 
                 HStack {
                     Text("Corner Radius")
-                    Slider(value: $cornerRadius, in: 0...40, onEditingChanged: onContinuousEditChanged)
+                    Slider(value: $cornerRadius, in: 0...40, onEditingChanged: handleContinuousEditChanged)
                     HStack(spacing: 2) {
                         TextField(
                             "",
@@ -2771,7 +2845,7 @@ extension DashboardTileEditView {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Module Padding")
-                    Slider(value: $tileContentPadding, in: 0...50, onEditingChanged: onContinuousEditChanged)
+                    Slider(value: $tileContentPadding, in: 0...50, onEditingChanged: handleContinuousEditChanged)
                     HStack(spacing: 2) {
                         TextField(
                             "",
@@ -2835,7 +2909,7 @@ extension DashboardTileEditView {
         VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Font Size")
-                    Slider(value: $textFontSize, in: 12...120, onEditingChanged: onContinuousEditChanged)
+                    Slider(value: $textFontSize, in: 12...120, onEditingChanged: handleContinuousEditChanged)
                     HStack(spacing: 2) {
                         TextField(
                             "",
@@ -3107,7 +3181,7 @@ extension DashboardTileEditView {
                     Slider(
                         value: heightBinding,
                         in: Double(minimumHeightPoints(for: module))...Double(max(moduleHeightSliderMaxPoints(for: module), minimumHeightPoints(for: module) + 40)),
-                        onEditingChanged: onContinuousEditChanged
+                        onEditingChanged: handleContinuousEditChanged
                     )
 
                     HStack(spacing: 2) {
@@ -3190,7 +3264,7 @@ extension DashboardTileEditView {
                     Slider(
                         value: topBinding,
                         in: 0...200,
-                        onEditingChanged: onContinuousEditChanged
+                        onEditingChanged: handleContinuousEditChanged
                     )
 
                     HStack(spacing: 2) {
@@ -3226,7 +3300,7 @@ extension DashboardTileEditView {
                     Slider(
                         value: bottomBinding,
                         in: 0...200,
-                        onEditingChanged: onContinuousEditChanged
+                        onEditingChanged: handleContinuousEditChanged
                     )
 
                     HStack(spacing: 2) {
