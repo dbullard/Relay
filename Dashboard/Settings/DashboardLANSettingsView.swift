@@ -388,17 +388,23 @@ private struct DevicesTableRow: View {
                     if syncedTabCount > 0 {
                         Text("· \(syncedTabCount) synced")
                     }
-                    if needsReconnect {
-                        Label("Not authorized", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                    }
-                    if status == .paired, !lanService.hasPairingSecret(for: peer.deviceId) {
-                        Text("Not secured — re-pair to fix")
-                            .foregroundStyle(.orange)
-                    }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                // Warnings get their own lines: squeezed into the status row beside the
+                // date and buttons, they wrapped every few letters ("Not au-tho-rize-d").
+                if needsReconnect {
+                    Label("Not authorized", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if status == .paired, !lanService.hasPairingSecret(for: peer.deviceId) {
+                    Label("Not secured — re-pair to fix", systemImage: "lock.open.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if status == .paired {
                     Toggle("Share variables across devices", isOn: Binding(
                         get: { lanService.pairedDevices[peer.deviceId]?.sharesVariables == true },
@@ -410,9 +416,12 @@ private struct DevicesTableRow: View {
                 }
             }
             Spacer()
+            // The date and buttons keep their natural width; the name/status column
+            // (whose warnings sit on their own lines) wraps by word instead.
             Text(peer.lastSeen.formatted(date: .numeric, time: .shortened))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize()
             // A Not Paired device gets an explicit Connect button rather than the old bare
             // toggle, which looked like a way to "enable" a connection but only ever granted
             // one-sided local trust on whichever device's Settings you used it from — no
@@ -460,6 +469,7 @@ private struct DevicesTableRow: View {
                                 .controlSize(.small)
                         } else {
                             Text("Reconnect")
+                                .fixedSize()
                         }
                     }
                     .buttonStyle(.bordered)

@@ -2506,6 +2506,14 @@ struct DAWTransportTileView: View {
                 .onChange(of: isLiveMode) { _, _ in
                     recordArmGate.reset()
                 }
+
+                // The button's own label is too narrow for the instruction on small tiles.
+                if isRecordArmed {
+                    Label("Tap Record again to start recording", systemImage: "exclamationmark.circle.fill")
+                        .font(.system(size: baseFontSize * 0.48, weight: .semibold))
+                        .foregroundStyle(Color.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if config.showTransportButtons && !isLiveMode {
@@ -2575,7 +2583,7 @@ struct DAWTransportTileView: View {
             return viewModel.isPlaying ? "Playing" : command.title
         case .record:
             if viewModel.isRecordEnabled { return "Recording" }
-            return isRecordArmed ? "Tap again" : command.title
+            return isRecordArmed ? "Again" : command.title
         case .rewind, .stop, .fastForward:
             return command.title
         }
