@@ -355,8 +355,9 @@ enum SelectionToolbarPlacement {
         localMargin: CGFloat = defaultLocalMargin
     ) -> Bool {
         let zoom = max(0.0001, viewportZoom)
-        let anchorY = selectionRect.minY - toolbarLocalHeight - localMargin
-        let screenY = (anchorY * zoom) + viewportPanY
+        // The toolbar is counter-scaled to a constant on-screen size, so its height
+        // and margin are screen points; only the selection's edge scales with zoom.
+        let screenY = (selectionRect.minY * zoom) + viewportPanY - toolbarLocalHeight - localMargin
         return screenY < 0
     }
 }

@@ -51,26 +51,11 @@ final class DashboardCanvasActionCoordinator {
     /// the whole tab, which undoes earlier writes and any change made since.
     var onGetTab: ((UUID) -> DashboardTab?)?
 
-    // MARK: Live Mode interactive-tap tracking
-    //
-    // The canvas-wide double-tap-to-exit-Live-Mode gesture (see
-    // `DashboardTileCanvas`) is a `.simultaneousGesture` on the container that
-    // holds every tile, so it sees every tap in the canvas regardless of
-    // which tile handled it -- including two taps on two different button
-    // tiles fired in quick succession. `lastInteractiveTileTapAt` lets that
-    // gesture tell "double-tapped empty canvas" (should exit) apart from
-    // "tapped two different interactive tiles" (shouldn't): interactive
-    // Live Mode module content stamps this on tap via
-    // `recordInteractiveTileTap()`, and the exit gesture backs off if a tap
-    // landed here within the double-tap window.
-    var lastInteractiveTileTapAt: Date?
-
     init() {}
 
     // MARK: Forwarding calls -- every one is a safe no-op if unconfigured.
 
     func exitLiveMode() { onExitLiveMode?() }
-    func recordInteractiveTileTap() { lastInteractiveTileTapAt = Date() }
     func groupMoveCommit(anchorID: UUID, translation: CGSize) { onGroupMoveCommit?(anchorID, translation) }
     func snapCommit(anchorID: UUID, region: CanvasFractionRegion) { onSnapCommit?(anchorID, region) }
     func pushUndoSnapshot(_ title: String) { onPushUndoSnapshot?(title) }

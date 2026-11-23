@@ -36,7 +36,12 @@ struct DashboardTileResizeHandlesLayer: View {
     var body: some View {
         if !isLiveMode {
             let layout = DashboardTileResizeHandleLayout(size: size)
-            let halo = DashboardTileResizeHandleLayout.hitHalo
+            // Extend the layer as far past the tile edge as the zoom-scaled hit radius
+            // reaches, so the larger radius works outward too, not only inward.
+            let halo = max(
+                DashboardTileResizeHandleLayout.hitHalo,
+                DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: size)
+            )
 
             let bottomRightHandle = ResizeHandle(
                 size: tileSize,

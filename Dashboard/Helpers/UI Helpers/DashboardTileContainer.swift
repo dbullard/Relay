@@ -2428,10 +2428,6 @@ struct DashboardTileContainer: View {
 
         }
             }
-            .simultaneousGesture(
-                TapGesture().onEnded { actions.recordInteractiveTileTap() },
-                including: isLiveMode ? .all : .none
-            )
             .allowsHitTesting(liveModeInteractionAllowed)
         }
 
