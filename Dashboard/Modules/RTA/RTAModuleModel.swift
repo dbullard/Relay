@@ -102,6 +102,10 @@ struct RTAModuleModel: Codable, Equatable {
     var isEnabled: Bool
     var isArmedByUser: Bool
     var showsTitle: Bool
+    /// dBFS, or calibrated dB SPL using each input's calibration offset.
+    var levelScale: AudioLevelScale
+    /// Band weighting: Z (none), A or C, applied at each band's centre frequency.
+    var weighting: DbWeighting
 
     init(
         inputID: UUID? = nil,
@@ -127,8 +131,12 @@ struct RTAModuleModel: Codable, Equatable {
         opacity: Double = 1.0,
         isEnabled: Bool = true,
         isArmedByUser: Bool = false,
-        showsTitle: Bool = false
+        showsTitle: Bool = false,
+        levelScale: AudioLevelScale = .dbfs,
+        weighting: DbWeighting = .z
     ) {
+        self.levelScale = levelScale
+        self.weighting = weighting == .ca ? .z : weighting
         self.inputID = inputID
         self.additionalInputIDs = additionalInputIDs
         self.hiddenSourceIDs = hiddenSourceIDs
@@ -160,7 +168,7 @@ struct RTAModuleModel: Codable, Equatable {
              timeSmoothing, frequencyRangeLow, frequencyRangeHigh, dBRangeLow, dBRangeHigh,
              limitColorEnabled, limitColorNormal, limitColorWarning, limitColorAlert,
              limitWarningDb, limitAlertDb, showFrequencyAxis, showDBAxis, opacity,
-             isEnabled, isArmedByUser, showsTitle
+             isEnabled, isArmedByUser, showsTitle, levelScale, weighting
     }
 
     /// Decodes leniently with defaults for any field, so documents saved before a field
@@ -193,5 +201,8 @@ struct RTAModuleModel: Codable, Equatable {
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         isArmedByUser = try c.decodeIfPresent(Bool.self, forKey: .isArmedByUser) ?? false
         showsTitle = try c.decodeIfPresent(Bool.self, forKey: .showsTitle) ?? false
+        levelScale = try c.decodeIfPresent(AudioLevelScale.self, forKey: .levelScale) ?? .dbfs
+        let decodedWeighting = try c.decodeIfPresent(DbWeighting.self, forKey: .weighting) ?? .z
+        weighting = decodedWeighting == .ca ? .z : decodedWeighting
     }
 }

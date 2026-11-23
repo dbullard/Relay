@@ -69,9 +69,12 @@ final class RTAController: ObservableObject {
     }
 
     func updateSettings(_ newSettings: RTAModuleModel) {
+        // Scale/weighting changes restart the band processors so peak holds don't mix units.
         let resolutionChanged = newSettings.bandResolution != settings.bandResolution
             || newSettings.frequencyRangeLow != settings.frequencyRangeLow
             || newSettings.frequencyRangeHigh != settings.frequencyRangeHigh
+            || newSettings.levelScale != settings.levelScale
+            || newSettings.weighting != settings.weighting
         settings = newSettings
         if !shouldRun {
             stopAll()
@@ -160,11 +163,15 @@ final class RTAController: ObservableObject {
                 }
                 let timeSmoothing = owner.settings.timeSmoothing
                 let peakHoldDecayDbPerSec = owner.settings.peakHoldDecayDbPerSec
+                let levelOffset = owner.settings.levelScale == .calibrated ? frame.calibrationOffsetDb : 0
+                let weighting = owner.settings.weighting
                 // Runs on the RTABandProcessor actor, off the main actor, so the
                 // per-band aggregation (largest at 1/48-octave) doesn't block UI.
                 let updated = await p.process(frame: frame,
                                                timeSmoothing: timeSmoothing,
-                                               peakHoldDecayDbPerSec: peakHoldDecayDbPerSec)
+                                               peakHoldDecayDbPerSec: peakHoldDecayDbPerSec,
+                                               levelOffsetDb: levelOffset,
+                                               weighting: weighting)
                 guard !Task.isCancelled else { break }
                 owner.latestBands[inputID] = updated
                 owner.latestBandsDirty = true

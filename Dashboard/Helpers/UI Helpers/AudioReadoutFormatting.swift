@@ -11,7 +11,7 @@ enum AudioReadoutFormatting {
         return "\(Int(hz.rounded())) Hz"
     }
 
-    static func formatDb(_ db: Double) -> String {
-        String(format: "%.1f dB", db)
+    static func formatDb(_ db: Double, unit: String = "dB") -> String {
+        String(format: "%.1f %@", db, unit)
     }
 }

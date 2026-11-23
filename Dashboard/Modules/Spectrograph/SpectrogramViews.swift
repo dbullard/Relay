@@ -129,6 +129,7 @@ struct SpectrogramTileView: View {
         if let id = rta.inputID { m.inputID = id }
         m.dBRangeLow = rta.dBRangeLow
         m.dBRangeHigh = rta.dBRangeHigh
+        m.levelScale = rta.levelScale
         return m
     }
 
@@ -173,6 +174,7 @@ struct SpectrogramTileView: View {
         let range = controller.frequencyRange
         let scale = model.frequencyScale
         let weakController = WeakController(controller)
+        let unit = model.levelScale.unitLabel
         return Canvas { ctx, sz in
             guard let cursor = cursorLocation, sz.width > 0, sz.height > 0,
                   cursor.x >= 0, cursor.x <= sz.width, cursor.y >= 0, cursor.y <= sz.height else { return }
@@ -192,7 +194,7 @@ struct SpectrogramTileView: View {
             hLine.addLine(to: CGPoint(x: sz.width, y: cursor.y))
             ctx.stroke(hLine, with: .color(.white.opacity(0.5)), lineWidth: 0.75)
 
-            let text = "\(AudioReadoutFormatting.formatHz(hz))  \(AudioReadoutFormatting.formatDb(Double(db)))"
+            let text = "\(AudioReadoutFormatting.formatHz(hz))  \(AudioReadoutFormatting.formatDb(Double(db), unit: unit))"
             let charWidth: CGFloat = 5.4
             let labelW = CGFloat(text.count) * charWidth + 8
             let labelH: CGFloat = 14

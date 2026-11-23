@@ -1,6 +1,27 @@
 import Foundation
 import Synchronization
 
+// MARK: - IEC 61672-1 analytic weighting
+
+/// The IEC 61672-1 A and C frequency weightings as closed-form functions of frequency, used
+/// to weight RTA bands at their centre frequencies (standard practice for banded analysers).
+nonisolated enum IECWeighting {
+    static func dB(_ weighting: DbWeighting, frequency f: Double) -> Double {
+        let f2 = f * f
+        switch weighting {
+        case .a:
+            let ra = pow(12194, 2) * f2 * f2
+                / ((f2 + pow(20.598997, 2)) * sqrt((f2 + pow(107.65265, 2)) * (f2 + pow(737.86223, 2))) * (f2 + pow(12194, 2)))
+            return 20 * log10(ra) + 2.0
+        case .c:
+            let rc = pow(12194, 2) * f2 / ((f2 + pow(20.598997, 2)) * (f2 + pow(12194, 2)))
+            return 20 * log10(rc) + 0.06
+        case .z, .ca:
+            return 0
+        }
+    }
+}
+
 // MARK: - Weighting Filter Implementation
 
 nonisolated struct BiquadCoefficients {
@@ -78,6 +99,9 @@ nonisolated struct WeightingFilter {
     let sampleRate: Double
     var stages: [Biquad]
     private var iir: IIRFilter?
+    /// High-frequency correction for the 44.1/48/88.2/96 kHz designs (see
+    /// WeightingCoefficients.highFrequencyCorrection).
+    private var correction: Biquad?
     // Processors for different inputs build filters on their own queues at the same time.
     private static let didLogKeys = Mutex<Set<String>>([])
 
@@ -95,9 +119,11 @@ nonisolated struct WeightingFilter {
             if let iirCoeffs = WeightingCoefficients.aIIR(sampleRate: sampleRate) {
                 self.stages = []
                 self.iir = IIRFilter(coeffs: iirCoeffs)
+                self.correction = WeightingCoefficients.highFrequencyCorrection(weighting: .a, sampleRate: sampleRate).map { Biquad(c: $0) }
             } else if let coeffs = WeightingCoefficients.a(sampleRate: sampleRate) {
                 self.stages = coeffs.map { Biquad(c: $0) }
                 self.iir = nil
+                self.correction = WeightingCoefficients.highFrequencyCorrection(weighting: .a, sampleRate: sampleRate).map { Biquad(c: $0) }
             } else {
                 return nil
             }
@@ -105,9 +131,11 @@ nonisolated struct WeightingFilter {
             if let iirCoeffs = WeightingCoefficients.cIIR(sampleRate: sampleRate) {
                 self.stages = []
                 self.iir = IIRFilter(coeffs: iirCoeffs)
+                self.correction = WeightingCoefficients.highFrequencyCorrection(weighting: .c, sampleRate: sampleRate).map { Biquad(c: $0) }
             } else if let coeffs = WeightingCoefficients.c(sampleRate: sampleRate) {
                 self.stages = coeffs.map { Biquad(c: $0) }
                 self.iir = nil
+                self.correction = WeightingCoefficients.highFrequencyCorrection(weighting: .c, sampleRate: sampleRate).map { Biquad(c: $0) }
             } else {
                 return nil
             }
@@ -125,9 +153,13 @@ nonisolated struct WeightingFilter {
     mutating func processSample(_ x: Double) -> Double {
         guard weighting != .z else { return x }
         if iir != nil {
-            return iir!.process(x)
+            let y = iir!.process(x)
+            return correction != nil ? correction!.process(y) : y
         }
         var y = x
+        if correction != nil {
+            y = correction!.process(y)
+        }
         for i in stages.indices {
             y = stages[i].process(y)
         }
@@ -138,6 +170,7 @@ nonisolated struct WeightingFilter {
         if iir != nil {
             iir!.reset()
         }
+        correction?.reset()
         for i in stages.indices {
             stages[i].reset()
         }
@@ -212,6 +245,50 @@ nonisolated enum WeightingCoefficients {
                     1.1224250033231239e-02
                 ]
             )
+        default:
+            return nil
+        }
+    }
+
+    /// A biquad that undoes the high-frequency droop of the bilinear designs (the transform
+    /// compresses the analog response near Nyquist). Fitted by least squares against the
+    /// IEC 61672-1 analytic curve from 20 Hz to 20 kHz.
+    /// - 44.1/48 kHz (aIIR/cIIR): uncorrected they read −1.5 dB at 10 kHz, −3.4 dB at
+    ///   12.5 kHz and −8.5 dB at 16 kHz at 44.1 kHz; corrected, within ±0.17 dB of IEC
+    ///   through 16 kHz (−0.4 dB at 20 kHz). Unity at 1 kHz holds to within 0.01 dB.
+    /// - 88.2/96 kHz (design()): uncorrected −0.58/−0.48 dB at 16 kHz and −1.66/−1.36 dB at
+    ///   20 kHz; corrected, within ±0.03 dB through 16 kHz (−0.06 dB at 20 kHz). These are
+    ///   normalised to exactly unity at 1 kHz.
+    /// 192 kHz needs none (−0.11 dB at 16 kHz).
+    static func highFrequencyCorrection(weighting: DbWeighting, sampleRate: Double) -> BiquadCoefficients? {
+        func coeffs(_ b: [Double], _ a: [Double]) -> BiquadCoefficients {
+            BiquadCoefficients(b0: b[0], b1: b[1], b2: b[2], a1: a[1], a2: a[2])
+        }
+        switch (weighting, Int(sampleRate.rounded())) {
+        case (.a, 44100):
+            return coeffs([2.2207461864234155, 0.9596164195207884, 0.24172782815510938],
+                          [1.0, 1.705728952910498, 0.7273778151992859])
+        case (.c, 44100):
+            return coeffs([2.221657617790706, 0.9609084861293162, 0.24069810190804175],
+                          [1.0, 1.7068974785637532, 0.7283747505818245])
+        case (.a, 48000):
+            return coeffs([2.067098231062182, 0.6415778867129099, 0.22691250911252236],
+                          [1.0, 1.4302579008588177, 0.5114094157422678])
+        case (.c, 48000):
+            return coeffs([2.0686273930873558, 0.6445545758485456, 0.22602773681571478],
+                          [1.0, 1.432805847225656, 0.5132331489610075])
+        case (.a, 88200):
+            return coeffs([1.30674581919895, -0.6665674795302454, 0.2010940371496537],
+                          [1.0, -0.16618858932369174, 0.006904661805349677])
+        case (.c, 88200):
+            return coeffs([1.309691262378839, -0.66165098629563, 0.20048207473650134],
+                          [1.0, -0.1582919035263441, 0.006264081680498357])
+        case (.a, 96000):
+            return coeffs([1.286735322849601, -0.7410179408069745, 0.20542704461571928],
+                          [1.0, -0.2671253259557449, 0.017838984941740747])
+        case (.c, 96000):
+            return coeffs([1.2897112439399765, -0.7362611283214108, 0.2046690797487955],
+                          [1.0, -0.2590887020499242, 0.016781738882478598])
         default:
             return nil
         }

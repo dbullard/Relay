@@ -59,6 +59,14 @@ nonisolated struct FFTFrame: Sendable, Equatable {
     var sampleRate: Double
     var timestamp: TimeInterval
     var isRepeated: Bool
+    /// The input's calibration offset (dB) when this frame was made, so displays can show
+    /// calibrated dB SPL.
+    var calibrationOffsetDb: Double = 0
+    /// Amplitude spectrum from a window `lowFrequencyWindowFactor`× longer than `magnitudes`
+    /// (same sample rate), for RTA bands too narrow to resolve with the normal window — the
+    /// multi-time-window approach analysers like Smaart use. Nil until enough audio has been
+    /// captured to fill the long window.
+    var lowFrequencyMagnitudes: [Float]? = nil
 
     /// Sent once when the input stops delivering audio. Carries no magnitudes.
     var isStale: Bool { magnitudes.isEmpty }
@@ -102,6 +110,16 @@ struct SpectrogramColorMap: Codable, Equatable {
 }
 
 // MARK: - Shared enums
+
+/// How RTA / Spectrograph levels are shown: digital level, or calibrated sound pressure
+/// using the input's calibration offset (the same scale as the SPL meters).
+nonisolated enum AudioLevelScale: String, Codable, CaseIterable {
+    case dbfs
+    case calibrated
+
+    var unitLabel: String { self == .dbfs ? "dBFS" : "dB SPL" }
+    var displayName: String { self == .dbfs ? "dBFS" : "dB SPL" }
+}
 
 enum FrequencyScale: String, Codable, CaseIterable {
     case linear
