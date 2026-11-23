@@ -18,6 +18,12 @@ import UIKit
 enum DashboardSettingsInitialSelection {
     case general
     case audio(AudioInputsConfigView.Tab)
+    /// External Connections, which opens on Planning Center sign-in.
+    case externalConnections
+
+    /// `userInfo` key on `.openSettingsRequested` naming the page to open.
+    static let notificationPageKey = "page"
+    static let planningCenterPageValue = "planningCenter"
 }
 
 /// High-level settings container for the Relay Dashboard.
@@ -78,6 +84,9 @@ struct DashboardSettingsView: View {
         case .audio(let tab):
             _selection = State(initialValue: .audio)
             _initialAudioTab = State(initialValue: tab)
+        case .externalConnections:
+            _selection = State(initialValue: .externalConnections)
+            _initialAudioTab = State(initialValue: .measurement)
         }
     }
 

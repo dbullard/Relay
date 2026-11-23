@@ -4895,7 +4895,11 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
             .onReceive(NotificationCenter.default.publisher(for: .bringAllTilesIntoCanvasRequested)) { _ in
                 bringAllTilesIntoCanvas()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .openSettingsRequested)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsRequested)) { note in
+                if note.userInfo?[DashboardSettingsInitialSelection.notificationPageKey] as? String
+                    == DashboardSettingsInitialSelection.planningCenterPageValue {
+                    settingsInitialSelection = .externalConnections
+                }
                 showingSettings = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .createBlankDashboardRequested)) { note in

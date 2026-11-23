@@ -2137,7 +2137,7 @@ struct DashboardTileContainer: View {
                     return RosterPickerModuleModel()
                 }()
 
-                RosterPickerModuleView(model: model, tab: tab)
+                RosterPickerModuleView(model: model, tab: tab, sharedRosters: sharedRosters)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .modifier(
                         ModuleCornerClip(

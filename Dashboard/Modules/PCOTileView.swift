@@ -1847,8 +1847,15 @@ struct PCOTileView: View {
 
             if showsSignInAction, reason == Self.signInExpiredReason {
                 Button {
-                    // Planning Center sign-in lives in App Settings.
-                    NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+                    // Planning Center sign-in lives on Settings' External Connections page.
+                    NotificationCenter.default.post(
+                        name: .openSettingsRequested,
+                        object: nil,
+                        userInfo: [
+                            DashboardSettingsInitialSelection.notificationPageKey:
+                                DashboardSettingsInitialSelection.planningCenterPageValue
+                        ]
+                    )
                 } label: {
                     Text("Sign In Again")
                         .font(captionFont)
