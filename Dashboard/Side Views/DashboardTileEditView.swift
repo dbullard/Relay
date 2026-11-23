@@ -228,6 +228,10 @@ struct DashboardTileEditView: View {
     @State private var hasStartedTileSizeEdit: Bool = false
     /// Shown under the size fields when a committed value isn't a number.
     @State private var tileSizeInputHint: String?
+    /// Which tile(s) the size being typed belongs to, captured when a size field
+    /// gains focus. Clicking another tile doesn't take focus from the field, so by
+    /// the time the typed size is flushed the inspector may show a different tile.
+    @State private var tileSizeEditTarget: TileSizeEditTarget?
     @FocusState private var tileSizeFieldFocus: TileSizeField?
     
     @State private var selectedInspectorTab: InspectorTab = .modules
@@ -1175,6 +1179,9 @@ extension DashboardTileEditView {
     }
 
     func resetEditorStateFromInitialValues() {
+        // A size typed without Return/Tab would be overwritten by the re-seed below.
+        flushPendingTileSizeEdit()
+
         // Disable change handlers while we seed @State from the model.
         isSeedingInspectorState = true
         hasInitializedInspectorState = false
@@ -2699,8 +2706,14 @@ extension DashboardTileEditView {
                 // Typing used to resize the tile on every keystroke; the size now
                 // applies when you press Return or leave the field.
                 .onChange(of: tileSizeFieldFocus, initial: false) { oldFocus, newFocus in
+                    if oldFocus == nil, newFocus != nil {
+                        tileSizeEditTarget = TileSizeEditTarget(update: onUpdateTileSizeLive, baseline: currentTileSize)
+                    }
                     guard oldFocus != nil, oldFocus != newFocus else { return }
                     commitTileSizeFields()
+                    if newFocus == nil {
+                        tileSizeEditTarget = nil
+                    }
                 }
 
                 if let tileSizeInputHint {
@@ -2724,6 +2737,9 @@ extension DashboardTileEditView {
                     #endif
                     .foregroundStyle(.secondary)
             }
+            // Closing the inspector or switching its tab removes the fields before
+            // they report losing focus.
+            .onDisappear { flushPendingTileSizeEdit() }
         }
     }
     var moduleAppearanceSection: some View {
@@ -3446,10 +3462,23 @@ extension DashboardTileEditView {
         ordered.forEach { onDuplicateModule($0.id) }
     }
 
+    /// Applies a size still being typed before the fields are re-seeded or removed.
+    private func flushPendingTileSizeEdit() {
+        guard tileSizeFieldFocus != nil || tileSizeEditTarget != nil else { return }
+        commitTileSizeFields(isFlushing: true)
+        tileSizeEditTarget = nil
+    }
+
     /// Applies the typed size (Return or focus leaving the fields). Input that
     /// isn't a number reverts to the tile's current size with an inline hint.
-    private func commitTileSizeFields() {
-        guard hasInitializedInspectorState, !isSeedingInspectorState else { return }
+    /// `isFlushing`: called just before a re-seed or removal, which skips the
+    /// seeding guard (a re-seed sets it) and drops invalid input silently.
+    private func commitTileSizeFields(isFlushing: Bool = false) {
+        if !isFlushing {
+            guard hasInitializedInspectorState, !isSeedingInspectorState else { return }
+        }
+        let baseline = tileSizeEditTarget?.baseline ?? currentTileSize
+        let update = tileSizeEditTarget?.update ?? onUpdateTileSizeLive
 
         let trimmedWidth = tileSizeWidthText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedHeight = tileSizeHeightText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3457,6 +3486,7 @@ extension DashboardTileEditView {
         let heightIsValid = trimmedHeight.isEmpty || Double(trimmedHeight) != nil
 
         guard widthIsValid, heightIsValid else {
+            guard !isFlushing else { return }
             if !widthIsValid { tileSizeWidthText = String(Int(currentTileSize.width.rounded())) }
             if !heightIsValid { tileSizeHeightText = String(Int(currentTileSize.height.rounded())) }
             let message = "Width and height must be numbers"
@@ -3473,13 +3503,17 @@ extension DashboardTileEditView {
         let heightInput = Double(trimmedHeight)
         guard widthInput != nil || heightInput != nil else { return }
 
-        // Nothing to do when the fields still show the current size.
-        let widthChanged = widthInput.map { abs($0 - Double(currentTileSize.width)) > 0.5 } ?? false
-        let heightChanged = heightInput.map { abs($0 - Double(currentTileSize.height)) > 0.5 } ?? false
+        // Nothing to do when the fields still show the target's size.
+        let widthChanged = widthInput.map { abs($0 - Double(baseline.width)) > 0.5 } ?? false
+        let heightChanged = heightInput.map { abs($0 - Double(baseline.height)) > 0.5 } ?? false
         guard widthChanged || heightChanged else { return }
 
         beginTileSizeEditIfNeeded()
-        onUpdateTileSizeLive(widthInput, heightInput)
+        update(widthInput, heightInput)
+        tileSizeEditTarget?.baseline = CGSize(
+            width: widthInput.map { CGFloat($0) } ?? baseline.width,
+            height: heightInput.map { CGFloat($0) } ?? baseline.height
+        )
     }
 
     private func applyTileSizeEdits() {
@@ -3552,6 +3586,13 @@ private enum InspectorTab: String, CaseIterable, Identifiable {
 private enum TileSizeField: Hashable {
     case width
     case height
+}
+
+/// The size-update callback (bound to the tile/selection being edited) and that
+/// tile's size, captured when a size field gains focus.
+private struct TileSizeEditTarget {
+    let update: (Double?, Double?) -> Void
+    var baseline: CGSize
 }
 
 /// The ↺ glyph for inspector reset buttons: small to look at, with a full-size
