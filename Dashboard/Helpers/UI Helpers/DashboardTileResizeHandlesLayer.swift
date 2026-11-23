@@ -61,7 +61,8 @@ struct DashboardTileResizeHandlesLayer: View {
                 onResizeChanged: onResizeChanged,
                 showsIndicator: showsIndicator,
                 isEnabled: !draggingDisabled,
-                dragState: dragState
+                dragState: dragState,
+                hitTestTileSize: size
             )
 
             let topRightHandle = ResizeHandle(
@@ -82,7 +83,8 @@ struct DashboardTileResizeHandlesLayer: View {
                 onResizeChanged: onResizeChanged,
                 showsIndicator: showsIndicator,
                 isEnabled: !draggingDisabled,
-                dragState: dragState
+                dragState: dragState,
+                hitTestTileSize: size
             )
 
             let topLeftHandle = ResizeHandle(
@@ -103,7 +105,8 @@ struct DashboardTileResizeHandlesLayer: View {
                 onResizeChanged: onResizeChanged,
                 showsIndicator: showsIndicator,
                 isEnabled: !draggingDisabled,
-                dragState: dragState
+                dragState: dragState,
+                hitTestTileSize: size
             )
 
             let leftEdgeHandle = ResizeHandle(
@@ -124,7 +127,8 @@ struct DashboardTileResizeHandlesLayer: View {
                 onResizeChanged: onResizeChanged,
                 showsIndicator: showsIndicator,
                 isEnabled: !draggingDisabled,
-                dragState: dragState
+                dragState: dragState,
+                hitTestTileSize: size
             )
 
             let bottomLeftHandle = ResizeHandle(
@@ -145,7 +149,8 @@ struct DashboardTileResizeHandlesLayer: View {
                 onResizeChanged: onResizeChanged,
                 showsIndicator: showsIndicator,
                 isEnabled: !draggingDisabled,
-                dragState: dragState
+                dragState: dragState,
+                hitTestTileSize: size
             )
 
             let rightEdgeHandle = ResizeHandle(
@@ -166,7 +171,8 @@ struct DashboardTileResizeHandlesLayer: View {
                 onResizeChanged: onResizeChanged,
                 showsIndicator: showsIndicator,
                 isEnabled: !draggingDisabled,
-                dragState: dragState
+                dragState: dragState,
+                hitTestTileSize: size
             )
 
             let bottomEdgeHandle = ResizeHandle(
@@ -187,7 +193,8 @@ struct DashboardTileResizeHandlesLayer: View {
                 onResizeChanged: onResizeChanged,
                 showsIndicator: showsIndicator,
                 isEnabled: !draggingDisabled,
-                dragState: dragState
+                dragState: dragState,
+                hitTestTileSize: size
             )
 
             let topEdgeHandle = ResizeHandle(
@@ -208,7 +215,8 @@ struct DashboardTileResizeHandlesLayer: View {
                 onResizeChanged: onResizeChanged,
                 showsIndicator: showsIndicator,
                 isEnabled: !draggingDisabled,
-                dragState: dragState
+                dragState: dragState,
+                hitTestTileSize: size
             )
 
             ZStack {
