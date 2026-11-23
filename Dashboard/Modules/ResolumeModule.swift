@@ -233,6 +233,9 @@ public struct ResolumeModuleView: View {
     @State private var transportProbeCache: (state: String?, timecode: String?) = (nil, nil)
     @State private var transportProbeDisabledUntil: Date? = nil
     @State private var transportProbePermanentlyUnavailable: Bool = false
+    /// Last successful composition fetch by this tile, and the last failure since then.
+    @State private var lastCompositionSuccessAt: Date? = nil
+    @State private var lastCompositionError: String? = nil
 
     private var profilesStore: ResolumeProfilesStore { ResolumeConnection.shared.profilesStore }
 
@@ -297,19 +300,28 @@ public struct ResolumeModuleView: View {
             header
 
             Group {
-                switch connection.state {
-                case .idle, .connecting:
-                    Text(applyCapitalization("Connecting…"))
-                        .font(.system(size: baseFontSize * 0.8, weight: .regular))
-                        .foregroundStyle(resolvedSecondaryColor)
-
-                case .connected:
+                if connection.lastSuccessAt == nil {
+                    // Nothing has loaded yet: there is no last good data to keep on screen.
+                    switch connection.state {
+                    case .error(let msg):
+                        Text(applyCapitalization("Error: \(msg)"))
+                            .font(.system(size: baseFontSize * 0.8, weight: .regular))
+                            .foregroundStyle(resolvedSecondaryColor)
+                    default:
+                        Text(applyCapitalization("Connecting…"))
+                            .font(.system(size: baseFontSize * 0.8, weight: .regular))
+                            .foregroundStyle(resolvedSecondaryColor)
+                    }
+                } else {
+                    // Keep the last good data on screen; dim and badge it when a poll fails or goes quiet.
                     content
-
-                case .error(let msg):
-                    Text(applyCapitalization("Error: \(msg)"))
-                        .font(.system(size: baseFontSize * 0.8, weight: .regular))
-                        .foregroundStyle(resolvedSecondaryColor)
+                        .liveDataStatus(
+                            isConnected: connection.state == .connected && liveErrorReason == nil,
+                            lastUpdate: liveLastUpdate,
+                            staleAfter: max(5, config.pollIntervalSeconds * 4),
+                            reason: liveErrorReason,
+                            badgeFont: .system(size: baseFontSize * 0.55, weight: .regular)
+                        )
                 }
             }
         }
@@ -354,6 +366,22 @@ public struct ResolumeModuleView: View {
         .onDisappear {
             stopCompositionPolling()
         }
+    }
+
+    /// The tile's own composition poll feeds every mode except Custom Path.
+    private var usesCompositionPoll: Bool { config.displayMode != .customPath }
+
+    private var liveErrorReason: String? {
+        if case .error(let msg) = connection.state { return msg }
+        return usesCompositionPoll ? lastCompositionError : nil
+    }
+
+    private var liveLastUpdate: Date? {
+        usesCompositionPoll ? (lastCompositionSuccessAt ?? connection.lastSuccessAt) : connection.lastSuccessAt
+    }
+
+    private func recordCompositionFailure(_ reason: String) {
+        if lastCompositionError != reason { lastCompositionError = reason }
     }
 
     private var resolvedEndpoint: ResolumeEndpoint {
@@ -771,8 +799,11 @@ public struct ResolumeModuleView: View {
             let (data, response) = try await URLSession.shared.data(from: url)
 
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                // Keep name but clear the dynamic fields.
-                compositionFields = (resolvedProfileName ?? connection.snapshot.compositionName ?? "—", nil, nil, nil)
+                recordCompositionFailure("Resolume returned HTTP \(http.statusCode)")
+                // Keep the last good fields (shown dimmed and badged); clear only if nothing has loaded yet.
+                if lastCompositionSuccessAt == nil {
+                    compositionFields = (resolvedProfileName ?? connection.snapshot.compositionName ?? "—", nil, nil, nil)
+                }
 
                 let now = Date()
                 let shouldLogNow = (lastCompositionLogAt == nil) || (now.timeIntervalSince(lastCompositionLogAt!) > 5)
@@ -809,7 +840,10 @@ public struct ResolumeModuleView: View {
                     lastCompositionLogAt = now
                     print("[ResolumeModule] Composition parse: JSON root was not a dictionary for \(urlString)")
                 }
-                compositionFields = (resolvedProfileName ?? connection.snapshot.compositionName ?? "—", nil, nil, nil)
+                recordCompositionFailure("Unexpected response from Resolume")
+                if lastCompositionSuccessAt == nil {
+                    compositionFields = (resolvedProfileName ?? connection.snapshot.compositionName ?? "—", nil, nil, nil)
+                }
                 return
             }
 
@@ -968,6 +1002,8 @@ public struct ResolumeModuleView: View {
             }
 
             compositionFields = (name ?? "—", bpm, state, timecode)
+            lastCompositionSuccessAt = Date()
+            if lastCompositionError != nil { lastCompositionError = nil }
 
             // Throttled diagnostics so we can see what the endpoint is actually returning.
             // - Always logs *occasionally* when the key fields we care about are missing.
@@ -1071,8 +1107,13 @@ public struct ResolumeModuleView: View {
                 }
             }
         } catch {
-            // If fetch/parse fails, keep name but clear dynamics.
-            compositionFields = (resolvedProfileName ?? connection.snapshot.compositionName ?? "—", nil, nil, nil)
+            // A poll cancelled by a restart or the tile disappearing isn't a failure.
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled { return }
+            recordCompositionFailure(error.localizedDescription)
+            // Keep the last good fields (shown dimmed and badged); clear only if nothing has loaded yet.
+            if lastCompositionSuccessAt == nil {
+                compositionFields = (resolvedProfileName ?? connection.snapshot.compositionName ?? "—", nil, nil, nil)
+            }
 
             let now = Date()
             let shouldLogNow = (lastCompositionLogAt == nil) || (now.timeIntervalSince(lastCompositionLogAt!) > 5)

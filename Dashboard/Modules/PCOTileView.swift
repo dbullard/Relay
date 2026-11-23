@@ -7,6 +7,7 @@
 
 
 import SwiftUI
+import Observation
 import OSLog
 import UniformTypeIdentifiers
 
@@ -1406,6 +1407,26 @@ private struct RundownViewportWidthPreferenceKey: PreferenceKey {
     }
 }
 
+/// When Planning Center data last loaded for a tab, and the last failure since then. Observable so
+/// every PCO tile on the tab updates its status badge, and a remounted tile still knows the data's age.
+@MainActor @Observable
+fileprivate final class PCOFetchStatusStore {
+    struct Status: Equatable {
+        var succeededAt: Date?
+        var error: String?
+    }
+
+    static let shared = PCOFetchStatusStore()
+    private(set) var byTabID: [UUID: Status] = [:]
+
+    func record(tabID: UUID, error: String?) {
+        var status = byTabID[tabID] ?? Status()
+        if error == nil { status.succeededAt = Date() }
+        status.error = error
+        if byTabID[tabID] != status { byTabID[tabID] = status }
+    }
+}
+
 struct PCOTileView: View {
     private static let log = Logger(subsystem: "Relay", category: "PCO")
     private static let tabSnapshotSchemaVersion = "pco-rundown-v2"
@@ -1722,6 +1743,74 @@ struct PCOTileView: View {
 
     private var shouldRenderPCODataSections: Bool {
         showServiceRundown || showTeamAssignments
+    }
+
+    // MARK: - Fetch status (stale / offline badge)
+
+    private var pcoFetchStatus: PCOFetchStatusStore.Status {
+        PCOFetchStatusStore.shared.byTabID[tab.id] ?? PCOFetchStatusStore.Status()
+    }
+
+    /// Badge the tile only in Live Mode (when it refreshes on a timer) and only when PCO data is on
+    /// screen; with nothing loaded, the empty view shows the error instead.
+    private var marksPCOFreshness: Bool {
+        isLiveMode && !showLiveView && shouldRenderPCODataSections
+            && hasPlanningCenterLogin && hasPlanningCenterTabConfiguration
+            && (!displayedRundownRows.isEmpty || !displayedTeamAssignments.isEmpty)
+    }
+
+    nonisolated private static let signInExpiredReason = "Planning Center sign-in expired"
+
+    /// A short reason for the badge and error view, instead of PCOClient's raw "HTTP 401 /path + body".
+    nonisolated private static func fetchFailureReason(_ error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == "PCO" {
+            switch nsError.code {
+            case 401:
+                return signInExpiredReason
+            case 429:
+                return "Planning Center is limiting requests"
+            case 400...599:
+                return "Planning Center returned HTTP \(nsError.code)"
+            default:
+                if nsError.localizedDescription.hasPrefix("PCO transport error") {
+                    return "Can't reach Planning Center"
+                }
+            }
+        }
+        let firstLine = nsError.localizedDescription
+            .components(separatedBy: .newlines)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return firstLine.isEmpty ? "Couldn't load Planning Center data" : String(firstLine.prefix(120))
+    }
+
+    /// Shown only when a fetch failed and nothing has loaded to keep on screen.
+    @ViewBuilder
+    private func pcoFetchErrorView(_ reason: String, showsSignInAction: Bool) -> some View {
+        VStack(alignment: resolvedHorizontalAlignment.horizontal, spacing: 6) {
+            Label {
+                Text(applyCapitalization("Couldn't load Planning Center data: \(reason)"))
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .font(captionFont)
+            .foregroundStyle(resolvedSecondaryColor)
+            .multilineTextAlignment(resolvedTextAlignment)
+
+            if showsSignInAction, reason == Self.signInExpiredReason {
+                Button {
+                    // Planning Center sign-in lives in App Settings.
+                    NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+                } label: {
+                    Text("Sign In Again")
+                        .font(captionFont)
+                }
+                .buttonStyle(.bordered)
+                .help("Opens Settings to sign in to Planning Center")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: resolvedHorizontalAlignment)
     }
 
     private var showRundownServiceTimeColumn: Bool {
@@ -2621,9 +2710,13 @@ struct PCOTileView: View {
                         .font(captionFont)
                         .foregroundStyle(.red)
                 } else if displayedRundownRows.isEmpty {
-                    Text(applyCapitalization("No items found for this plan."))
-                        .font(captionFont)
-                        .foregroundStyle(resolvedSecondaryColor)
+                    if let fetchError = pcoFetchStatus.error {
+                        pcoFetchErrorView(fetchError, showsSignInAction: true)
+                    } else {
+                        Text(applyCapitalization("No items found for this plan."))
+                            .font(captionFont)
+                            .foregroundStyle(resolvedSecondaryColor)
+                    }
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
                         // Column header row
@@ -2878,9 +2971,17 @@ struct PCOTileView: View {
                             .font(captionFont)
                             .foregroundStyle(.red)
                     } else if displayedTeamAssignments.isEmpty {
-                        Text(applyCapitalization("No team data loaded."))
-                            .font(captionFont)
-                            .foregroundStyle(resolvedSecondaryColor)
+                        if let fetchError = pcoFetchStatus.error {
+                            // One sign-in button per tile: skip it if the rundown above already shows one.
+                            pcoFetchErrorView(
+                                fetchError,
+                                showsSignInAction: !(showServiceRundown && displayedRundownRows.isEmpty)
+                            )
+                        } else {
+                            Text(applyCapitalization("No team data loaded."))
+                                .font(captionFont)
+                                .foregroundStyle(resolvedSecondaryColor)
+                        }
                     } else {
                         let sortedRows = visibleTeamAssignments
                         let teamCounts = Dictionary(grouping: sortedRows) { row in
@@ -2938,6 +3039,15 @@ struct PCOTileView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Keep the last good rundown/team on screen; dim and badge it when a Live Mode refresh
+        // fails or nothing new has arrived for a few refresh intervals.
+        .liveDataStatus(
+            isConnected: !marksPCOFreshness || pcoFetchStatus.error == nil,
+            lastUpdate: marksPCOFreshness ? pcoFetchStatus.succeededAt : nil,
+            staleAfter: marksPCOFreshness ? Self.liveModeRefreshInterval * 3 : nil,
+            reason: marksPCOFreshness ? pcoFetchStatus.error : nil,
+            badgeFont: captionFont
+        )
         .task {
             await MainActor.run {
                 refreshServiceTimeCaches()
@@ -3910,11 +4020,17 @@ struct PCOTileView: View {
                     tab.pcoCachedTeamAssignments = cachedTeamAssignments
                     tab.pcoTeamPositionsByTeamName = positionsByTeamName.isEmpty ? nil : positionsByTeamName
                 }
+                PCOFetchStatusStore.shared.record(tabID: tab.id, error: nil)
             }
         } catch is CancellationError {
             return
         } catch {
-            // On failure, keep existing data (avoid wiping tiles due to a transient error).
+            // On failure, keep existing data (avoid wiping tiles due to a transient error),
+            // but record why so the tile can mark that data as out of date.
+            let reason = Self.fetchFailureReason(error)
+            await MainActor.run {
+                PCOFetchStatusStore.shared.record(tabID: tab.id, error: reason)
+            }
             return
         }
     }

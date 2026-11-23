@@ -1126,6 +1126,16 @@ private struct ShureOverviewLiveAudioIndicator: View {
             Circle()
                 .fill(isLive ? Color.green.opacity(0.85) : primaryTextColor.opacity(0.15))
                 .frame(width: compact ? 8 : 7, height: compact ? 8 : 7)
+        case .meter where effectiveLiveMode && !isTransmitterOff && meter.isMuted:
+            // An empty meter reads as "quiet talker"; a muted pack must say so.
+            ShureMeterStateLabel(
+                text: "MUTED",
+                systemImage: "mic.slash.fill",
+                tint: .orange,
+                font: compact ? .caption2 : .caption
+            )
+            .foregroundStyle(primaryTextColor)
+            .accessibilityLabel("Audio muted")
         case .meter(let filledSegments):
             // The last segment is the receiver's own clip alert (AUDIO_LED_BITMAP bit 7), not
             // "fully pegged" by our level math. Muted mirrors the bucket's muted handling.
