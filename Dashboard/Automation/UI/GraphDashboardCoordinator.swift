@@ -75,4 +75,21 @@ final class GraphDashboardUndoProxy: NSObject, ObservableObject {
         }
         undoManager.setActionName(actionName)
     }
+
+    /// Undo for state that lives outside the graph (console channel assignments are stored on
+    /// the device in ExternalDevicesStore). `apply` installs a value and returns the value it
+    /// replaced, which becomes the redo step.
+    func registerValueUndo<Value>(
+        actionName: String,
+        previous: Value,
+        undoManager: UndoManager?,
+        apply: @escaping (Value) -> Value
+    ) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { [self] _ in
+            let replaced = apply(previous)
+            registerValueUndo(actionName: actionName, previous: replaced, undoManager: undoManager, apply: apply)
+        }
+        undoManager.setActionName(actionName)
+    }
 }

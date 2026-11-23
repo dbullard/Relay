@@ -18,6 +18,9 @@ struct VistaGraphNodeView: View {
     @State private var exportDocument = VistaCSVDocument(csvText: "")
     @State private var exportErrorMessage: String?
     @State private var showImportInstructions = false
+    @AppStorage(graphLiveModeStorageKey) private var isLiveModeEnabled: Bool = false
+    /// A Run waiting for a yes because Live Mode is on.
+    @State private var pendingLiveConfirmation: GraphLiveConfirmation? = nil
 
     private var destinationCategory: GraphNodeCategory { .destinations }
 
@@ -138,7 +141,7 @@ struct VistaGraphNodeView: View {
                         Spacer()
 
                         Button("Run") {
-                            runCurrentCommand()
+                            requestRunCurrentCommand()
                         }
                         .buttonStyle(GraphPushButtonStyle(isProminent: true))
                         .controlSize(.small)
@@ -232,6 +235,7 @@ struct VistaGraphNodeView: View {
         .overlay(
             receiverTintBorder
         )
+        .graphLiveConfirmationDialog($pendingLiveConfirmation)
         .sheet(isPresented: $showImportInstructions) {
             VistaImportInstructionsSheet(
                 suppressImportInstructions: $suppressImportInstructions
@@ -301,6 +305,22 @@ struct VistaGraphNodeView: View {
         let cueSummary = "\(cues.count) cue\(cues.count == 1 ? "" : "s") ready"
         guard let device else { return cueSummary }
         return "\(cueSummary) • \(device.host):\(device.port)"
+    }
+
+    /// Runs now, or asks first while Live Mode is on: Run sends OSC to the lighting desk.
+    private func requestRunCurrentCommand() {
+        guard isLiveModeEnabled else {
+            runCurrentCommand()
+            return
+        }
+        let name = device?.name.isEmpty == false ? (device?.name ?? "Vista") : "Vista"
+        let target = device.map { " at \($0.host):\($0.port)" } ?? ""
+        pendingLiveConfirmation = GraphLiveConfirmation(
+            title: "Send to \u{201C}\(name)\u{201D}?",
+            message: "Live Mode is on. This sends \(commandPreviewAddress) to the desk\(target) now.",
+            confirmLabel: "Send",
+            action: { runCurrentCommand() }
+        )
     }
 
     private func runCurrentCommand() {

@@ -271,46 +271,53 @@ struct ModuleGroupNodeView: View {
 
     @ViewBuilder
     private func collapsibleItemsSection<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "chevron.down")
-                .imageScale(.small)
-                .opacity(0.85)
-                .rotationEffect(.degrees(isItemsCollapsed ? -90 : 0))
-                .animation(.easeInOut(duration: 0.18), value: isItemsCollapsed)
-                .accessibilityLabel(isItemsCollapsed ? "Expand \(itemSectionTitle)" : "Collapse \(itemSectionTitle)")
+        Button {
+            toggleItemsCollapsed()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.down")
+                    .imageScale(.small)
+                    .opacity(0.85)
+                    .rotationEffect(.degrees(isItemsCollapsed ? -90 : 0))
+                    .animation(.easeInOut(duration: 0.18), value: isItemsCollapsed)
 
-            Text(itemSectionTitle)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                Text(itemSectionTitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
-            Spacer()
+                Spacer()
 
-            Text(itemSectionSummary)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            let next = !isItemsCollapsed
-            withAnimation(.easeInOut(duration: 0.18)) {
-                isItemsCollapsed = next
+                Text(itemSectionSummary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            // Persist collapsed state so it survives mode switches.
-            // Explicit write-back through the @Binding is required — chained optional assignment
-            // (graph?.tileLayouts[nodeId]?.x = val) does not reliably propagate through @Binding.
-            if var g = graph {
-                if g.tileLayouts[nodeId] != nil {
-                    g.tileLayouts[nodeId]!.collapsed = next
-                } else {
-                    g.tileLayouts[nodeId] = TileGraphLayout(collapsed: next)
-                }
-                graph = g
-            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isItemsCollapsed ? "Expand \(itemSectionTitle)" : "Collapse \(itemSectionTitle)")
+        .accessibilityValue(itemSectionSummary)
 
         if !isItemsCollapsed {
             content()
+        }
+    }
+
+    private func toggleItemsCollapsed() {
+        let next = !isItemsCollapsed
+        withAnimation(.easeInOut(duration: 0.18)) {
+            isItemsCollapsed = next
+        }
+        // Persist collapsed state so it survives mode switches.
+        // Explicit write-back through the @Binding is required — chained optional assignment
+        // (graph?.tileLayouts[nodeId]?.x = val) does not reliably propagate through @Binding.
+        if var g = graph {
+            if g.tileLayouts[nodeId] != nil {
+                g.tileLayouts[nodeId]!.collapsed = next
+            } else {
+                g.tileLayouts[nodeId] = TileGraphLayout(collapsed: next)
+            }
+            graph = g
         }
     }
 
@@ -690,16 +697,28 @@ struct ModuleGroupNodeView: View {
                 Divider().opacity(0.25)
 
                 HStack(spacing: 6) {
-                    Image(systemName: "chevron.down")
-                        .imageScale(.small)
-                        .opacity(0.85)
-                        .rotationEffect(.degrees(isTeamsCollapsed ? -90 : 0))
-                        .animation(.easeInOut(duration: 0.18), value: isTeamsCollapsed)
-                        .accessibilityLabel(isTeamsCollapsed ? "Expand Teams" : "Collapse Teams")
+                    // A Button so the header is reachable by keyboard and reads as a button;
+                    // the row's tap gesture below still toggles from anywhere on the row.
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isTeamsCollapsed.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.down")
+                                .imageScale(.small)
+                                .opacity(0.85)
+                                .rotationEffect(.degrees(isTeamsCollapsed ? -90 : 0))
+                                .animation(.easeInOut(duration: 0.18), value: isTeamsCollapsed)
 
-                    Text("Teams")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                            Text("Teams")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isTeamsCollapsed ? "Expand Teams" : "Collapse Teams")
 
                     if !selectedPeopleTeams.isEmpty {
                         Button("Reset") { selectedPeopleTeams.removeAll() }

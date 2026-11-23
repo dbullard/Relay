@@ -31,6 +31,9 @@ enum ActionNodeNotifications {
     static let consoleActionFailed = Notification.Name("Relay.ActionNode.ConsoleActionFailed")
     static let conditionEvaluationResolved = Notification.Name("Relay.ActionNode.ConditionEvaluationResolved")
     static let conditionEvaluationMismatch = Notification.Name("Relay.ActionNode.ConditionEvaluationMismatch")
+    /// Posted with a `GraphActionRunStatus` (userInfo `runStatus`) when an OSC, HTTP, MIDI,
+    /// Shure or Sennheiser action starts, succeeds or fails, so its node can show the result.
+    static let runStatusChanged = Notification.Name("Relay.ActionNode.RunStatusChanged")
 }
 
 enum ActionNodeUserInfoKeys {
@@ -50,6 +53,66 @@ enum ActionNodeUserInfoKeys {
     static let selectedDeviceIDs  = "selectedDeviceIDs"
     static let errorMessage       = "errorMessage"
     static let stateJSON          = "stateJSON"
+    static let runStatus          = "runStatus"
+}
+
+// MARK: - Action run status
+
+/// What happened the last time an action node ran. Shown on the node (icon + word +
+/// message) so a send that fails isn't silent.
+enum GraphActionRunStatus: Equatable {
+    case running
+    /// The detail says what was sent, e.g. "Sent to 10.0.0.2:8000" or "HTTP 200".
+    case succeeded(String)
+    /// The message is shown on the node as-is.
+    case failed(String)
+
+    var isRunning: Bool {
+        if case .running = self { return true }
+        return false
+    }
+
+    var isFailure: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+
+    /// 2xx is success; anything else (or no response at all) is a failure.
+    static func forHTTPStatus(_ statusCode: Int) -> GraphActionRunStatus {
+        guard statusCode > 0 else { return .failed("No HTTP response") }
+        if (200..<300).contains(statusCode) {
+            return .succeeded("HTTP \(statusCode)")
+        }
+        let reason = HTTPURLResponse.localizedString(forStatusCode: statusCode)
+        return .failed("HTTP \(statusCode) (\(reason))")
+    }
+
+    /// Why an OSC Send can't run, or nil when it can.
+    static func oscPreflightFailure(host: String, port: UInt16, address: String) -> String? {
+        if host.isEmpty { return "Set a target host before sending." }
+        if port == 0 { return "Set a target port before sending." }
+        if address.isEmpty { return "Set an OSC address before sending." }
+        return nil
+    }
+
+    /// OSC is UDP: "sent" means handed to the network, never confirmed delivered.
+    static func forOSCSend(handedOff: Bool, host: String, port: UInt16) -> GraphActionRunStatus {
+        handedOff
+            ? .succeeded("Sent to \(host):\(port)")
+            : .failed("The OSC message couldn't be sent. Check the address and target.")
+    }
+
+    static func forMIDISend(sent: Bool) -> GraphActionRunStatus {
+        sent
+            ? .succeeded("Sent")
+            : .failed("The MIDI destination isn't available. Reconnect it or pick another destination.")
+    }
+
+    /// Message for a thrown error, never empty.
+    static func failureMessage(for error: Error, fallback: String) -> String {
+        let text = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? fallback : text
+    }
 }
 
 
@@ -83,6 +146,18 @@ enum GraphActionExecutor {
     private static let notifyEchoSuppressWindow: TimeInterval = 0.6
     private static var lastMidiSendByNodeId: [UUID: TimeInterval] = [:]
     private static let midiSendSuppressWindow: TimeInterval = 0.3
+
+    /// Posts a node's run status (`ActionNodeNotifications.runStatusChanged`).
+    static func reportRunStatus(_ status: GraphActionRunStatus, nodeId: UUID) {
+        NotificationCenter.default.post(
+            name: ActionNodeNotifications.runStatusChanged,
+            object: nil,
+            userInfo: [
+                ActionNodeUserInfoKeys.nodeId: nodeId,
+                ActionNodeUserInfoKeys.runStatus: status
+            ]
+        )
+    }
 
     struct ExecutionContext {
         /// Ordered candidates for Send-All (typically your liveAudioConsoles externalDeviceIds).
@@ -198,11 +273,19 @@ enum GraphActionExecutor {
 
             let trimmedHost = cfg.targetIP.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedAddress = cfg.address.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedHost.isEmpty, cfg.targetPort != 0, !trimmedAddress.isEmpty else { return }
+            if let failure = GraphActionRunStatus.oscPreflightFailure(
+                host: trimmedHost,
+                port: cfg.targetPort,
+                address: trimmedAddress
+            ) {
+                reportRunStatus(.failed(failure), nodeId: nodeId)
+                return
+            }
 
             let arguments = cfg.arguments.compactMap { $0.resolvedValue() }
             guard arguments.count == cfg.arguments.count else {
                 print("[GraphActionExecutor] OSC Send skipped: invalid argument")
+                reportRunStatus(.failed("An argument value is invalid. Fix it before sending."), nodeId: nodeId)
                 return
             }
 
@@ -218,9 +301,13 @@ enum GraphActionExecutor {
                 ]
             )
 
-            OSCManager.shared.send(
+            let handedOff = OSCManager.shared.send(
                 to: OSCEndpoint(host: trimmedHost, port: cfg.targetPort),
                 message: OSCMessage(address: trimmedAddress, args: arguments)
+            )
+            reportRunStatus(
+                .forOSCSend(handedOff: handedOff, host: trimmedHost, port: cfg.targetPort),
+                nodeId: nodeId
             )
 
         case "action.notify":
@@ -349,9 +436,18 @@ enum GraphActionExecutor {
         case "action.shureSend":
             let cfg = graph.shureSendActionConfigByNodeId[nodeId.uuidString]
                 ?? DashboardGraph.ShureSendActionConfig()
-            guard let deviceId = cfg.deviceId else { return }
-            guard let device = ExternalDevicesStore.shared.devices.first(where: { $0.id == deviceId }) else { return }
-            guard device.shureSupportsDestinationCommands else { return }
+            guard let deviceId = cfg.deviceId else {
+                reportRunStatus(.failed("Select a Shure device."), nodeId: nodeId)
+                return
+            }
+            guard let device = ExternalDevicesStore.shared.devices.first(where: { $0.id == deviceId }) else {
+                reportRunStatus(.failed("The selected Shure device no longer exists."), nodeId: nodeId)
+                return
+            }
+            guard device.shureSupportsDestinationCommands else {
+                reportRunStatus(.failed("\(device.name) doesn't accept control commands."), nodeId: nodeId)
+                return
+            }
             let shureChannelCount = device.effectiveShureChannelCount
 
             let command: String
@@ -399,7 +495,10 @@ enum GraphActionExecutor {
                         : rawName
                     return [(max(1, cfg.channelIndex), formatted)]
                 }()
-                guard !namesToSend.isEmpty else { return }
+                guard !namesToSend.isEmpty else {
+                    reportRunStatus(.failed("There's no channel name to send."), nodeId: nodeId)
+                    return
+                }
 
                 let commandsToSend: [String] = namesToSend.map { item in
                     let cappedName = item.name.count <= 8 ? item.name : String(item.name.prefix(8))
@@ -418,6 +517,7 @@ enum GraphActionExecutor {
                     #endif
                 }
 
+                reportRunStatus(.running, nodeId: nodeId)
                 Task {
                     for command in commandsToSend {
                         do {
@@ -426,33 +526,64 @@ enum GraphActionExecutor {
                             #if DEBUG
                             print("[GraphActionExecutor] Shure send failed nodeId=\(nodeId) error=\(error.localizedDescription)")
                             #endif
-                            break
+                            reportRunStatus(
+                                .failed(GraphActionRunStatus.failureMessage(for: error, fallback: "\(device.name) didn't accept the command.")),
+                                nodeId: nodeId
+                            )
+                            return
                         }
                     }
+                    let noun = commandsToSend.count == 1 ? "name" : "names"
+                    reportRunStatus(.succeeded("Sent \(commandsToSend.count) channel \(noun) to \(device.name)"), nodeId: nodeId)
                 }
                 return
             case .rawCommand:
                 let raw = (context?.renderVariableText(cfg.rawCommand) ?? cfg.rawCommand).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !raw.isEmpty else { return }
+                guard !raw.isEmpty else {
+                    reportRunStatus(.failed("Enter a command to send."), nodeId: nodeId)
+                    return
+                }
                 command = raw
             }
 
+            reportRunStatus(.running, nodeId: nodeId)
             Task {
                 do {
                     try await ShureWirelessDestinationService.sendCommand(device: device, command: command)
+                    reportRunStatus(.succeeded("Sent to \(device.name)"), nodeId: nodeId)
                 } catch {
                     #if DEBUG
                     print("[GraphActionExecutor] Shure send failed nodeId=\(nodeId) error=\(error.localizedDescription)")
                     #endif
+                    reportRunStatus(
+                        .failed(GraphActionRunStatus.failureMessage(for: error, fallback: "\(device.name) didn't accept the command.")),
+                        nodeId: nodeId
+                    )
                 }
             }
 
         case "action.sennheiserSend":
             let cfg = graph.sennheiserSendActionConfigByNodeId[nodeId.uuidString]
                 ?? DashboardGraph.SennheiserSendActionConfig()
-            guard let deviceId = cfg.deviceId else { return }
-            guard let device = ExternalDevicesStore.shared.devices.first(where: { $0.id == deviceId }) else { return }
-            guard device.sennheiserSupportsDestinationCommands else { return }
+            guard let deviceId = cfg.deviceId else {
+                reportRunStatus(.failed("Select a Sennheiser device."), nodeId: nodeId)
+                return
+            }
+            guard let device = ExternalDevicesStore.shared.devices.first(where: { $0.id == deviceId }) else {
+                reportRunStatus(.failed("The selected Sennheiser device no longer exists."), nodeId: nodeId)
+                return
+            }
+            guard device.sennheiserSupportsDestinationCommands else {
+                reportRunStatus(.failed("\(device.name) doesn't accept control commands."), nodeId: nodeId)
+                return
+            }
+            let reportSennheiserFailure: (Error) -> Void = { error in
+                reportRunStatus(
+                    .failed(GraphActionRunStatus.failureMessage(for: error, fallback: "\(device.name) didn't accept the command.")),
+                    nodeId: nodeId
+                )
+            }
+            let unsupportedMessage = "\(device.name) doesn't support this command."
 
             let model = device.sennheiserNetworkModel
             let channelCount = max(1, model?.channelCount ?? 1)
@@ -460,6 +591,7 @@ enum GraphActionExecutor {
 
             switch cfg.commandKind {
             case .advanced:
+                reportRunStatus(.running, nodeId: nodeId)
                 Task {
                     do {
                         try await SennheiserWirelessDestinationService.sendRequest(
@@ -469,10 +601,12 @@ enum GraphActionExecutor {
                             path: context?.renderVariableText(cfg.path) ?? cfg.path,
                             jsonBody: context?.renderVariableJSON(cfg.jsonBody) ?? cfg.jsonBody
                         )
+                        reportRunStatus(.succeeded("Sent to \(device.name)"), nodeId: nodeId)
                     } catch {
                         #if DEBUG
                         print("[GraphActionExecutor] Sennheiser send failed nodeId=\(nodeId) error=\(error.localizedDescription)")
                         #endif
+                        reportSennheiserFailure(error)
                     }
                 }
             case .setChannelName:
@@ -480,6 +614,7 @@ enum GraphActionExecutor {
                     #if DEBUG
                     print("[GraphActionExecutor] Sennheiser set name unsupported model=\(model?.rawValue ?? "unknown") nodeId=\(nodeId)")
                     #endif
+                    reportRunStatus(.failed(unsupportedMessage), nodeId: nodeId)
                     return
                 }
                 let linkedNames = (context?.linkedSourceTextsForDestinationNode?(nodeId, graph) ?? [])
@@ -523,18 +658,24 @@ enum GraphActionExecutor {
                         : rawName
                     return [(channel, formatted)]
                 }()
-                guard !namesToSend.isEmpty else { return }
+                guard !namesToSend.isEmpty else {
+                    reportRunStatus(.failed("There's no channel name to send."), nodeId: nodeId)
+                    return
+                }
                 let message: [String: Any] = Dictionary(uniqueKeysWithValues: namesToSend.map { item in
                     ("rx\(item.channel)", ["name": String(item.name.prefix(8))] as [String: Any])
                 })
 
+                reportRunStatus(.running, nodeId: nodeId)
                 Task {
                     do {
                         try await SennheiserWirelessDestinationService.sendSscMessage(device: device, message: message)
+                        reportRunStatus(.succeeded("Sent channel names to \(device.name)"), nodeId: nodeId)
                     } catch {
                         #if DEBUG
                         print("[GraphActionExecutor] Sennheiser set name failed nodeId=\(nodeId) error=\(error.localizedDescription)")
                         #endif
+                        reportSennheiserFailure(error)
                     }
                 }
             case .setMute:
@@ -542,17 +683,21 @@ enum GraphActionExecutor {
                     #if DEBUG
                     print("[GraphActionExecutor] Sennheiser mute unsupported model=\(model?.rawValue ?? "unknown") nodeId=\(nodeId)")
                     #endif
+                    reportRunStatus(.failed(unsupportedMessage), nodeId: nodeId)
                     return
                 }
                 let message: [String: Any] = ["rx\(channel)": ["mute": cfg.muteEnabled]]
 
+                reportRunStatus(.running, nodeId: nodeId)
                 Task {
                     do {
                         try await SennheiserWirelessDestinationService.sendSscMessage(device: device, message: message)
+                        reportRunStatus(.succeeded("Sent to \(device.name)"), nodeId: nodeId)
                     } catch {
                         #if DEBUG
                         print("[GraphActionExecutor] Sennheiser mute failed nodeId=\(nodeId) error=\(error.localizedDescription)")
                         #endif
+                        reportSennheiserFailure(error)
                     }
                 }
             case .setGain:
@@ -560,25 +705,30 @@ enum GraphActionExecutor {
                     #if DEBUG
                     print("[GraphActionExecutor] Sennheiser gain unsupported model=\(model?.rawValue ?? "unknown") nodeId=\(nodeId)")
                     #endif
+                    reportRunStatus(.failed(unsupportedMessage), nodeId: nodeId)
                     return
                 }
                 let clamped = min(42, max(-3, cfg.gainDb))
                 let stepped = (clamped / 3).rounded() * 3
                 let message: [String: Any] = ["rx\(channel)": ["gain": stepped]]
 
+                reportRunStatus(.running, nodeId: nodeId)
                 Task {
                     do {
                         try await SennheiserWirelessDestinationService.sendSscMessage(device: device, message: message)
+                        reportRunStatus(.succeeded("Sent to \(device.name)"), nodeId: nodeId)
                     } catch {
                         #if DEBUG
                         print("[GraphActionExecutor] Sennheiser gain failed nodeId=\(nodeId) error=\(error.localizedDescription)")
                         #endif
+                        reportSennheiserFailure(error)
                     }
                 }
             case .setRfMute:
                 #if DEBUG
                 print("[GraphActionExecutor] Sennheiser RF mute not supported for model=\(model?.rawValue ?? "unknown") nodeId=\(nodeId)")
                 #endif
+                reportRunStatus(.failed(unsupportedMessage), nodeId: nodeId)
             }
 
         case "action.setVariable":
@@ -604,7 +754,11 @@ enum GraphActionExecutor {
             let cfg = graph.httpRequestActionConfigByNodeId[nodeId.uuidString]
                 ?? DashboardGraph.HTTPRequestActionConfig()
             let trimmedURL = (context?.renderVariableText(cfg.urlString) ?? cfg.urlString).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedURL.isEmpty, let url = URL(string: trimmedURL) else { return }
+            guard !trimmedURL.isEmpty, let url = URL(string: trimmedURL), url.scheme != nil else {
+                let message = trimmedURL.isEmpty ? "Enter a URL before sending." : "\u{201C}\(trimmedURL)\u{201D} isn't a valid URL."
+                reportRunStatus(.failed(message), nodeId: nodeId)
+                return
+            }
 
             var request = URLRequest(url: url, timeoutInterval: max(1, cfg.timeoutSeconds))
             request.httpMethod = cfg.method.rawValue
@@ -621,13 +775,19 @@ enum GraphActionExecutor {
                 request.httpBody = body.data(using: .utf8)
             }
 
+            reportRunStatus(.running, nodeId: nodeId)
             Task {
                 do {
                     let (_, response) = try await URLSession.shared.data(for: request)
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                     context?.log("[GraphActionExecutor] HTTP \(cfg.method.rawValue) \(trimmedURL) → \(status)")
+                    reportRunStatus(.forHTTPStatus(status), nodeId: nodeId)
                 } catch {
                     context?.log("[GraphActionExecutor] HTTP request failed: \(error.localizedDescription)")
+                    reportRunStatus(
+                        .failed(GraphActionRunStatus.failureMessage(for: error, fallback: "The request failed.")),
+                        nodeId: nodeId
+                    )
                 }
             }
 
@@ -657,7 +817,10 @@ enum GraphActionExecutor {
                 let destinationLabel = cfg.destinationUniqueID.map(String.init) ?? "default"
                 let detail = midiDetailString(from: cfg)
                 print("[MIDI] Send action nodeId=\(nodeId) dest=\(destinationLabel) \(detail) bytes=\(hex)")
-                MIDISendManager.shared.send(bytes: bytes, to: cfg.destinationUniqueID)
+                let sent = MIDISendManager.shared.send(bytes: bytes, to: cfg.destinationUniqueID)
+                reportRunStatus(.forMIDISend(sent: sent), nodeId: nodeId)
+            } else {
+                reportRunStatus(.failed("There's no MIDI message to send. Check the message settings."), nodeId: nodeId)
             }
 
         default:

@@ -139,6 +139,16 @@ private var marqueeCurrent: CGPoint? {
 @State private var smartLightRunningNodeIds: Set<UUID> = []
 @State private var consoleActionErrors: [UUID: String] = [:]
 @State private var consoleActionRunningNodeIds: Set<UUID> = []
+/// Last run result per action node (OSC/HTTP/MIDI/Shure/Sennheiser), from
+/// `ActionNodeNotifications.runStatusChanged`.
+@State private var actionRunStatuses: [UUID: GraphActionRunStatus] = [:]
+/// A Test/Run waiting for a yes because Live Mode is on.
+@State private var pendingLiveConfirmation: GraphLiveConfirmation? = nil
+/// Why the last link drop was refused, shown briefly at the bottom of the canvas.
+@State private var linkRejectionMessage: String? = nil
+/// Nodes that can't receive a link from the node being dragged from; dimmed during the drag.
+@State private var linkDragIncompatibleNodeIds: Set<UUID> = []
+@Environment(\.accessibilityReduceMotion) private var reduceMotion
 @State private var conditionComparisonTextDraftByNodeId: [UUID: String] = [:]
 @State private var editingConditionComparisonNodeIds: Set<UUID> = []
 @State private var showTriggerSendMigrationAlert: Bool = false
@@ -166,6 +176,11 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
     /// so Backspace there deleted the selected node instead of a character.
     let isEnabled: () -> Bool
     let onDelete: () -> Void
+    /// ⌘A (select all) and arrow keys (nudge the selection). Checked at key time like `isEnabled`.
+    var isNavigationEnabled: () -> Bool = { false }
+    var onSelectAll: () -> Void = {}
+    /// Direction (-1/0/1 per axis) and whether Shift is held.
+    var onNudge: (_ dx: CGFloat, _ dy: CGFloat, _ shift: Bool) -> Void = { _, _, _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(isEnabled: isEnabled, onDelete: onDelete)
@@ -173,6 +188,7 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
+        context.coordinator.hostView = view
         context.coordinator.installMonitor()
         return view
     }
@@ -180,6 +196,10 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.isEnabled = isEnabled
         context.coordinator.onDelete = onDelete
+        context.coordinator.isNavigationEnabled = isNavigationEnabled
+        context.coordinator.onSelectAll = onSelectAll
+        context.coordinator.onNudge = onNudge
+        context.coordinator.hostView = nsView
         context.coordinator.installMonitor()
     }
 
@@ -190,6 +210,10 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
     final class Coordinator {
         var isEnabled: () -> Bool
         var onDelete: () -> Void
+        var isNavigationEnabled: () -> Bool = { false }
+        var onSelectAll: () -> Void = {}
+        var onNudge: (CGFloat, CGFloat, Bool) -> Void = { _, _, _ in }
+        weak var hostView: NSView?
         private var localMonitor: Any?
 
         init(isEnabled: @escaping () -> Bool, onDelete: @escaping () -> Void) {
@@ -200,13 +224,36 @@ private struct GraphDeleteKeyMonitor: NSViewRepresentable {
         func installMonitor() {
             guard localMonitor == nil else { return }
             localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.isEnabled() else { return event }
+                guard let self else { return event }
+                if self.handleNavigationKey(event) { return nil }
+                guard self.isEnabled() else { return event }
                 if event.keyCode == 51 || event.keyCode == 117 {
                     self.onDelete()
                     return nil
                 }
                 return event
             }
+        }
+
+        /// ⌘A and arrows, only for key presses in the graph's own window with no sheet up.
+        private func handleNavigationKey(_ event: NSEvent) -> Bool {
+            guard let window = hostView?.window, event.window === window,
+                  window.attachedSheet == nil, isNavigationEnabled() else { return false }
+            let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "a" {
+                onSelectAll()
+                return true
+            }
+            guard modifiers.isSubset(of: [.shift]) else { return false }
+            let shift = modifiers.contains(.shift)
+            switch event.keyCode {
+            case 123: onNudge(-1, 0, shift)
+            case 124: onNudge(1, 0, shift)
+            case 125: onNudge(0, 1, shift)
+            case 126: onNudge(0, -1, shift)
+            default: return false
+            }
+            return true
         }
 
         func removeMonitor() {
@@ -1074,6 +1121,7 @@ private func handleNodeTapSelect(_ nodeId: UUID) {
     let isShift = false
     #endif
 
+    interaction.setSelectedLinkId(nil)
     if isShift {
         if selectedGraphNodeIds.contains(nodeId) {
             selectedGraphNodeIds.remove(nodeId)
@@ -1091,7 +1139,152 @@ private func selectAllVisibleGraphNodes() {
     #else
     graphIsFocused = true
     #endif
+    interaction.setSelectedLinkId(nil)
     selectedGraphNodeIds = Set(allVisibleGraphNodeIds)
+}
+
+/// Moves the selected nodes by a keyboard step, as one undo step.
+private func nudgeSelectedGraphNodes(dx: CGFloat, dy: CGFloat) {
+    let hidden = hiddenGraphNodeIds
+    let ids = selectedGraphNodeIds.filter { !hidden.contains($0) && tab.graph?.tileLayouts[$0] != nil }
+    guard !ids.isEmpty else { return }
+    var positions: [UUID: CGPoint] = [:]
+    for id in ids {
+        let p = persistedNodePosition(for: id)
+        positions[id] = CGPoint(x: p.x + dx, y: p.y + dy)
+    }
+    commitGraphEdit(actionName: ids.count == 1 ? "Move Node" : "Move Nodes") {
+        setNodePositions(positions)
+    }
+}
+
+/// Graph step for one arrow-key press; Shift moves a full grid cell.
+private static func graphNudgeStep(shift: Bool) -> CGFloat { shift ? 40 : 10 }
+
+/// The link within a few points of `viewPoint`, if any.
+private func graphLinkHit(atViewPoint viewPoint: CGPoint) -> UUID? {
+    #if os(macOS)
+    let toleranceInView: CGFloat = 8
+    #else
+    let toleranceInView: CGFloat = 16
+    #endif
+    return GraphLinkGeometry.hitTest(
+        graphPoint(fromViewPoint: viewPoint),
+        curves: interaction.untrackedLinkCurves(),
+        tolerance: toleranceInView / max(0.0001, zoom)
+    )
+}
+
+/// Removes one link (undoable).
+private func deleteGraphLink(id: UUID) {
+    guard let link = tab.graph?.links.first(where: { $0.id == id }) else {
+        interaction.setSelectedLinkId(nil)
+        return
+    }
+    finalizePendingGraphEditUndo()
+    registerGraphUndo(actionName: "Delete Link", before: snapshotGraphForUndo())
+    tab.graph?.links.removeAll(where: { $0.id == id })
+
+    // A variable keeps its last value only while something feeds it (as removeIncomingLinks).
+    let toId = nodeIdFromPortId(link.toPortId) ?? link.toTileId
+    let stillFed = tab.graph?.links.contains(where: { (nodeIdFromPortId($0.toPortId) ?? $0.toTileId) == toId }) ?? false
+    if isVariableNodeId(toId), !stillFed, var config = tab.graph?.variableNodeConfigByNodeId[toId.uuidString] {
+        config.currentTextValue = nil
+        config.currentNumberValue = nil
+        config.currentBooleanValue = nil
+        config.lastUpdatedAt = nil
+        config.sourceNodeId = nil
+        tab.graph?.variableNodeConfigByNodeId[toId.uuidString] = config
+    }
+    if interaction.untrackedSelectedLinkId == id { interaction.setSelectedLinkId(nil) }
+    if interaction.untrackedHoveredLinkId == id { interaction.setHoveredLinkId(nil) }
+    syncAutomationRuntimeActiveTab()
+}
+
+/// Delete key: the selected link if there is one, otherwise the selected nodes.
+private func deleteGraphSelection() {
+    if let linkId = interaction.untrackedSelectedLinkId {
+        deleteGraphLink(id: linkId)
+        return
+    }
+    deleteSelectedGraphNodes()
+}
+
+/// Nodes the given node can link to, for "Connect to…" (keyboard and VoiceOver users can't drag ports).
+private func connectTargets(from sourceNodeId: UUID) -> [GraphNodeMenuTarget] {
+    let hidden = hiddenGraphNodeIds
+    return receiverCandidateNodeIds(for: sourceNodeId)
+        .filter { $0 != sourceNodeId && !hidden.contains($0) }
+        .filter { linkValidation(fromNodeId: sourceNodeId, toReceiverNodeId: $0).isAllowed }
+        .map { GraphNodeMenuTarget(id: $0, name: graphNodeDisplayName($0)) }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+}
+
+/// Links into or out of the node, for "Delete Link" in its menu.
+private func linkMenuTargets(forNodeId nodeId: UUID) -> [GraphNodeMenuTarget] {
+    guard let graph = tab.graph else { return [] }
+    return graph.links.compactMap { link in
+        let fromId = nodeIdFromPortId(link.fromPortId) ?? link.fromTileId
+        let toId = nodeIdFromPortId(link.toPortId) ?? link.toTileId
+        if fromId == nodeId {
+            return GraphNodeMenuTarget(id: link.id, name: "To \(graphNodeDisplayName(toId))")
+        }
+        if toId == nodeId {
+            return GraphNodeMenuTarget(id: link.id, name: "From \(graphNodeDisplayName(fromId))")
+        }
+        return nil
+    }
+}
+
+/// Links `sourceNodeId` to `targetNodeId` from its first output (as a drag from that port would).
+private func connectNodes(from sourceNodeId: UUID, to targetNodeId: UUID) {
+    currentRepeaterOutputIndex = 0
+    currentConditionOutputBranch = .`true`
+    currentToggleOutputIsOn = true
+    currentSequenceOutputStep = 0
+    currentSmartLightOutputKind = "success"
+    if isWordTriggerNodeId(sourceNodeId) {
+        let canonicalId = isStandaloneWordTriggerNodeId(sourceNodeId)
+            ? groupNodeId(for: "moduleGroup.transcription")
+            : sourceNodeId
+        if let firstRule = tab.graph?.wordTriggerConfigByNodeId[canonicalId.uuidString]?.rules.first {
+            currentWordTriggerRuleId = firstRule.id
+        }
+    }
+    currentButtonOutputConfigId = isMultiButtonNodeId(sourceNodeId) ? buttonsForButtonNode(sourceNodeId).first?.id : nil
+    finalizePendingGraphEditUndo()
+    let validation = linkValidation(fromNodeId: sourceNodeId, toReceiverNodeId: targetNodeId)
+    commitLinkDrop(fromNodeId: sourceNodeId, hit: LinkReceiverHit(nodeId: targetNodeId, validation: validation))
+    currentButtonOutputConfigId = nil
+    AccessibilityNotification.Announcement("Linked \(graphNodeDisplayName(sourceNodeId)) to \(graphNodeDisplayName(targetNodeId))").post()
+}
+
+/// "Connect to…" and "Delete Link" for a node's context menu. The menus build their
+/// items only when opened.
+@ViewBuilder
+private func graphNodeLinkMenuItems(nodeId: UUID) -> some View {
+    Menu("Connect to\u{2026}") {
+        GraphNodeMenuTargetList(
+            emptyText: "No compatible nodes",
+            targets: { connectTargets(from: nodeId) },
+            onSelect: { connectNodes(from: nodeId, to: $0) }
+        )
+    }
+    Menu("Delete Link") {
+        GraphNodeMenuTargetList(
+            emptyText: "No links",
+            targets: { linkMenuTargets(forNodeId: nodeId) },
+            onSelect: { deleteGraphLink(id: $0) }
+        )
+    }
+}
+
+/// VoiceOver/keyboard path to connecting nodes: a "Connect to …" action per compatible node.
+private func nodeConnectAccessibility(_ nodeId: UUID) -> GraphNodeConnectAccessibility {
+    GraphNodeConnectAccessibility(
+        targets: { connectTargets(from: nodeId) },
+        onConnect: { connectNodes(from: nodeId, to: $0) }
+    )
 }
 
 private var hiddenGraphNodeIds: Set<UUID> {
@@ -2952,10 +3145,7 @@ private func graphSceneView(
         showAddNodePopover: $showAddNodePopover,
         interaction: interaction,
         onBackgroundDoubleTap: {
-            graphIsFocused = true
-            addNodeSearchText = ""
-            addNodeSelectedCategory = "All"
-            showAddNodePopover = true
+            openAddNodeOverlay()
         }
     ) {
         // Keep the viewport region stable and only transform the graph content inside it.
@@ -3007,6 +3197,7 @@ private func graphSceneView(
                     DispatchQueue.main.async {
                         graphIsFocused = true
                     }
+                    interaction.setSelectedLinkId(nil)
                     isMarqueeSelecting = true
                     marqueeStart = startView
                     marqueeCurrent = startView
@@ -3055,8 +3246,12 @@ private func graphSceneView(
                 }
                 if tappedNode { return }
                 selectedGraphNodeIds.removeAll()
+                // A click on a wire (within a few points) selects it; Delete removes it.
+                interaction.setSelectedLinkId(graphLinkHit(atViewPoint: value.location))
                 #if os(macOS)
                 focusGraphSurface()
+                #else
+                graphIsFocused = true
                 #endif
             }
     )
@@ -3064,6 +3259,10 @@ private func graphSceneView(
         GraphMarqueeOverlay(store: interaction)
             .zIndex(900)
     }
+    .overlay {
+        GraphSelectedLinkOverlay(store: interaction, onDelete: { deleteGraphLink(id: $0) })
+    }
+    .overlay(alignment: .bottom) { linkRejectionToast }
     .overlay { automationEmptyStateOverlay }
 
     // Hoist complex onChange expressions into simple locals to help the type-checker.
@@ -3230,6 +3429,10 @@ private func applyGraphLifecycle<Content: View>(
         let message = ui[ActionNodeUserInfoKeys.errorMessage] as? String
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         conditionMismatchErrors[id] = trimmed?.isEmpty == false ? trimmed : "Operator doesn't apply to this value type"
+    }
+    .onReceive(NotificationCenter.default.publisher(for: ActionNodeNotifications.runStatusChanged)) { note in
+        guard isWorkEnabled else { return }
+        handleActionRunStatus(note)
     }
     .onReceive(NotificationCenter.default.publisher(for: ActionNodeNotifications.consoleActionStarted)) { note in
         guard isWorkEnabled else { return }
@@ -3692,7 +3895,19 @@ private func syncConditionComparisonTextDraft(forNodeId nodeId: UUID, config: Da
 
 #if os(macOS)
 private func shouldHandleGraphDeleteKey() -> Bool {
-    !selectedGraphNodeIds.isEmpty && !showAddNodePopover && !isGraphTextInputActive()
+    (!selectedGraphNodeIds.isEmpty || interaction.untrackedSelectedLinkId != nil)
+        && !showAddNodePopover && !isGraphTextInputActive()
+}
+
+/// ⌘A and arrow keys act on the graph only while its surface has focus (not a node control).
+private func shouldHandleGraphNavigationKey() -> Bool {
+    graphIsFocused && !showAddNodePopover && !isGraphTextInputActive()
+}
+#else
+/// Only while the graph surface itself has focus, so keys typed into a node's text field
+/// (a focused descendant) never delete or move nodes.
+private func shouldHandleGraphKeyboardCommand() -> Bool {
+    graphIsFocused && !showAddNodePopover
 }
 #endif
 
@@ -3740,7 +3955,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
     let title = DashboardActionDescriptor.title(for: key)
     let subtitle = DashboardActionDescriptor.subtitle(for: key)
 
-    let onRun: () -> Void = {
+    let runNow: () -> Void = {
         if key == "action.proPresenterTrigger" {
             proPresenterTriggerErrors.removeValue(forKey: nodeId)
         }
@@ -3752,8 +3967,21 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
             smartLightErrors.removeValue(forKey: nodeId)
             smartLightRunningNodeIds.insert(nodeId)
         }
+        actionRunStatuses.removeValue(forKey: nodeId)
         runActionNode(nodeId: nodeId, key: key)
     }
+    let onRun: () -> Void = {
+        guard Self.liveGuardedActionKeys.contains(key) else {
+            runNow()
+            return
+        }
+        confirmIfLive(
+            title: "Run \u{201C}\(title)\u{201D} in Live Mode?",
+            message: "Live Mode is on. This sends to \(liveRunTargetDescription(nodeId: nodeId, key: key)) now.",
+            action: runNow
+        )
+    }
+    let runStatus = actionRunStatuses[nodeId]
 
     let isSelected = selectedGraphNodeIds.contains(nodeId)
     let isHoverReceiver = (hoverReceiverNodeId == nodeId)
@@ -3868,6 +4096,8 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                     warningStyle: warningStyle,
                     isRunning: isAppControlRunning,
                     onDismissWarning: dismissWarning,
+                    runStatus: runStatus,
+                    onDismissRunStatus: { actionRunStatuses.removeValue(forKey: nodeId) },
                     isSelected: isSelected,
                     isHoverReceiver: isHoverReceiver,
                     isLinkingTarget: isLinkingTarget,
@@ -4971,7 +5201,10 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
                 systemImage: DashboardActionDescriptor.systemImage(for: key),
                 accent: category.accentColor,
                 width: senderNodeWidth,
-                detail: warningText ?? subtitle,
+                detail: {
+                    if case .failed(let message) = runStatus { return "Failed: \(message)" }
+                    return warningText ?? subtitle
+                }(),
                 fullHeight: measuredNodeSizes[nodeId]?.height
             )
         }
@@ -4987,6 +5220,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
         }
         .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
+        .modifier(nodeConnectAccessibility(nodeId))
         .contextMenu {
             Button("Duplicate Node") {
                 if !selectedGraphNodeIds.contains(nodeId) {
@@ -4996,6 +5230,7 @@ private func actionGraphOnlyNodeView(nodeId: UUID, key: String) -> some View {
             }
 
             Divider()
+            graphNodeLinkMenuItems(nodeId: nodeId)
             Button("Clear Links") {
                 removeIncomingLinks(toNodeId: nodeId)
                 removeOutgoingLinks(fromNodeId: nodeId)
@@ -5104,7 +5339,15 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
         isHoverReceiver: isHoverReceiver,
         isLinkingTarget: isLinkingTarget,
         onTapSelect: { handleNodeTapSelect(nodeId) },
-        onRun: { runDelayNode(nodeId: nodeId) },
+        onRun: {
+            let downstream = tab.graph.map { actionsDownstream(ofDelay: nodeId, graph: $0) } ?? []
+            confirmIfLive(
+                title: "Run \u{201C}Delay\u{201D} in Live Mode?",
+                message: liveDownstreamActionsMessage(downstream)
+            ) {
+                runDelayNode(nodeId: nodeId)
+            }
+        },
         onOutputDragChanged: { value in
             handleDelayOutputDragChanged(nodeId: nodeId, value: value)
         },
@@ -5138,6 +5381,7 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
         }
         .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
+        .modifier(nodeConnectAccessibility(nodeId))
         .contextMenu {
             Button("Duplicate Node") {
                 if !selectedGraphNodeIds.contains(nodeId) {
@@ -5147,6 +5391,7 @@ private func delayGraphOnlyNodeView(nodeId: UUID) -> some View {
             }
 
             Divider()
+            graphNodeLinkMenuItems(nodeId: nodeId)
             Button("Clear Links") {
                 removeIncomingLinks(toNodeId: nodeId)
                 removeOutgoingLinks(fromNodeId: nodeId)
@@ -5200,7 +5445,14 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         isHoverReceiver: isHoverReceiver,
         isLinkingTarget: isLinkingTarget,
         onTapSelect: { handleNodeTapSelect(nodeId) },
-        onRun: { GraphAutomationRuntime.shared.debugRunConditionNode(nodeId: nodeId) },
+        onRun: {
+            confirmIfLive(
+                title: "Run \u{201C}Condition\u{201D} in Live Mode?",
+                message: "Live Mode is on. Actions connected to the matching branch run now."
+            ) {
+                GraphAutomationRuntime.shared.debugRunConditionNode(nodeId: nodeId)
+            }
+        },
         onOutputDragChanged: { branch, value in
             handleConditionOutputDragChanged(nodeId: nodeId, branch: branch, value: value)
         },
@@ -5356,6 +5608,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
         }
         .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
+        .modifier(nodeConnectAccessibility(nodeId))
         .contextMenu {
             Button("Duplicate Node") {
                 if !selectedGraphNodeIds.contains(nodeId) {
@@ -5365,6 +5618,7 @@ private func conditionGraphOnlyNodeView(nodeId: UUID) -> some View {
             }
 
             Divider()
+            graphNodeLinkMenuItems(nodeId: nodeId)
             Button("Clear Links") {
                 removeIncomingLinks(toNodeId: nodeId)
                 removeOutgoingLinks(fromNodeId: nodeId)
@@ -5440,7 +5694,15 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
         isHoverReceiver: isHoverReceiver,
         isLinkingTarget: isLinkingTarget,
         onTapSelect: { handleNodeTapSelect(nodeId) },
-        onRun: { runRepeaterNode(nodeId: nodeId) },
+        onRun: {
+            let downstream = tab.graph.map { actionsDownstream(ofRepeater: nodeId, graph: $0) } ?? []
+            confirmIfLive(
+                title: "Run \u{201C}Repeater\u{201D} in Live Mode?",
+                message: liveDownstreamActionsMessage(downstream)
+            ) {
+                runRepeaterNode(nodeId: nodeId)
+            }
+        },
         onOutputDragChanged: { index, value in
             handleRepeaterOutputDragChanged(nodeId: nodeId, index: index, total: outputCount, value: value)
         },
@@ -5496,6 +5758,7 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
         }
         .modifier(nodePositioner(nodeId))
         .gesture(nodeDragGesture(tileId: nodeId))
+        .modifier(nodeConnectAccessibility(nodeId))
         .contextMenu {
             Button("Duplicate Node") {
                 if !selectedGraphNodeIds.contains(nodeId) {
@@ -5505,6 +5768,7 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
             }
 
             Divider()
+            graphNodeLinkMenuItems(nodeId: nodeId)
             Button("Clear Links") {
                 removeIncomingLinks(toNodeId: nodeId)
                 removeOutgoingLinks(fromNodeId: nodeId)
@@ -5541,18 +5805,121 @@ private func repeaterGraphOnlyNodeView(nodeId: UUID) -> some View {
             Image(systemName: tab.automationMode == .universal ? "link" : "lock")
                 .font(.system(size: 22))
                 .foregroundStyle(Color.white.opacity(0.5))
+                .allowsHitTesting(false)
             Text(tab.automationMode == .universal
                  ? "This automation is shared by all tabs."
                  : "This automation runs only on \u{201C}\(tab.name)\u{201D}.")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Color.white.opacity(0.85))
-            Text("Add a trigger to get started.")
-                .font(.system(size: 12))
-                .foregroundStyle(Color.white.opacity(0.5))
+                .allowsHitTesting(false)
+            Group {
+                #if os(macOS)
+                Text("Add a trigger to get started: double-click the canvas or use Add Node.")
+                #else
+                Text("Add a trigger to get started: double-tap the canvas or use Add Node.")
+                #endif
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Color.white.opacity(0.6))
+            .multilineTextAlignment(.center)
+            .allowsHitTesting(false)
+            Button {
+                openAddNodeOverlay()
+            } label: {
+                Label("Add Node", systemImage: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: graphMinimumHitTarget)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.white)
+            .background(Capsule().fill(Color.accentColor.opacity(0.85)))
+            .padding(.top, 6)
+            .disabled(!isWorkEnabled)
         }
         .padding(20)
-        .allowsHitTesting(false)
     }
+}
+
+private func openAddNodeOverlay() {
+    guard isWorkEnabled, !showAddNodePopover else { return }
+    graphIsFocused = true
+    addNodeSearchText = ""
+    addNodeSelectedCategory = "All"
+    showAddNodePopover = true
+}
+
+/// Brief note at the bottom of the canvas saying why a link drop was refused.
+@ViewBuilder private var linkRejectionToast: some View {
+    if let message = linkRejectionMessage {
+        HStack(spacing: 8) {
+            Image(systemName: "nosign")
+                .foregroundStyle(Color.red)
+                .accessibilityHidden(true)
+            Text("Can\u{2019}t link: \(message)")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.white)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(Color.black.opacity(0.85)))
+        .overlay(Capsule().stroke(Color.red.opacity(0.6), lineWidth: 1))
+        .padding(.bottom, 64)
+        .transition(.opacity)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private func showLinkRejection(_ message: String) {
+    withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0)) {
+        linkRejectionMessage = message
+    }
+    AccessibilityNotification.Announcement("Can\u{2019}t link: \(message)").post()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+        guard linkRejectionMessage == message else { return }
+        withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0)) {
+            linkRejectionMessage = nil
+        }
+    }
+}
+
+/// Adds the link if the drop target accepts it; otherwise says why it was refused.
+private func commitLinkDrop(fromNodeId: UUID, hit: LinkReceiverHit?) {
+    guard let hit else { return }
+    if hit.validation.isAllowed {
+        addOrReplaceLink(fromNodeId: fromNodeId, toReceiverNodeId: hit.nodeId)
+    } else if let reason = hit.validation.failureReason {
+        showLinkRejection(reason.message(
+            sourceName: graphNodeDisplayName(fromNodeId),
+            receiverName: graphNodeDisplayName(hit.nodeId)
+        ))
+    }
+}
+
+/// Name for a node in menus and messages ("OSC Send", a console's name, a trigger's name).
+private func graphNodeDisplayName(_ nodeId: UUID) -> String {
+    if let device = consoleDevice(forNodeId: nodeId) {
+        return device.name.isEmpty ? "Audio Console" : device.name
+    }
+    if isVistaNodeId(nodeId), let device = vistaDevice(forNodeId: nodeId) {
+        return device.name.isEmpty ? "Vista" : device.name
+    }
+    if isTriggerNodeId(nodeId) {
+        return displayNameForTriggerNode(nodeId)
+    }
+    if let inst = tab.graph?.moduleGroupNodeInstances.first(where: { $0.id == nodeId }) {
+        if inst.groupKey.hasPrefix("action.") {
+            return DashboardActionDescriptor.title(for: inst.groupKey)
+        }
+        return groupTitle(for: inst.groupKey)
+    }
+    if let group = computedModuleGroups().first(where: { groupNodeId(for: $0.key) == nodeId }) {
+        return group.title
+    }
+    return "Node"
 }
 
 var body: some View {
@@ -5587,18 +5954,48 @@ var body: some View {
             .focusEffectDisabled(true)
             .onDeleteCommand {
                 guard shouldHandleGraphDeleteKey() else { return }
-                deleteSelectedGraphNodes()
+                deleteGraphSelection()
             }
             .background(
                 GraphDeleteKeyMonitor(
                     isEnabled: { shouldHandleGraphDeleteKey() },
-                    onDelete: deleteSelectedGraphNodes
+                    onDelete: deleteGraphSelection,
+                    isNavigationEnabled: { shouldHandleGraphNavigationKey() },
+                    onSelectAll: selectAllVisibleGraphNodes,
+                    onNudge: { dx, dy, shift in
+                        let step = Self.graphNudgeStep(shift: shift)
+                        nudgeSelectedGraphNodes(dx: dx * step, dy: dy * step)
+                    }
                 )
             )
+            #else
+            // iPad with a hardware keyboard: Delete, ⌘A and arrow-key nudge.
+            .onKeyPress(keys: [.delete, .deleteForward]) { _ in
+                guard shouldHandleGraphKeyboardCommand(),
+                      !selectedGraphNodeIds.isEmpty || interaction.untrackedSelectedLinkId != nil else { return .ignored }
+                deleteGraphSelection()
+                return .handled
+            }
+            .onKeyPress(characters: CharacterSet(charactersIn: "aA"), phases: .down) { press in
+                guard press.modifiers.contains(.command), shouldHandleGraphKeyboardCommand() else { return .ignored }
+                selectAllVisibleGraphNodes()
+                return .handled
+            }
+            .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow], phases: [.down, .repeat]) { press in
+                guard shouldHandleGraphKeyboardCommand(), !selectedGraphNodeIds.isEmpty else { return .ignored }
+                let step = Self.graphNudgeStep(shift: press.modifiers.contains(.shift))
+                switch press.key {
+                case .upArrow: nudgeSelectedGraphNodes(dx: 0, dy: -step)
+                case .downArrow: nudgeSelectedGraphNodes(dx: 0, dy: step)
+                case .leftArrow: nudgeSelectedGraphNodes(dx: -step, dy: 0)
+                default: nudgeSelectedGraphNodes(dx: step, dy: 0)
+                }
+                return .handled
+            }
+            #endif
             .onReceive(NotificationCenter.default.publisher(for: .duplicateGraphNodesRequested)) { _ in
                 duplicateSelectedGraphNodes()
             }
-            #endif
         }
         .onAppear {
             _ = installSendAllListenerIfNeeded()
@@ -5645,6 +6042,9 @@ var body: some View {
         }
         .onChange(of: tab.graph?.links, initial: false) { _, _ in
             refreshSendAllListenerForGraphChange()
+        }
+        .onChange(of: linkingFromNodeId, initial: false) { _, fromNodeId in
+            linkDragIncompatibleNodeIds = fromNodeId.map { incompatibleReceiverNodeIds(for: $0) } ?? []
         }
         .onChange(of: tab.graph?.nodeIdByPortId.count ?? 0, initial: false) { _, _ in
             refreshSendAllListenerForGraphChange()
@@ -5698,6 +6098,7 @@ var body: some View {
         } message: {
             Text("Your trigger-to-console send settings have moved to the console node. Please reconfigure your trigger bindings on each console node in the Automation view.")
         }
+        .graphLiveConfirmationDialog($pendingLiveConfirmation)
     }
 }
 
@@ -5758,8 +6159,13 @@ private func addNodePopover(in canvasSize: CGSize, currentGroups: [ModuleGroup])
                     Image(systemName: "xmark.circle.fill")
                         .imageScale(.medium)
                         .opacity(0.75)
+                        .frame(minWidth: graphMinimumHitTarget, minHeight: graphMinimumHitTarget)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("Close")
+                .help("Close (Esc)")
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -5773,6 +6179,16 @@ private func addNodePopover(in canvasSize: CGSize, currentGroups: [ModuleGroup])
                 TextField("Search nodes", text: $addNodeSearchText)
                     .textFieldStyle(.plain)
                     .focused($addNodeSearchIsFocused)
+                    .onSubmit {
+                        // Return adds the top result.
+                        if let first = candidates.first {
+                            handleAddNodeSelection(first, canvasSize: canvasSize)
+                        }
+                    }
+                    .onKeyPress(.escape) {
+                        showAddNodePopover = false
+                        return .handled
+                    }
 
                 if !addNodeSearchText.isEmpty {
                     Button { addNodeSearchText = "" } label: {
@@ -6013,7 +6429,8 @@ private func canvasBackedModuleGroupNodeView(
                                 Rectangle()
                                     .fill(Color.clear)
                                     .frame(width: 26, height: 20)
-                                    .contentShape(Rectangle())
+                                    .contentShape(GraphPortHitShape())
+                                    .graphPortHoverFeedback()
                                     .highPriorityGesture(
                                         DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
                                             .onChanged { handleWordTriggerOutputDragChanged(nodeId: nodeId, ruleId: rule.id, ruleIndex: index, total: max(1, rules.count), value: $0) }
@@ -6037,7 +6454,8 @@ private func canvasBackedModuleGroupNodeView(
                     Rectangle()
                         .fill(Color.clear)
                         .frame(width: 26, height: 26)
-                        .contentShape(Rectangle())
+                        .contentShape(GraphPortHitShape(maxHeight: 44))
+                        .graphPortHoverFeedback()
                         .highPriorityGesture(linkDragGestureFromSenderNub(nodeId: nodeId))
                         .accessibilityLabel("Link output")
                     Circle()
@@ -6055,7 +6473,9 @@ private func canvasBackedModuleGroupNodeView(
             TapGesture().onEnded { handleNodeTapSelect(nodeId) }
         )
         .gesture(nodeDragGesture(tileId: nodeId))
+        .modifier(nodeConnectAccessibility(nodeId))
         .contextMenu {
+            graphNodeLinkMenuItems(nodeId: nodeId)
             Button("Clear Links") {
                 removeOutgoingLinks(fromNodeId: nodeId)
             }
@@ -6102,7 +6522,8 @@ private func graphOnlyModuleGroupOutputNubs(nodeId: UUID, key: String) -> some V
                     Rectangle()
                         .fill(Color.clear)
                         .frame(width: 26, height: 20)
-                        .contentShape(Rectangle())
+                        .contentShape(GraphPortHitShape())
+                        .graphPortHoverFeedback()
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
                                 .onChanged { handleToggleOutputDragChanged(nodeId: nodeId, isOn: isOn, value: $0) }
@@ -6127,7 +6548,8 @@ private func graphOnlyModuleGroupOutputNubs(nodeId: UUID, key: String) -> some V
                     Rectangle()
                         .fill(Color.clear)
                         .frame(width: 26, height: 20)
-                        .contentShape(Rectangle())
+                        .contentShape(GraphPortHitShape())
+                        .graphPortHoverFeedback()
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
                                 .onChanged { handleSequenceOutputDragChanged(nodeId: nodeId, step: step, total: total, value: $0) }
@@ -6157,7 +6579,8 @@ private func graphOnlyModuleGroupOutputNubs(nodeId: UUID, key: String) -> some V
                         Rectangle()
                             .fill(Color.clear)
                             .frame(width: 26, height: 20)
-                            .contentShape(Rectangle())
+                            .contentShape(GraphPortHitShape())
+                            .graphPortHoverFeedback()
                             .highPriorityGesture(
                                 DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
                                     .onChanged { handleWordTriggerOutputDragChanged(nodeId: canonicalId, ruleId: rule.id, ruleIndex: index, total: total, value: $0) }
@@ -6195,7 +6618,8 @@ private func graphOnlyModuleGroupOutputNubs(nodeId: UUID, key: String) -> some V
                         Rectangle()
                             .fill(Color.clear)
                             .frame(width: 26, height: 20)
-                            .contentShape(Rectangle())
+                            .contentShape(GraphPortHitShape())
+                            .graphPortHoverFeedback()
                             .highPriorityGesture(
                                 DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
                                     .onChanged { handleButtonOutputDragChanged(nodeId: nodeId, buttonIndex: index, buttons: buttons, value: $0) }
@@ -6218,7 +6642,8 @@ private func graphOnlyModuleGroupOutputNubs(nodeId: UUID, key: String) -> some V
         Rectangle()
             .fill(Color.clear)
             .frame(width: 26, height: 26)
-            .contentShape(Rectangle())
+            .contentShape(GraphPortHitShape(maxHeight: 44))
+            .graphPortHoverFeedback()
             .highPriorityGesture(linkDragGestureFromSenderNub(nodeId: nodeId))
             .accessibilityLabel("Link output")
 
@@ -6304,6 +6729,7 @@ private func graphOnlyModuleGroupNodeView(
             TapGesture().onEnded { handleNodeTapSelect(nodeId) }
         )
         .gesture(nodeDragGesture(tileId: nodeId))
+        .modifier(nodeConnectAccessibility(nodeId))
         .contextMenu {
             let isButtonTrigger = key == DashboardGraph.buttonTriggerGroupKey
 
@@ -6316,6 +6742,7 @@ private func graphOnlyModuleGroupNodeView(
             .disabled(isButtonTrigger)
 
             Divider()
+            graphNodeLinkMenuItems(nodeId: nodeId)
             Button("Clear Links") {
                 removeIncomingLinks(toNodeId: nodeId)
                 removeOutgoingLinks(fromNodeId: nodeId)
@@ -6619,8 +7046,9 @@ private func autoAssignedConsoleChannels(
 
 private func handleConsoleAutoAssign(deviceId: UUID, members: [ModuleMember]) -> [String: Int] {
     guard let device = ExternalDevicesStore.shared.devices.first(where: { $0.id == deviceId }) else { return [:] }
+    let previous = device.consoleChannelAssignments
     let assignments = autoAssignedConsoleChannels(
-        startingWith: device.consoleChannelAssignments,
+        startingWith: previous,
         config: device,
         members: members
     )
@@ -6628,14 +7056,44 @@ private func handleConsoleAutoAssign(deviceId: UUID, members: [ModuleMember]) ->
     ExternalDevicesStore.shared.updateDevice(id: deviceId) { cfg in
         cfg.consoleChannelAssignments = assignments
     }
+    if assignments != previous {
+        registerConsoleAssignmentsUndo(actionName: "Auto-Assign Channels", deviceId: deviceId, previous: previous)
+    }
 
     return assignments
 }
 
 private func handleConsoleClearAssignments(deviceId: UUID) {
+    let previous = ExternalDevicesStore.shared.devices.first(where: { $0.id == deviceId })?.consoleChannelAssignments ?? [:]
     ExternalDevicesStore.shared.updateDevice(id: deviceId) { cfg in
         cfg.consoleChannelAssignments.removeAll()
     }
+    if !previous.isEmpty {
+        registerConsoleAssignmentsUndo(actionName: "Clear Channel Assignments", deviceId: deviceId, previous: previous)
+    }
+}
+
+/// Channel assignments live on the device (ExternalDevicesStore), outside the graph's own
+/// undo snapshots, so Auto and Clear register their own step on the same undo manager.
+private func registerConsoleAssignmentsUndo(actionName: String, deviceId: UUID, previous: [String: Int]) {
+    finalizePendingGraphEditUndo()
+    undoProxy.registerValueUndo(actionName: actionName, previous: previous, undoManager: undoManager) { value in
+        Self.replaceConsoleAssignments(value, deviceId: deviceId)
+    }
+}
+
+/// Installs `assignments` on the device, tells its console node, and returns what it replaced.
+private static func replaceConsoleAssignments(_ assignments: [String: Int], deviceId: UUID) -> [String: Int] {
+    let replaced = ExternalDevicesStore.shared.devices.first(where: { $0.id == deviceId })?.consoleChannelAssignments ?? [:]
+    ExternalDevicesStore.shared.updateDevice(id: deviceId) { cfg in
+        cfg.consoleChannelAssignments = assignments
+    }
+    NotificationCenter.default.post(
+        name: .graphConsoleAssignmentsReplaced,
+        object: deviceId,
+        userInfo: ["assignments": assignments]
+    )
+    return replaced
 }
 
 private func handleConsoleNameFormat(deviceId: UUID, format: String) {
@@ -6941,6 +7399,7 @@ private func consoleNodeView(
         TapGesture().onEnded { handleNodeTapSelect(nodeId) }
     )
     .gesture(nodeDragGesture(tileId: nodeId))
+    .modifier(nodeConnectAccessibility(nodeId))
     .contextMenu {
         Button("Duplicate Node") {
             if !selectedGraphNodeIds.contains(nodeId) {
@@ -6950,6 +7409,7 @@ private func consoleNodeView(
         }
 
         Divider()
+        graphNodeLinkMenuItems(nodeId: nodeId)
         Button("Clear Links") {
             removeIncomingLinks(toNodeId: nodeId)
             removeOutgoingLinks(fromNodeId: nodeId)
@@ -7003,6 +7463,7 @@ private func missingConsoleNodeView(nodeId: UUID) -> some View {
     .modifier(nodePositioner(nodeId))
     .simultaneousGesture(TapGesture().onEnded { handleNodeTapSelect(nodeId) })
     .gesture(nodeDragGesture(tileId: nodeId))
+    .modifier(nodeConnectAccessibility(nodeId))
     .contextMenu {
         Button("Duplicate Node") {
             if !selectedGraphNodeIds.contains(nodeId) {
@@ -7012,6 +7473,7 @@ private func missingConsoleNodeView(nodeId: UUID) -> some View {
         }
 
         Divider()
+        graphNodeLinkMenuItems(nodeId: nodeId)
         Button("Clear Links") {
             removeIncomingLinks(toNodeId: nodeId)
             removeOutgoingLinks(fromNodeId: nodeId)
@@ -7241,6 +7703,7 @@ private func vistaNodeView(nodeId: UUID, pos: CGPoint) -> some View {
     .modifier(nodePositioner(nodeId))
     .simultaneousGesture(TapGesture().onEnded { handleNodeTapSelect(nodeId) })
     .gesture(nodeDragGesture(tileId: nodeId))
+    .modifier(nodeConnectAccessibility(nodeId))
     .contextMenu {
         Button("Duplicate Node") {
             if !selectedGraphNodeIds.contains(nodeId) {
@@ -7250,6 +7713,7 @@ private func vistaNodeView(nodeId: UUID, pos: CGPoint) -> some View {
         }
 
         Divider()
+        graphNodeLinkMenuItems(nodeId: nodeId)
         Button("Clear Links") {
             removeIncomingLinks(toNodeId: nodeId)
             removeOutgoingLinks(fromNodeId: nodeId)
@@ -7644,10 +8108,12 @@ private func consoleTriggerSendConfigBinding(forConsoleNodeId nodeId: UUID) -> B
                 positions[fromId] = fromLayout.position.cgPoint
                 positions[toId] = toLayout.position.cgPoint
                 specs.append(GraphLinkSpec(
+                    linkId: link.id,
                     fromNodeId: fromId,
                     fromOffset: senderNubCenter(for: link, nodeId: fromId),
                     toNodeId: toId,
-                    toOffset: receiverNubCenter(for: toId)
+                    toOffset: receiverNubCenter(for: toId),
+                    isEventFlow: link.kind == .automation
                 ))
             }
         }
@@ -7670,13 +8136,18 @@ private func consoleTriggerSendConfigBinding(forConsoleNodeId nodeId: UUID) -> B
             )
         }
 
+        // Cached for click hit-testing and the selected-link toolbar (not observed).
+        interaction.linkHitSpecs = specs
+        interaction.linkHitPositions = positions
+
         return GraphLinksCanvasView(
             links: specs,
             pendingLink: pending,
             persistedPositions: positions,
             store: interaction,
             size: size,
-            drawPadding: canvasDrawPadding
+            drawPadding: canvasDrawPadding,
+            onDeleteLink: { deleteGraphLink(id: $0) }
         )
         .equatable()
     }
@@ -8062,8 +8533,33 @@ private func setLinkHoverState(_ hit: LinkReceiverHit?) {
 
 @ViewBuilder
 private func invalidLinkHoverOverlay(for nodeId: UUID) -> some View {
-    RoundedRectangle(cornerRadius: 14)
-        .stroke(hoverInvalidReceiverNodeId == nodeId ? Color.red.opacity(0.9) : Color.clear, lineWidth: 2)
+    let isInvalidHover = hoverInvalidReceiverNodeId == nodeId
+    // During a link drag, nodes that can't take the link are dimmed so valid targets stand out.
+    let isDimmed = linkingFromNodeId != nil && linkDragIncompatibleNodeIds.contains(nodeId)
+    ZStack(alignment: .top) {
+        RoundedRectangle(cornerRadius: 14)
+            .fill(Color.black.opacity(isDimmed ? 0.5 : 0))
+        RoundedRectangle(cornerRadius: 14)
+            .stroke(isInvalidHover ? Color.red.opacity(0.9) : Color.clear, lineWidth: 2)
+        if isInvalidHover {
+            Label("Can\u{2019}t link here", systemImage: "nosign")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.red.opacity(0.85)))
+                .offset(y: -12)
+        }
+    }
+    .allowsHitTesting(false)
+}
+
+/// Every link-accepting node that can't take a link from `sourceNodeId`.
+private func incompatibleReceiverNodeIds(for sourceNodeId: UUID) -> Set<UUID> {
+    let compatible = Set(receiverCandidateNodeIds(for: sourceNodeId).filter {
+        linkValidation(fromNodeId: sourceNodeId, toReceiverNodeId: $0).isAllowed
+    })
+    return Set(allVisibleGraphNodeIds).subtracting(compatible).subtracting([sourceNodeId])
 }
 
 private var graphLinkFeatureFlags: GraphLinkFeatureFlags {
@@ -8242,18 +8738,26 @@ private func distanceSquared(from point: CGPoint, to rect: CGRect) -> CGFloat {
 private func receiverNodeHitTest(at viewPoint: CGPoint, fromNodeId: UUID? = nil) -> LinkReceiverHit? {
     let graphPointValue = graphPoint(fromViewPoint: viewPoint)
     let candidates = receiverCandidateNodeIds(for: fromNodeId)
-    guard !candidates.isEmpty else { return nil }
 
-    var best: (id: UUID, dist2: CGFloat)? = nil
-    for id in candidates {
-        let dist2 = distanceSquared(from: graphPointValue, to: receiverHitTestRect(for: id))
-        if best == nil || dist2 < best!.dist2 {
-            best = (id, dist2)
+    func nearest(_ ids: [UUID]) -> (id: UUID, dist2: CGFloat)? {
+        var best: (id: UUID, dist2: CGFloat)? = nil
+        for id in ids {
+            let dist2 = distanceSquared(from: graphPointValue, to: receiverHitTestRect(for: id))
+            if best == nil || dist2 < best!.dist2 {
+                best = (id, dist2)
+            }
         }
+        return best
     }
 
     // Use a small outer snap margin around the receiver-side hotspot.
     let snapMargin: CGFloat = 12
+    var best = nearest(candidates)
+    if fromNodeId != nil, best.map({ $0.dist2 > snapMargin * snapMargin }) ?? true {
+        // Not over a compatible receiver: report an incompatible one, so the drag turns red
+        // over it and a drop says why it was refused.
+        best = nearest(receiverCandidateNodeIds(for: nil).filter { !candidates.contains($0) })
+    }
     if let best, best.dist2 <= snapMargin * snapMargin {
         let validation: GraphLinkValidation
         if let fromNodeId {
@@ -8297,8 +8801,8 @@ private func linkDragGestureFromSender(nodeId: UUID) -> some Gesture {
             guard let fromNode = linkingFromNodeId else { return }
             let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
 
-            if let hit, hit.validation.isAllowed {
-                addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
+            if let hit {
+                commitLinkDrop(fromNodeId: fromNode, hit: hit)
             } else {
                 // Dropped on empty space: treat as "unlatch" for this sender.
                 removeOutgoingLinks(fromNodeId: fromNode)
@@ -8330,9 +8834,7 @@ private func linkDragGestureFromSenderNub(nodeId: UUID) -> some Gesture {
             guard let fromNode = linkingFromNodeId else { return }
             let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
 
-            if let hit, hit.validation.isAllowed {
-                addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
-            }
+            commitLinkDrop(fromNodeId: fromNode, hit: hit)
         }
 }
 
@@ -8371,9 +8873,7 @@ private func handleRepeaterOutputDragEnded(nodeId: UUID, index: Int, total: Int,
     guard let fromNode = linkingFromNodeId else { return }
     let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
 
-    if let hit, hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
-    }
+    commitLinkDrop(fromNodeId: fromNode, hit: hit)
 }
 
 private func handleDelayOutputDragChanged(nodeId: UUID, value: DragGesture.Value) {
@@ -8397,9 +8897,7 @@ private func handleDelayOutputDragEnded(nodeId: UUID, value: DragGesture.Value) 
     guard let fromNode = linkingFromNodeId else { return }
     let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
 
-    if let hit, hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
-    }
+    commitLinkDrop(fromNodeId: fromNode, hit: hit)
 }
 
 private func handleConditionOutputDragChanged(nodeId: UUID, branch: GraphAutomationTraversal.UtilityBranch, value: DragGesture.Value) {
@@ -8426,9 +8924,7 @@ private func handleConditionOutputDragEnded(nodeId: UUID, branch: GraphAutomatio
     currentConditionOutputBranch = branch
     guard let fromNode = linkingFromNodeId else { return }
     let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
-    if let hit, hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
-    }
+    commitLinkDrop(fromNodeId: fromNode, hit: hit)
 }
 
 private func handleToggleOutputDragChanged(nodeId: UUID, isOn: Bool, value: DragGesture.Value) {
@@ -8453,9 +8949,7 @@ private func handleToggleOutputDragEnded(nodeId: UUID, isOn: Bool, value: DragGe
     currentToggleOutputIsOn = isOn
     guard let fromNode = linkingFromNodeId else { return }
     let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
-    if let hit, hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
-    }
+    commitLinkDrop(fromNodeId: fromNode, hit: hit)
 }
 
 private func handleSequenceOutputDragChanged(nodeId: UUID, step: Int, total: Int, value: DragGesture.Value) {
@@ -8483,9 +8977,7 @@ private func handleSequenceOutputDragEnded(nodeId: UUID, step: Int, total: Int, 
     }
     guard let fromNode = linkingFromNodeId else { return }
     let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
-    if let hit, hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
-    }
+    commitLinkDrop(fromNodeId: fromNode, hit: hit)
 }
 
 private func handleButtonOutputDragChanged(nodeId: UUID, buttonIndex: Int, buttons: [ButtonConfig], value: DragGesture.Value) {
@@ -8514,9 +9006,7 @@ private func handleButtonOutputDragEnded(nodeId: UUID, buttonIndex: Int, buttons
     }
     guard linkingFromNodeId != nil else { return }
     let hit = receiverNodeHitTest(at: value.location, fromNodeId: nodeId)
-    if let hit, hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: nodeId, toReceiverNodeId: hit.nodeId)
-    }
+    commitLinkDrop(fromNodeId: nodeId, hit: hit)
 }
 
 private func handleSmartLightOutputDragChanged(nodeId: UUID, kind: String, value: DragGesture.Value) {
@@ -8551,9 +9041,7 @@ private func handleSmartLightOutputDragEnded(nodeId: UUID, kind: String, value: 
     currentSmartLightOutputKind = kind
     guard let fromNode = linkingFromNodeId else { return }
     let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
-    if let hit, hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
-    }
+    commitLinkDrop(fromNodeId: fromNode, hit: hit)
 }
 
 private func handleWordTriggerOutputDragChanged(nodeId: UUID, ruleId: UUID, ruleIndex: Int, total: Int, value: DragGesture.Value) {
@@ -8581,9 +9069,7 @@ private func handleWordTriggerOutputDragEnded(nodeId: UUID, ruleId: UUID, value:
     }
     guard let fromNode = linkingFromNodeId else { return }
     let hit = receiverNodeHitTest(at: value.location, fromNodeId: fromNode)
-    if let hit, hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: fromNode, toReceiverNodeId: hit.nodeId)
-    }
+    commitLinkDrop(fromNodeId: fromNode, hit: hit)
 }
 
 private func repeaterOutputLimit(for nodeId: UUID) -> Int {
@@ -9809,7 +10295,8 @@ private func resolveCollisionsForMovedNode(_ movedNodeId: UUID, startingAt start
 
 private func nodeDragGesture(tileId: UUID) -> some Gesture {
     // Use GraphSpace so drag math stays consistent with our stored graph positions.
-    DragGesture(minimumDistance: 1, coordinateSpace: .named("GraphSceneSpace"))
+    // 4pt so click jitter doesn't move the node and dirty the document.
+    DragGesture(minimumDistance: 4, coordinateSpace: .named("GraphSceneSpace"))
         .onChanged { value in
             #if os(macOS)
             if NSEvent.modifierFlags.contains(.option) { return }
@@ -9879,7 +10366,18 @@ private func nodeDragGesture(tileId: UUID) -> some Gesture {
             for id in movedIds {
                 finalPositions[id] = nodePosition(for: id)
             }
-            setNodePositions(finalPositions)
+            let moved = finalPositions.contains { id, position in
+                !graphCGPointApproximatelyEqual(persistedNodePosition(for: id), position)
+            }
+            if moved {
+                // One undo step per drag.
+                finalizePendingGraphEditUndo()
+                let before = snapshotGraphForUndo()
+                setNodePositions(finalPositions)
+                registerGraphUndo(actionName: movedIds.count == 1 ? "Move Node" : "Move Nodes", before: before)
+            } else {
+                interaction.clearDragPositions(movedIds)
+            }
 
             dragStartByTileId[tileId] = nil
             dragGrabOffsetByTileId[tileId] = nil
@@ -9936,7 +10434,7 @@ private func centerGraphBounds(in viewSize: CGSize, zoomLevel: CGFloat) {
           viewSize.width > 0,
           viewSize.height > 0
     else {
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
             zoom = targetZoom
             pan = .zero
         }
@@ -9950,7 +10448,7 @@ private func centerGraphBounds(in viewSize: CGSize, zoomLevel: CGFloat) {
         height: screenCenter.y - (graphCenter.y * targetZoom)
     )
 
-    withAnimation(.easeInOut(duration: 0.25)) {
+    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
         zoom = targetZoom
         pan = targetPan
     }
@@ -9978,7 +10476,7 @@ private func fitGraphToViewport(_ viewSize: CGSize) {
         height: screenCenter.y - (graphCenter.y * targetZoom)
     )
 
-    withAnimation(.easeInOut(duration: 0.25)) {
+    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
         zoom = targetZoom
         pan = targetPan
     }
@@ -10012,7 +10510,7 @@ private func revealNodeIfNeeded(nodeId: UUID, viewSize: CGSize) {
         height: screenCenter.y - (targetCenter.y * targetZoom)
     )
 
-    withAnimation(.easeInOut(duration: 0.25)) {
+    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
         zoom = targetZoom
         pan = newPan
     }
@@ -10194,6 +10692,99 @@ private func fireSendAllToConsoles(
         ]
     )
 }
+// MARK: - Live Mode guard
+
+private var isLiveModeActive: Bool {
+    isLiveMode || liveModeFromStorage
+}
+
+/// Runs `action` now, or asks first while Live Mode is on (Test/Run writes to real hardware).
+private func confirmIfLive(title: String, message: String, confirmLabel: String = "Run", action: @escaping () -> Void) {
+    guard isLiveModeActive else {
+        action()
+        return
+    }
+    pendingLiveConfirmation = GraphLiveConfirmation(
+        title: title,
+        message: message,
+        confirmLabel: confirmLabel,
+        action: action
+    )
+}
+
+/// Action kinds whose Run writes to hardware or another app, so Live Mode asks first.
+private static let liveGuardedActionKeys: Set<String> = [
+    "action.oscSend", "action.httpRequest", "action.midiSend", "action.shureSend",
+    "action.sennheiserSend", "action.sendAllConsoles", "action.proPresenterTrigger",
+    "action.smartLightControl"
+]
+
+/// What a Run of this action node would write to, for the Live Mode confirmation.
+private func liveRunTargetDescription(nodeId: UUID, key: String) -> String {
+    let id = nodeId.uuidString
+    let graph = tab.graph
+    func deviceName(_ deviceId: UUID?) -> String? {
+        guard let deviceId else { return nil }
+        return externalDevicesSnapshot.first(where: { $0.id == deviceId })?.name
+            ?? ExternalDevicesStore.shared.devices.first(where: { $0.id == deviceId })?.name
+    }
+    switch key {
+    case "action.oscSend":
+        if let cfg = graph?.oscSendActionConfigByNodeId[id] {
+            return "OSC \(cfg.address) to \(cfg.targetIP):\(cfg.targetPort)"
+        }
+    case "action.httpRequest":
+        if let cfg = graph?.httpRequestActionConfigByNodeId[id] {
+            return "\(cfg.method.rawValue) \(cfg.urlString)"
+        }
+    case "action.shureSend":
+        if let name = deviceName(graph?.shureSendActionConfigByNodeId[id]?.deviceId) {
+            return "Shure \u{201C}\(name)\u{201D}"
+        }
+    case "action.sennheiserSend":
+        if let name = deviceName(graph?.sennheiserSendActionConfigByNodeId[id]?.deviceId) {
+            return "Sennheiser \u{201C}\(name)\u{201D}"
+        }
+    case "action.midiSend":
+        return "the node\u{2019}s MIDI destination"
+    case "action.sendAllConsoles":
+        return "every linked console"
+    case "action.proPresenterTrigger":
+        if let cfg = graph?.proPresenterTriggerActionConfigByNodeId[id] {
+            return "ProPresenter \(cfg.triggerPath)"
+        }
+    case "action.smartLightControl":
+        return "the selected smart lights"
+    default:
+        break
+    }
+    return DashboardActionDescriptor.title(for: key)
+}
+
+/// Titles of the actions a utility node's Run would fire, for the Live Mode confirmation.
+private func liveDownstreamActionsMessage(_ actions: [(nodeId: UUID, key: String)]) -> String {
+    let titles = Array(NSOrderedSet(array: actions.map { DashboardActionDescriptor.title(for: $0.key) })) as? [String] ?? []
+    guard !titles.isEmpty else { return "Live Mode is on. Connected actions run now." }
+    return "Live Mode is on. These connected actions run now: \(titles.joined(separator: ", "))."
+}
+
+private func handleActionRunStatus(_ note: Notification) {
+    let ui = note.userInfo ?? [:]
+    guard let id = ui[ActionNodeUserInfoKeys.nodeId] as? UUID,
+          let status = ui[ActionNodeUserInfoKeys.runStatus] as? GraphActionRunStatus else { return }
+    if actionRunStatuses[id] != status {
+        actionRunStatuses[id] = status
+    }
+    // A success fades after a few seconds; a failure stays until dismissed or the next run.
+    if case .succeeded = status {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            if actionRunStatuses[id] == status {
+                actionRunStatuses.removeValue(forKey: id)
+            }
+        }
+    }
+}
+
 // MARK: - Trigger -> Action execution (executor wired)
 
 private func runActionNode(nodeId: UUID, key: String) {

@@ -47,6 +47,26 @@ enum GraphLinkFailureReason: String, Codable, Equatable {
     case consoleCapabilityMismatch
 }
 
+extension GraphLinkFailureReason {
+    /// Why a link was refused, in words, for the canvas and VoiceOver.
+    func message(sourceName: String, receiverName: String) -> String {
+        switch self {
+        case .sameNode:
+            return "a node can\u{2019}t link to itself."
+        case .receiverDoesNotAcceptLinks:
+            return "\(receiverName) doesn\u{2019}t accept incoming links."
+        case .sourceCannotLinkToReceiver:
+            return "\(sourceName) can\u{2019}t connect to \(receiverName)."
+        case .conditionalsDisabled:
+            return "If / Else nodes are turned off."
+        case .variablesDisabled:
+            return "Variable nodes are turned off."
+        case .consoleCapabilityMismatch:
+            return "\(receiverName) doesn\u{2019}t support what \(sourceName) sends (channel names or snapshots)."
+        }
+    }
+}
+
 struct GraphLinkValidation: Equatable {
     var isAllowed: Bool
     var failureReason: GraphLinkFailureReason?

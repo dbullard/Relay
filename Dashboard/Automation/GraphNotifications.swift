@@ -31,6 +31,10 @@ extension Notification.Name {
     static let relayAutomationDidLaunch = Notification.Name("Relay.AutomationDidLaunch")
     // no userInfo
 
+    /// Posted after console channel assignments are replaced outside the console node (Undo/Redo
+    /// of Auto or Clear). `object` is the device id (UUID); userInfo ["assignments": [String: Int]].
+    static let graphConsoleAssignmentsReplaced = Notification.Name("Relay.GraphConsoleAssignmentsReplaced")
+
     static let relayProPresenterStateDidChange = Notification.Name("Relay.ProPresenterStateDidChange")
     // userInfo: ["moduleId": UUID, "resolvedProfileId": UUID?, "event": String (ProPresenterTriggerEvent.rawValue), "value": String?]
 }
