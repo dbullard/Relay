@@ -418,12 +418,12 @@ struct TextModuleSettingsView: View {
 
     private var headerSettings: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Header")
+            Text("Title")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             TextField(
-                "Optional header (e.g. Notes)",
+                "Optional title (e.g. Notes)",
                 text: Binding(
                     get: { model.header ?? "" },
                     set: { newValue in
@@ -440,7 +440,7 @@ struct TextModuleSettingsView: View {
                 if !focused { trimHeader() }
             }
 
-            Toggle("Header background", isOn: Binding(
+            Toggle("Title background", isOn: Binding(
                 get: { model.showsHeaderBackground },
                 set: { newValue in
                     model.showsHeaderBackground = newValue

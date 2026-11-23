@@ -9584,7 +9584,7 @@ enum ShureWirelessModulePlugin: DashboardModulePlugin {
             VStack(alignment: .leading, spacing: 12) {
                 GroupBox("Shure Wireless") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Toggle("Show header (Shure Wireless)", isOn: showsHeader)
+                        Toggle("Show title", isOn: showsHeader)
                             .onChange(of: showsHeader.wrappedValue, initial: false) { _, _ in onPersist() }
                     }
                     .toggleStyle(.switch)
@@ -9603,7 +9603,6 @@ enum ShureWirelessModulePlugin: DashboardModulePlugin {
 struct ShureModuleSettingsInspector: View {
     @Binding var config: ShureModuleConfig
     var channels: [ShureChannelDescriptor]
-    var showsTitle: Binding<Bool>
     var onPersist: () -> Void
     @ObservedObject private var externalStore = ExternalDevicesStore.shared
 
@@ -9669,11 +9668,6 @@ struct ShureModuleSettingsInspector: View {
                         }
                     }
                     .pickerStyle(.menu)
-
-                    Toggle("Show module title", isOn: showsTitle)
-                        .onChange(of: showsTitle.wrappedValue, initial: false) { _, _ in
-                            onPersist()
-                        }
 
                     Divider()
                         .padding(.vertical, 4)

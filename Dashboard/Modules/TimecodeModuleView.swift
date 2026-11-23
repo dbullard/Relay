@@ -270,7 +270,7 @@ struct TimecodeModuleSettingsHost: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle("Show header", isOn: Binding(
+            Toggle("Show title", isOn: Binding(
                 get: { config.showHeader },
                 set: { newValue in
                     config.showHeader = newValue

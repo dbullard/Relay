@@ -1573,7 +1573,7 @@ struct PCOTeamAssignmentsSettingsInspector: View {
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Show header (Team Assignments)", isOn: persistedBinding(for: \.showHeader))
+                    Toggle("Show title", isOn: persistedBinding(for: \.showHeader))
                     Toggle("Show team member status", isOn: persistedBinding(for: \.showTeamMemberStatus))
                     Toggle("Use simplified status styling", isOn: persistedBinding(for: \.useStatusStyledAssignmentCards))
                     Toggle("Hide declined positions", isOn: persistedBinding(for: \.hideDeclinedAssignments))

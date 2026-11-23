@@ -282,7 +282,7 @@ struct RosterPickerModuleSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                TextField("Header", text: Binding(
+                TextField("Title", text: Binding(
                     get: { model.header ?? "" },
                     set: { newValue in
                         let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -347,7 +347,7 @@ struct RosterPickerModuleSettingsView: View {
                 ))
                 .toggleStyle(.switch)
 
-                Toggle("Show header background", isOn: Binding(
+                Toggle("Title background", isOn: Binding(
                     get: { model.showsHeaderBackground },
                     set: { newValue in
                         model.showsHeaderBackground = newValue
