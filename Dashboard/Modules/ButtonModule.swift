@@ -196,6 +196,35 @@ struct ButtonModuleAvailability: Codable, Equatable {
     }
 }
 
+extension ButtonModuleAvailability {
+    /// Why the button can't be pressed right now, or nil when it can.
+    /// Shown on the tile and read by VoiceOver, so keep it short.
+    func unavailableReason(
+        isLiveMode: Bool,
+        allowsTriggerWhileEditing: Bool,
+        isStateActive: Bool,
+        isRunning: Bool,
+        isCoolingDown: Bool
+    ) -> String? {
+        switch liveModeRequirement {
+        case .liveOnly:
+            if !isLiveMode && !allowsTriggerWhileEditing { return "Live Mode only" }
+        case .editOnly:
+            if isLiveMode { return "Edit mode only" }
+        case .always:
+            break
+        }
+        switch stateRequirement {
+        case .any: break
+        case .active: if !isStateActive { return "Waiting for active state" }
+        case .inactive: if isStateActive { return "Unavailable while active" }
+        }
+        if disablesWhileRunning && isRunning { return "Running" }
+        if disablesDuringCooldown && isCoolingDown { return "Cooling down" }
+        return nil
+    }
+}
+
 enum ButtonModuleLiveModeRequirement: String, CaseIterable, Identifiable, Codable {
     case liveOnly
     case editOnly
@@ -991,6 +1020,7 @@ struct MIDIButtonAction: Equatable, Codable {
 
 struct ButtonItemView: View {
     @Environment(\.tileTextFormatting) private var tileTextFormatting
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dashboardIsLANSnapshotRendering) private var isLANSnapshotRendering
     let config: ButtonConfig
     let sharedStyle: ButtonGroupSharedStyle
@@ -1009,6 +1039,7 @@ struct ButtonItemView: View {
     @State private var cooldownUntil: Date?
     @State private var isPressed = false
     @State private var showsConfirmation = false
+    @State private var showsErrorDetail = false
     @State private var loggingPulseOpacity: Double = 1.0
     @State private var resultResetTask: Task<Void, Never>?
 
@@ -1052,18 +1083,9 @@ struct ButtonItemView: View {
                 .scaleEffect(config.feedback.animatePress && isPressed ? 0.97 : 1.0)
 
                 if hasRuntimeError {
-                    Button {
-                        runtimeErrorMessage = nil
-                    } label: {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.red.opacity(0.95))
-                            .padding(6)
-                            .background(Color.black.opacity(0.22), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(runtimeErrorMessage.map { "\($0)\nClick to dismiss warning." } ?? "Dismiss warning")
-                    .padding(6)
+                    // The warning button lives in an overlay outside this Button so it
+                    // stays tappable even when the tile is disabled.
+                    EmptyView()
                 } else if config.feedback.showsRunningIndicator && isRunning {
                     ProgressView()
                         .controlSize(.small)
@@ -1078,10 +1100,37 @@ struct ButtonItemView: View {
             .contentShape(.rect(cornerRadius: sharedStyle.cornerRadius))
         }
 
+        let unavailableReason = resolvedUnavailableReason
+
         content
             .buttonStyle(.plain)
+            .disabled(!isInteractionEnabled)
+            // Taps on a disabled tile still fall through to the canvas (tile selection).
             .allowsHitTesting(isInteractionEnabled)
             .opacity(isInteractionEnabled ? 1.0 : 0.5)
+            .accessibilityLabel(accessibilityLabelText(title: titleText, subtitle: subtitleText, icon: iconContent))
+            .accessibilityValue(accessibilityValueText(isStateActive: isStateActive, unavailableReason: unavailableReason))
+            .overlay(alignment: .bottom) {
+                if let runtimeErrorMessage {
+                    statusFootnote(
+                        Self.firstLine(of: runtimeErrorMessage),
+                        systemImage: "exclamationmark.triangle.fill",
+                        tint: Color.red.opacity(0.9)
+                    )
+                } else if let unavailableReason, !isLANSnapshotRendering {
+                    statusFootnote(unavailableReason, systemImage: "nosign", tint: Color.black.opacity(0.55))
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if hasRuntimeError {
+                    errorBadgeButton
+                }
+            }
+            .onChange(of: runtimeErrorMessage) { _, message in
+                // Cleared elsewhere (e.g. the next run starting): drop the popover request
+                // too, so the next failure doesn't pop it open by itself.
+                if message == nil { showsErrorDetail = false }
+            }
             .animation(.easeInOut(duration: 0.18), value: isStateActive)
             .animation(.easeInOut(duration: 0.12), value: isPressed)
             .simultaneousGesture(pressGesture)
@@ -1141,23 +1190,127 @@ struct ButtonItemView: View {
         return false
     }
 
+    private var resolvedUnavailableReason: String? {
+        config.availability.unavailableReason(
+            isLiveMode: isLiveMode,
+            allowsTriggerWhileEditing: config.behavior.allowsTriggerWhileEditing,
+            isStateActive: resolvedStateIsActive,
+            isRunning: isRunning,
+            isCoolingDown: isCoolingDown
+        )
+    }
+
     private var resolvedInteractionEnabled: Bool {
-        let liveModeAllowed: Bool = {
-            switch config.availability.liveModeRequirement {
-            case .liveOnly: return isLiveMode || config.behavior.allowsTriggerWhileEditing
-            case .editOnly: return !isLiveMode
-            case .always: return true
-            }
-        }()
-        guard liveModeAllowed else { return false }
-        switch config.availability.stateRequirement {
-        case .any: break
-        case .active: guard resolvedStateIsActive else { return false }
-        case .inactive: guard !resolvedStateIsActive else { return false }
+        resolvedUnavailableReason == nil
+    }
+
+    // MARK: - Error and availability presentation
+
+    #if os(iOS)
+    private static let minimumHitTarget: CGFloat = 44
+    #else
+    private static let minimumHitTarget: CGFloat = 28
+    #endif
+
+    static func firstLine(of message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.split(whereSeparator: \.isNewline).first.map(String.init) ?? trimmed
+    }
+
+    /// A spoken name for an SF Symbol, e.g. "play.circle.fill" -> "play circle".
+    static func spokenSymbolName(_ systemName: String) -> String {
+        systemName
+            .split(separator: ".")
+            .map(String.init)
+            .filter { $0 != "fill" }
+            .joined(separator: " ")
+    }
+
+    private var errorBadgeButton: some View {
+        Button {
+            showsErrorDetail = true
+        } label: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.red.opacity(0.95))
+                .padding(6)
+                .background(Color.black.opacity(0.22), in: Circle())
+                .frame(minWidth: Self.minimumHitTarget, minHeight: Self.minimumHitTarget)
+                .contentShape(.rect)
         }
-        if config.availability.disablesWhileRunning && isRunning { return false }
-        if config.availability.disablesDuringCooldown && isCoolingDown { return false }
-        return true
+        .buttonStyle(.plain)
+        .padding(2)
+        .help(runtimeErrorMessage ?? "Action failed")
+        .accessibilityLabel("Action failed")
+        .accessibilityValue(runtimeErrorMessage ?? "")
+        .accessibilityHint("Shows the error")
+        .popover(isPresented: $showsErrorDetail, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Action failed", systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .foregroundStyle(.red)
+                Text(runtimeErrorMessage ?? "")
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                HStack {
+                    Spacer()
+                    Button("Close") { showsErrorDetail = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Dismiss Warning") {
+                        showsErrorDetail = false
+                        runtimeErrorMessage = nil
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(14)
+            .frame(minWidth: 240, idealWidth: 300, maxWidth: 360)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private func statusFootnote(_ text: String, systemImage: String, tint: Color) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.system(size: 11, weight: .semibold))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tint, in: Capsule(style: .continuous))
+            .padding(.horizontal, 6)
+            .padding(.bottom, 5)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private func accessibilityLabelText(title: String, subtitle: String, icon: ButtonModuleResolvedIconContent?) -> String {
+        let text = [title, subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
+        if !text.isEmpty { return text }
+        if case .symbol(let systemName)? = icon {
+            let spoken = Self.spokenSymbolName(systemName)
+            if !spoken.isEmpty { return spoken }
+        }
+        return "Button"
+    }
+
+    private func accessibilityValueText(isStateActive: Bool, unavailableReason: String?) -> String {
+        var parts: [String] = []
+        if let badge = statusBadgeStyle {
+            switch badge {
+            case .capsule(let activeLabel, let inactiveLabel), .pulse(let activeLabel, let inactiveLabel):
+                parts.append(isStateActive ? activeLabel : inactiveLabel)
+            case .success(let label), .failure(let label):
+                parts.append(label)
+            }
+        } else if config.statePresentation.source != .none {
+            parts.append(isStateActive ? "On" : "Off")
+        }
+        if isRunning { parts.append("Running") }
+        if let runtimeErrorMessage { parts.append("Error: \(Self.firstLine(of: runtimeErrorMessage))") }
+        if let unavailableReason { parts.append(unavailableReason) }
+        return parts.joined(separator: ", ")
     }
 
     private var resolvedTitle: String {
@@ -1336,7 +1489,8 @@ struct ButtonItemView: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(isActive ? Color.white : Color.primary.opacity(0.8))
                 .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Capsule(style: .continuous).fill(isActive ? Color.green.opacity(0.78) : Color.black.opacity(0.14)))
+                // Dark green: white on system green is ~2:1 contrast; this is ~5:1.
+                .background(Capsule(style: .continuous).fill(isActive ? Color(red: 0.08, green: 0.45, blue: 0.22) : Color.black.opacity(0.14)))
         case .pulse(let activeLabel, let inactiveLabel):
             HStack(spacing: 6) {
                 Circle().fill(isActive ? Color.red : Color.secondary.opacity(0.45))
@@ -1346,14 +1500,24 @@ struct ButtonItemView: View {
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(Color.black.opacity(0.14), in: Capsule(style: .continuous))
             .onAppear {
-                guard isActive else { return }
+                guard isActive, !reduceMotion else { return }
                 withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { loggingPulseOpacity = 0.3 }
             }
             .onChange(of: isActive) { _, newValue in
-                if newValue {
+                if newValue && !reduceMotion {
                     loggingPulseOpacity = 1.0
                     withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { loggingPulseOpacity = 0.3 }
                 } else { loggingPulseOpacity = 1.0 }
+            }
+            .onChange(of: reduceMotion) { _, reduce in
+                // Reduce Motion: a steady dot; the "REC" word still carries the state.
+                if reduce {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { loggingPulseOpacity = 1.0 }
+                } else if isActive {
+                    withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { loggingPulseOpacity = 0.3 }
+                }
             }
         case .success(let label):
             Label(label, systemImage: "checkmark.circle.fill")

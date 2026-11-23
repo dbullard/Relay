@@ -46,15 +46,22 @@ struct DashboardLANSettingsView: View {
     @State private var isShowingHelp = false
     @State private var copiedToast: String? = nil
 
-    private var browserListenPortText: Binding<String> {
-        Binding(
-            get: { String(browserListenPort) },
-            set: { newValue in
-                let digitsOnly = newValue.filter(\.isNumber)
-                guard !digitsOnly.isEmpty else { return }
-                browserListenPort = min(max(Int(digitsOnly) ?? 38475, 1024), 65_535)
-            }
-        )
+    /// The port as typed. It's committed to `browserListenPort` on Return or focus loss,
+    /// never per keystroke (clamping per keystroke turned "5" into 1024 mid-typing).
+    @State private var browserPortDraft: String = ""
+    @State private var browserPortError: String?
+    @FocusState private var isBrowserPortFocused: Bool
+
+    private func commitBrowserPortDraft() {
+        switch BrowserPortValidation.validate(browserPortDraft) {
+        case .success(let port):
+            browserListenPort = port
+            browserPortDraft = String(port)
+            browserPortError = nil
+        case .failure(let error):
+            // Keep what was typed so it can be corrected, and say why it wasn't applied.
+            browserPortError = error.message
+        }
     }
 
     var body: some View {
@@ -115,17 +122,29 @@ struct DashboardLANSettingsView: View {
 
                                     Spacer()
 
-                                    TextField("Port", text: browserListenPortText)
+                                    TextField("Port", text: $browserPortDraft)
                                         .textFieldStyle(.roundedBorder)
                                         .frame(width: 110)
+                                        .focused($isBrowserPortFocused)
+                                        .onSubmit(commitBrowserPortDraft)
+                                        .accessibilityLabel("Browser port")
 #if os(iOS)
                                         .keyboardType(.numberPad)
 #endif
 
                                     Button("Reset") {
-                                        browserListenPort = 38475
+                                        browserListenPort = BrowserPortValidation.defaultPort
+                                        browserPortDraft = String(BrowserPortValidation.defaultPort)
+                                        browserPortError = nil
                                     }
                                     .buttonStyle(.bordered)
+                                }
+
+                                if let browserPortError {
+                                    Label(browserPortError, systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
 
                                 Divider().padding(.vertical, 2)
@@ -172,11 +191,30 @@ struct DashboardLANSettingsView: View {
                         .padding(12)
                         .background(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Color.white.opacity(0.04))
+                                .fill(Color.primary.opacity(0.04))
                         )
                     }
                     .onChange(of: browserListenPort, initial: true) { _, newValue in
-                        browserListenPort = min(max(newValue, 1024), 65_535)
+                        let clamped = min(max(newValue, BrowserPortValidation.range.lowerBound), BrowserPortValidation.range.upperBound)
+                        if clamped != newValue { browserListenPort = clamped }
+                        if !isBrowserPortFocused {
+                            browserPortDraft = String(clamped)
+                        }
+                    }
+                    .onChange(of: isBrowserPortFocused) { _, focused in
+                        if !focused { commitBrowserPortDraft() }
+                    }
+                    .onChange(of: browserPortDraft) { _, _ in
+                        // Clear a stale error as soon as the user edits the value.
+                        if browserPortError != nil,
+                           case .success = BrowserPortValidation.validate(browserPortDraft) {
+                            browserPortError = nil
+                        }
+                    }
+                    .onDisappear {
+                        if case .success(let port) = BrowserPortValidation.validate(browserPortDraft) {
+                            browserListenPort = port
+                        }
                     }
                     .padding(.top, 2)
                 }
@@ -350,17 +388,23 @@ private struct DevicesTableRow: View {
                     if syncedTabCount > 0 {
                         Text("· \(syncedTabCount) synced")
                     }
-                    if needsReconnect {
-                        Label("Not authorized", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                    }
-                    if status == .paired, !lanService.hasPairingSecret(for: peer.deviceId) {
-                        Text("Not secured — re-pair to fix")
-                            .foregroundStyle(.orange)
-                    }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                // Warnings get their own lines: squeezed into the status row beside the
+                // date and buttons, they wrapped every few letters ("Not au-tho-rize-d").
+                if needsReconnect {
+                    Label("Not authorized", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if status == .paired, !lanService.hasPairingSecret(for: peer.deviceId) {
+                    Label("Not secured — re-pair to fix", systemImage: "lock.open.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if status == .paired {
                     Toggle("Share variables across devices", isOn: Binding(
                         get: { lanService.pairedDevices[peer.deviceId]?.sharesVariables == true },
@@ -372,9 +416,12 @@ private struct DevicesTableRow: View {
                 }
             }
             Spacer()
+            // The date and buttons keep their natural width; the name/status column
+            // (whose warnings sit on their own lines) wraps by word instead.
             Text(peer.lastSeen.formatted(date: .numeric, time: .shortened))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize()
             // A Not Paired device gets an explicit Connect button rather than the old bare
             // toggle, which looked like a way to "enable" a connection but only ever granted
             // one-sided local trust on whichever device's Settings you used it from — no
@@ -422,6 +469,7 @@ private struct DevicesTableRow: View {
                                 .controlSize(.small)
                         } else {
                             Text("Reconnect")
+                                .fixedSize()
                         }
                     }
                     .buttonStyle(.bordered)
@@ -461,5 +509,34 @@ private struct DevicesTableRow: View {
         } message: {
             Text("Pairing is ready. To share an editable tab, choose Join next to that tab in Synced Tabs.")
         }
+    }
+}
+
+/// Validation for the browser view-only port field. Ports below 1024 need root on macOS,
+/// so the field accepts 1024...65535.
+enum BrowserPortValidation {
+    static let defaultPort = 38475
+    static let range = 1024...65_535
+
+    enum ValidationError: Error, Equatable {
+        case empty
+        case notANumber
+        case outOfRange
+
+        var message: String {
+            switch self {
+            case .empty: return "Enter a port number from 1024 to 65535."
+            case .notANumber: return "Use digits only, from 1024 to 65535."
+            case .outOfRange: return "Use a port from 1024 to 65535."
+            }
+        }
+    }
+
+    static func validate(_ text: String) -> Result<Int, ValidationError> {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure(.empty) }
+        guard trimmed.allSatisfy({ $0.isASCII && $0.isNumber }) else { return .failure(.notANumber) }
+        guard let port = Int(trimmed), range.contains(port) else { return .failure(.outOfRange) }
+        return .success(port)
     }
 }

@@ -374,4 +374,12 @@ final class DashboardTileArrangementTests: XCTestCase {
         let result = SelectionToolbarPlacement.shouldFlipBelow(selectionRect: rect, viewportZoom: 0.5, viewportPanY: 100)
         XCTAssertFalse(result)
     }
+
+    func testShouldFlipBelowWhenZoomedOutBecauseTheToolbarKeepsItsScreenSize() {
+        // At 25% the selection's top is 25pt below the viewport top, but the
+        // counter-scaled toolbar still needs 60 screen points above it.
+        let rect = CGRect(x: 0, y: 100, width: 100, height: 50)
+        let result = SelectionToolbarPlacement.shouldFlipBelow(selectionRect: rect, viewportZoom: 0.25, viewportPanY: 0)
+        XCTAssertTrue(result)
+    }
 }

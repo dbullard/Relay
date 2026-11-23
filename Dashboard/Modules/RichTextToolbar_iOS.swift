@@ -141,8 +141,8 @@ final class RichTextToolbarState: ObservableObject {
             : NSRange(location: 0, length: tv.attributedText.length)
         let mutable = NSMutableAttributedString(attributedString: tv.attributedText)
         mutable.addAttribute(.paragraphStyle, value: para, range: range)
-        setAttributedTextPreservingSelection(tv, attributedText: mutable)
         alignment = nsAlignment == .left ? .leading : (nsAlignment == .center ? .center : .trailing)
+        setAttributedTextPreservingSelection(tv, attributedText: mutable, actionName: "Alignment")
         onFormattingChanged?()
     }
 
@@ -162,7 +162,7 @@ final class RichTextToolbarState: ObservableObject {
                 let existingFont = (value as? UIFont) ?? UIFont.systemFont(ofSize: size)
                 mutable.addAttribute(.font, value: existingFont.withSize(size), range: range)
             }
-            setAttributedTextPreservingSelection(tv, attributedText: mutable)
+            setAttributedTextPreservingSelection(tv, attributedText: mutable, actionName: "Font Size")
         }
         onFormattingChanged?()
     }
@@ -208,7 +208,7 @@ final class RichTextToolbarState: ObservableObject {
                     mutable.addAttribute(.font, value: newFont, range: range)
                 }
             }
-            setAttributedTextPreservingSelection(tv, attributedText: mutable)
+            setAttributedTextPreservingSelection(tv, attributedText: mutable, actionName: "Font")
         }
         onFormattingChanged?()
     }
@@ -222,7 +222,7 @@ final class RichTextToolbarState: ObservableObject {
         if tv.selectedRange.length > 0 {
             let mutable = NSMutableAttributedString(attributedString: tv.attributedText)
             mutable.addAttribute(.foregroundColor, value: uiColor, range: tv.selectedRange)
-            setAttributedTextPreservingSelection(tv, attributedText: mutable)
+            setAttributedTextPreservingSelection(tv, attributedText: mutable, actionName: "Text Color")
         }
         onFormattingChanged?()
     }
@@ -233,10 +233,14 @@ final class RichTextToolbarState: ObservableObject {
         let mutable = NSMutableAttributedString(attributedString: tv.attributedText)
         let insertRange = tv.selectedRange
         mutable.replaceCharacters(in: insertRange, with: replacement)
-        tv.attributedText = mutable
         // Place cursor after the inserted token
         let newCursor = insertRange.location + replacement.length
-        tv.selectedRange = NSRange(location: min(newCursor, tv.attributedText.length), length: 0)
+        replaceAttributedText(
+            tv,
+            with: mutable,
+            selection: NSRange(location: newCursor, length: 0),
+            actionName: "Insert Variable"
+        )
         onFormattingChanged?()
     }
 
@@ -246,14 +250,37 @@ final class RichTextToolbarState: ObservableObject {
     /// selected range (setting attributedText resets selection to end-of-text).
     private func setAttributedTextPreservingSelection(
         _ tv: UITextView,
-        attributedText: NSMutableAttributedString
+        attributedText: NSMutableAttributedString,
+        actionName: String
     ) {
-        let saved = tv.selectedRange
+        replaceAttributedText(tv, with: attributedText, selection: tv.selectedRange, actionName: actionName)
+    }
+
+    /// Sets `attributedText` and registers an undo step that puts the previous text and
+    /// selection back. Programmatic `attributedText` writes bypass UITextView's own undo,
+    /// so without this the toolbar's edits couldn't be undone with ⌘Z or shake.
+    private func replaceAttributedText(
+        _ tv: UITextView,
+        with attributedText: NSAttributedString,
+        selection: NSRange,
+        actionName: String
+    ) {
+        let previousText = NSAttributedString(attributedString: tv.attributedText ?? NSAttributedString())
+        let previousSelection = tv.selectedRange
         tv.attributedText = attributedText
         let newLength = tv.attributedText.length
-        let loc = min(saved.location, newLength)
-        let len = min(saved.length, newLength - loc)
+        let loc = min(selection.location, newLength)
+        let len = min(selection.length, newLength - loc)
         tv.selectedRange = NSRange(location: loc, length: len)
+
+        guard let undoManager = tv.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { [weak tv] state in
+            guard let tv else { return }
+            state.replaceAttributedText(tv, with: previousText, selection: previousSelection, actionName: actionName)
+            state.syncFromCursor()
+            state.onFormattingChanged?()
+        }
+        undoManager.setActionName(actionName)
     }
 
     func dismissKeyboard() {
@@ -280,17 +307,17 @@ struct RichTextToolbar_iOS: View {
         ScrollView(.horizontal) {
             HStack(spacing: 4) {
                 // Bold
-                toolbarButton(systemImage: "bold", isActive: formattingState.isBold) {
+                toolbarButton("Bold", systemImage: "bold", isActive: formattingState.isBold) {
                     formattingState.toggleBold()
                 }
 
                 // Italic
-                toolbarButton(systemImage: "italic", isActive: formattingState.isItalic) {
+                toolbarButton("Italic", systemImage: "italic", isActive: formattingState.isItalic) {
                     formattingState.toggleItalic()
                 }
 
                 // Underline
-                toolbarButton(systemImage: "underline", isActive: formattingState.isUnderline) {
+                toolbarButton("Underline", systemImage: "underline", isActive: formattingState.isUnderline) {
                     formattingState.toggleUnderline()
                 }
 
@@ -298,18 +325,21 @@ struct RichTextToolbar_iOS: View {
 
                 // Alignment
                 toolbarButton(
+                    "Align Left",
                     systemImage: "text.alignleft",
                     isActive: formattingState.alignment == .leading
                 ) {
                     formattingState.applyAlignment(.left)
                 }
                 toolbarButton(
+                    "Align Center",
                     systemImage: "text.aligncenter",
                     isActive: formattingState.alignment == .center
                 ) {
                     formattingState.applyAlignment(.center)
                 }
                 toolbarButton(
+                    "Align Right",
                     systemImage: "text.alignright",
                     isActive: formattingState.alignment == .trailing
                 ) {
@@ -319,19 +349,26 @@ struct RichTextToolbar_iOS: View {
                 Divider().frame(height: 24)
 
                 // Font size
-                HStack(spacing: 2) {
+                HStack(spacing: 0) {
                     Button {
                         formattingState.applyFontSize(max(8, formattingState.fontSize - 1))
                     } label: {
-                        Image(systemName: "minus").frame(width: 30, height: 32)
+                        Label("Decrease Font Size", systemImage: "minus")
+                            .labelStyle(.iconOnly)
+                            .frame(minWidth: Self.hitTarget, minHeight: Self.hitTarget)
+                            .contentShape(.rect)
                     }
                     Text("\(Int(formattingState.fontSize))")
                         .font(.caption.monospacedDigit())
                         .frame(minWidth: 24)
+                        .accessibilityLabel("Font size \(Int(formattingState.fontSize))")
                     Button {
                         formattingState.applyFontSize(min(72, formattingState.fontSize + 1))
                     } label: {
-                        Image(systemName: "plus").frame(width: 30, height: 32)
+                        Label("Increase Font Size", systemImage: "plus")
+                            .labelStyle(.iconOnly)
+                            .frame(minWidth: Self.hitTarget, minHeight: Self.hitTarget)
+                            .contentShape(.rect)
                     }
                 }
                 .buttonStyle(.plain)
@@ -353,23 +390,28 @@ struct RichTextToolbar_iOS: View {
                             .lineLimit(1)
                         Image(systemName: "chevron.down").font(.caption2)
                     }
-                    .frame(height: 32)
+                    .frame(height: 36)
                     .padding(.horizontal, 8)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
                             .fill(Color.primary.opacity(0.08))
                     )
+                    .frame(minHeight: Self.hitTarget)
+                    .contentShape(.rect)
                 }
                 .foregroundStyle(.primary)
+                .accessibilityLabel("Font")
+                .accessibilityValue(formattingState.fontFamily)
 
                 Divider().frame(height: 24)
 
                 // Text color
-                ColorPicker("", selection: Binding(
+                ColorPicker("Text Color", selection: Binding(
                     get: { formattingState.textColor },
                     set: { formattingState.applyTextColor($0) }
                 ), supportsOpacity: true)
-                .frame(width: 32, height: 32)
+                .labelsHidden()
+                .frame(minWidth: Self.hitTarget, minHeight: Self.hitTarget)
 
                 // Variable insert — always show so users can see what's available
                 Divider().frame(height: 24)
@@ -380,9 +422,11 @@ struct RichTextToolbar_iOS: View {
                 Button("Done") { formattingState.dismissKeyboard() }
                     .font(.callout.weight(.semibold))
                     .padding(.horizontal, 8)
+                    .frame(minHeight: Self.hitTarget)
+                    .contentShape(.rect)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+            .padding(.vertical, 2)
         }
         // `axes:` defaults to `.vertical`; explicit here since this is a
         // `ScrollView(.horizontal)`.
@@ -426,32 +470,44 @@ struct RichTextToolbar_iOS: View {
                 Image(systemName: "curlybraces")
                 Text("Insert").font(.caption)
             }
-            .frame(height: 32)
+            .frame(height: 36)
             .padding(.horizontal, 8)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color.primary.opacity(0.08))
             )
+            .frame(minHeight: Self.hitTarget)
+            .contentShape(.rect)
         }
         .foregroundStyle(.primary)
+        .accessibilityLabel("Insert Variable")
     }
+
+    private static let hitTarget: CGFloat = 44
 
     @ViewBuilder
     private func toolbarButton(
+        _ title: String,
         systemImage: String,
         isActive: Bool,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .frame(width: 36, height: 32)
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
+                .fontWeight(isActive ? .bold : .regular)
+                .foregroundStyle(isActive ? Color.white : Color.primary)
+                .frame(width: 36, height: 36)
                 .background(
+                    // Active = solid fill, not just a tint change.
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(isActive ? Color.accentColor.opacity(0.25) : Color.clear)
+                        .fill(isActive ? Color.accentColor : Color.clear)
                 )
+                .frame(minWidth: Self.hitTarget, minHeight: Self.hitTarget)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
 #endif

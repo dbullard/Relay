@@ -86,6 +86,9 @@ struct TriggerGraphNodeView: View {
     @State private var midiDebugLastReceived: String = "—"
     @State private var midiDebugLastDecision: String = "—"
     @State private var manualFireCount: Int = 0
+    @AppStorage(graphLiveModeStorageKey) private var isLiveModeEnabled: Bool = false
+    /// Fire Trigger waiting for a yes because Live Mode is on.
+    @State private var pendingLiveConfirmation: GraphLiveConfirmation? = nil
     @State private var manualLastFiredAt: Date? = nil
     @State private var isPulseActive: Bool = false
     @State private var pulseWorkItem: DispatchWorkItem? = nil
@@ -1050,13 +1053,14 @@ struct TriggerGraphNodeView: View {
                 .foregroundStyle(.secondary)
 
             Button {
-                fireManualTrigger()
+                requestFireManualTrigger()
             } label: {
                 Label("Fire Trigger", systemImage: "bolt.fill")
                     .labelStyle(.titleAndIcon)
                     .font(.caption)
             }
             .buttonStyle(GraphPushButtonStyle(isProminent: true))
+            .graphLiveConfirmationDialog($pendingLiveConfirmation)
 
             let firedText: String = {
                 guard let manualLastFiredAt else { return "—" }
@@ -1261,6 +1265,20 @@ struct TriggerGraphNodeView: View {
             parts.append(key.uppercased())
         }
         return parts.isEmpty ? "Not Set" : parts.joined(separator: "+")
+    }
+
+    /// Fires now, or asks first while Live Mode is on: connected actions write to hardware.
+    private func requestFireManualTrigger() {
+        guard isLiveModeEnabled else {
+            fireManualTrigger()
+            return
+        }
+        pendingLiveConfirmation = GraphLiveConfirmation(
+            title: "Fire \u{201C}\(triggerTitle)\u{201D} in Live Mode?",
+            message: "Live Mode is on. Every action connected to this trigger runs now.",
+            confirmLabel: "Fire",
+            action: { fireManualTrigger() }
+        )
     }
 
     private func fireManualTrigger() {
@@ -2255,10 +2273,7 @@ private struct ShureWirelessTriggerSettings: View {
                 }
             )) {
                 Text("Select…").tag(UUID?.none)
-                // `devices` is a `let` snapshot filtered fresh above, read-only for
-                // the rest of this render pass — index identity can't drift mid-render.
-                ForEach(devices.indices, id: \.self) { idx in
-                    let d = devices[idx]
+                ForEach(devices, id: \.id) { d in
                     Text(d.name).tag(UUID?.some(d.id))
                 }
             }
@@ -2481,10 +2496,7 @@ private struct SennheiserWirelessTriggerSettings: View {
                 }
             )) {
                 Text("Select…").tag(UUID?.none)
-                // `devices` is a `let` snapshot filtered fresh above, read-only for
-                // the rest of this render pass — index identity can't drift mid-render.
-                ForEach(devices.indices, id: \.self) { idx in
-                    let d = devices[idx]
+                ForEach(devices, id: \.id) { d in
                     Text(d.name).tag(UUID?.some(d.id))
                 }
             }

@@ -45,9 +45,11 @@ struct OnboardingReviewStepView: View {
                             ) {
                                 Image(systemName: candidate.isIncluded ? "checkmark.square.fill" : "square")
                                     .foregroundStyle(candidate.isIncluded ? Color.accentColor : Color.secondary)
+                                    .accessibilityHidden(true)
                             }
                         }
                         .buttonStyle(.plain)
+                        .onboardingChecklistCheckedState(candidate.isIncluded)
                     }
                 }
                 .padding(.horizontal, 12)

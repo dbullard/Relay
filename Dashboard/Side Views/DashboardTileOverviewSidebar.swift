@@ -51,6 +51,10 @@ struct DashboardTileOverviewSidebar: View {
     /// Reorder tiles in the tab to change their z-space order.
     /// Matches SwiftUI's `.onMove` signature.
     let onReorderTiles: (IndexSet, Int) -> Void
+    /// Open the inspector on a tile (or the selection it belongs to), like the tile context menu.
+    let onEditTile: (UUID) -> Void
+    /// Delete a tile (or the selection it belongs to), like the tile context menu.
+    let onDeleteTile: (UUID) -> Void
 
     /// Edit an existing tile group.
     let onEditGroup: (DashboardTileGroup) -> Void
@@ -233,14 +237,14 @@ struct DashboardTileOverviewSidebar: View {
                     TextField("Width", text: $sizeEditorWidth)
                         .frame(width: 80)
                         .textFieldStyle(.roundedBorder)
-                    Text("px")
+                    Text("pt")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     if selectedTileIDs.count > 1 {
                         let sizes = tab.tiles.filter { selectedTileIDs.contains($0.id) }.compactMap { $0.size }
                         let minW = Int(sizes.map { $0.width }.min() ?? 0)
                         let maxW = Int(sizes.map { $0.width }.max() ?? 0)
-                        Text("(\(minW)–\(maxW) px)")
+                        Text("(\(minW)–\(maxW) pt)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -252,14 +256,14 @@ struct DashboardTileOverviewSidebar: View {
                     TextField("Height", text: $sizeEditorHeight)
                         .frame(width: 80)
                         .textFieldStyle(.roundedBorder)
-                    Text("px")
+                    Text("pt")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     if selectedTileIDs.count > 1 {
                         let sizes = tab.tiles.filter { selectedTileIDs.contains($0.id) }.compactMap { $0.size }
                         let minH = Int(sizes.map { $0.height }.min() ?? 0)
                         let maxH = Int(sizes.map { $0.height }.max() ?? 0)
-                        Text("(\(minH)–\(maxH) px)")
+                        Text("(\(minH)–\(maxH) pt)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -476,12 +480,15 @@ struct DashboardTileOverviewSidebar: View {
         .listRowBackground(
             isSelected ? Color.accentColor.opacity(0.12) : Color.clear
         )
-        .onTapGesture {
-            selectGroup(group, tileIds: tileIds)
-        }
+        // The double-tap must be attached first (innermost): a single tap declared
+        // ahead of it wins every click, so the double-tap never fired. The single tap
+        // runs simultaneously, so selection still happens on the first click.
         .onTapGesture(count: 2) {
             onEditGroup(group)
         }
+        .simultaneousGesture(TapGesture().onEnded {
+            selectGroup(group, tileIds: tileIds)
+        })
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(group.name))
         .accessibilityValue(Text("\(tileIds.count) tile\(tileIds.count == 1 ? "" : "s")\(isSelected ? ", selected" : "")"))
@@ -570,19 +577,16 @@ struct DashboardTileOverviewSidebar: View {
             isSelected ? Color.accentColor.opacity(0.12) : Color.clear
         )
         .opacity(tile.isHidden ? 0.80 : 1.0)
-#if os(iOS)
-        .onTapGesture {
-            handleTileSelection(tileID: tile.id)
-        }
-#else
-        .onTapGesture {
-            handleTileSelection(tileID: tile.id)
-        }
-        .tag(tile.id)
-#endif
+        // Double-tap first (innermost), single tap simultaneous: see the group row.
         .onTapGesture(count: 2) {
             beginRenamingTile(tile)
         }
+        .simultaneousGesture(TapGesture().onEnded {
+            handleTileSelection(tileID: tile.id)
+        })
+#if os(macOS)
+        .tag(tile.id)
+#endif
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(displayTitle(for: tile)))
         .accessibilityValue(Text("\(tileSummaryStatic(for: tile, in: tab))\(tile.isHidden ? ", hidden" : "")\(isSelected ? ", selected" : "")"))
@@ -599,15 +603,23 @@ struct DashboardTileOverviewSidebar: View {
         .accessibilityAction(named: Text(tile.isHidden ? "Show Tile" : "Hide Tile")) {
             toggleVisibilityFromOverviewControl(for: tile)
         }
-        .accessibilityAction(named: Text("Move Up")) {
-            guard index > 0 else { return }
-            onReorderTiles(IndexSet(integer: index), index - 1)
-        }
-        .accessibilityAction(named: Text("Move Down")) {
+        // The list is in drawing order: later tiles draw on top of earlier ones, so moving
+        // a row down brings the tile forward and moving it up sends it backward.
+        .accessibilityAction(named: Text("Bring Forward")) {
             guard index < tab.tiles.count - 1 else { return }
             onReorderTiles(IndexSet(integer: index), index + 2)
         }
+        .accessibilityAction(named: Text("Send Backward")) {
+            guard index > 0 else { return }
+            onReorderTiles(IndexSet(integer: index), index - 1)
+        }
         .contextMenu {
+            let targetCount = DashboardMenuTitles.targetTileCount(tileID: tile.id, selectedTileIDs: selectedTileIDs)
+
+            Button(DashboardMenuTitles.editTiles(count: targetCount)) {
+                onEditTile(tile.id)
+            }
+
             Button("Rename Tile") {
                 beginRenamingTile(tile)
             }
@@ -632,21 +644,31 @@ struct DashboardTileOverviewSidebar: View {
 
             Divider()
 
-            Button {
-                guard index > 0 else { return }
-                onReorderTiles(IndexSet(integer: index), index - 1)
-            } label: {
-                Label("Move Up", systemImage: "chevron.up")
-            }
-            .disabled(index == 0)
-
+            // Moves the tile one step in the drawing order (later tiles draw on top), which
+            // is also one row down / up in this list.
             Button {
                 guard index < tab.tiles.count - 1 else { return }
                 onReorderTiles(IndexSet(integer: index), index + 2)
             } label: {
-                Label("Move Down", systemImage: "chevron.down")
+                Label("Bring Forward", systemImage: "square.2.layers.3d.top.filled")
             }
             .disabled(index == tab.tiles.count - 1)
+
+            Button {
+                guard index > 0 else { return }
+                onReorderTiles(IndexSet(integer: index), index - 1)
+            } label: {
+                Label("Send Backward", systemImage: "square.2.layers.3d.bottom.filled")
+            }
+            .disabled(index == 0)
+
+            Divider()
+
+            Button(role: .destructive) {
+                onDeleteTile(tile.id)
+            } label: {
+                Label(DashboardMenuTitles.deleteTiles(count: targetCount), systemImage: "trash")
+            }
         }
     }
 }
@@ -740,7 +762,7 @@ private func tileSizeSummarySuffix(for tile: DashboardTileModel) -> String {
     
     let width = Int(size.width.rounded())
     let height = Int(size.height.rounded())
-    return " · \(width)×\(height) px"
+    return " · \(width)×\(height) pt"
 }
 
 private func sidebarAccentColor(for tile: DashboardTileModel) -> Color {

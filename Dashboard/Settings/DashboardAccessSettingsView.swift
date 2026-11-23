@@ -10,6 +10,8 @@ import AVFoundation
 import Speech
 #if os(macOS)
 import AppKit
+#else
+import UIKit
 #endif
 
 struct DashboardAccessSettingsView: View {
@@ -20,7 +22,17 @@ struct DashboardAccessSettingsView: View {
         let status: PermissionStatus
         let showsSettingsButton: Bool
         let showsStatusIcon: Bool
+        /// macOS System Settings privacy pane for this permission.
+        var privacyPane: String? = nil
+
+        /// A denied permission can only be re-granted in System Settings, so the row
+        /// offers a way there. Local Network has no readable status, so it always does.
+        var offersSettingsButton: Bool {
+            showsSettingsButton || status == .denied
+        }
     }
+
+    @Environment(\.openURL) private var openURL
 
     private enum PermissionStatus {
         case authorized
@@ -77,11 +89,11 @@ struct DashboardAccessSettingsView: View {
                         HStack(spacing: 12) {
                             ZStack {
                                 Circle()
-                                    .fill(Color.white.opacity(0.08))
+                                    .fill(Color.primary.opacity(0.08))
                                     .frame(width: 32, height: 32)
                                 Image(systemName: row.systemImage)
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.9))
+                                    .foregroundStyle(Color.primary.opacity(0.9))
                             }
 
                             Text(row.title)
@@ -99,26 +111,21 @@ struct DashboardAccessSettingsView: View {
                                     .imageScale(.medium)
                             }
 
-#if os(macOS)
-                            if row.showsSettingsButton {
-                                Button {
-                                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") {
-                                        NSWorkspace.shared.open(url)
-                                    }
-                                } label: {
-                                    Image(systemName: "gearshape")
+                            if row.offersSettingsButton, let url = settingsURL(for: row) {
+                                Button("Open System Settings") {
+                                    openURL(url)
                                 }
-                                .buttonStyle(.borderless)
-                                .help("Open Local Network Settings")
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityHint("Opens the \(row.title) privacy settings, where you can allow Relay.")
                             }
-#endif
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
-                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
                         )
                     }
                 }
@@ -140,8 +147,8 @@ struct DashboardAccessSettingsView: View {
         let micStatus = mapAudioStatus(AVCaptureDevice.authorizationStatus(for: .audio))
         let speechStatus = mapSpeechStatus(SFSpeechRecognizer.authorizationStatus())
         rows = [
-            PermissionRow(title: "Microphone", systemImage: "mic.fill", status: micStatus, showsSettingsButton: false, showsStatusIcon: true),
-            PermissionRow(title: "Speech Recognition", systemImage: "waveform", status: speechStatus, showsSettingsButton: false, showsStatusIcon: true)
+            PermissionRow(title: "Microphone", systemImage: "mic.fill", status: micStatus, showsSettingsButton: false, showsStatusIcon: true, privacyPane: "Privacy_Microphone"),
+            PermissionRow(title: "Speech Recognition", systemImage: "waveform", status: speechStatus, showsSettingsButton: false, showsStatusIcon: true, privacyPane: "Privacy_SpeechRecognition")
         ]
 #if os(macOS)
         rows.append(
@@ -150,9 +157,21 @@ struct DashboardAccessSettingsView: View {
                 systemImage: "wifi",
                 status: .requiresReview,
                 showsSettingsButton: true,
-                showsStatusIcon: false
+                showsStatusIcon: false,
+                privacyPane: "Privacy_LocalNetwork"
             )
         )
+#endif
+    }
+
+    /// macOS opens the permission's privacy pane; iOS can only open Relay's own page in
+    /// the Settings app, which lists its permissions.
+    private func settingsURL(for row: PermissionRow) -> URL? {
+#if os(macOS)
+        guard let pane = row.privacyPane else { return nil }
+        return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
+#else
+        return URL(string: UIApplication.openSettingsURLString)
 #endif
     }
 

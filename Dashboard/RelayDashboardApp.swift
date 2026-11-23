@@ -81,6 +81,9 @@ struct RelayDashboardApp: App {
     @State private var showingPreviousImportOffer = false
     @State private var hasCheckedWhatsNewThisLaunch = false
     @State private var hasResolvedWhatsNewGate = false
+    /// Set shortly after launch so the progress indicator below only appears when the
+    /// What's New check is actually slow (no flash on a fast launch).
+    @State private var launchGateProgressDelayElapsed = false
     // Start with home screen already dismissed if a valid startup file is pinned —
     // avoids a flash of the home view before resolveStartupFileIfNeeded runs.
     @State private var launchScreenDismissed: Bool = {
@@ -124,6 +127,26 @@ struct RelayDashboardApp: App {
             WhatsNewSheet(releases: whatsNewStore.unseenReleases) {
                 whatsNewStore.markLatestReleaseSeen()
                 showingWhatsNewSheet = false
+            }
+        }
+        // Home waits (up to a few seconds) for the What's New check; show that something is
+        // happening instead of an empty window.
+        .overlay {
+            ZStack {
+                if launchGateProgressDelayElapsed && !hasResolvedWhatsNewGate && !launchScreenDismissed {
+                    ProgressView("Loading…")
+                        .padding(20)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .transition(.opacity)
+                }
+            }
+            .allowsHitTesting(false)
+            .animation(.spring(duration: 0.3, bounce: 0), value: hasResolvedWhatsNewGate)
+        }
+        .task {
+            try? await Task.sleep(for: .milliseconds(400))
+            withAnimation(.spring(duration: 0.3, bounce: 0)) {
+                launchGateProgressDelayElapsed = true
             }
         }
         .modifier(WindowTitleSetter(
@@ -314,6 +337,9 @@ struct RelayDashboardApp: App {
         .defaultSize(width: 760, height: 620)
         .restorationBehavior(.disabled)
         .windowLevel(.floating)
+        // The Window menu's own "Variables" item (RelayCommands, ⌥⌘V) opens this
+        // window; without this the scene adds a second, shortcut-less entry.
+        .commandsRemoved()
 #else
         WindowGroup {
             appRootView

@@ -1,6 +1,8 @@
 import Foundation
 #if os(macOS)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
 #endif
 
 @MainActor
@@ -34,6 +36,8 @@ final class SharedValuePickerCoordinator {
 #if os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(token, forType: .string)
+#elseif canImport(UIKit)
+        UIPasteboard.general.string = token
 #endif
         return .copied
     }

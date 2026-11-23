@@ -326,6 +326,11 @@ struct RosterTeamAssignmentsModuleView: View {
     let tab: DashboardTab
     let sharedRosters: [DashboardRoster]
 
+    // Scale with Dynamic Type; the smallest label stays at 11pt or more.
+    @ScaledMetric(relativeTo: .caption2) private var labelFontSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .body) private var nameFontSize: CGFloat = 15
+    @ScaledMetric(relativeTo: .caption) private var notesFontSize: CGFloat = 12
+
     private var resolvedRoster: DashboardRoster? {
         RosterTeamAssignmentsResolver.resolveRoster(
             config: config,
@@ -352,18 +357,23 @@ struct RosterTeamAssignmentsModuleView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if resolvedRoster == nil {
-                emptyState
-            } else if displayRows.isEmpty {
-                noRowsState
-            } else {
-                content
+        // Scrolls when the roster is taller than the tile instead of clipping rows.
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 8) {
+                if resolvedRoster == nil {
+                    emptyState
+                } else if displayRows.isEmpty {
+                    noRowsState
+                } else {
+                    content
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .scrollIndicators(.automatic)
+        .scrollBounceBehavior(.basedOnSize)
     }
 
     @ViewBuilder
@@ -399,24 +409,23 @@ struct RosterTeamAssignmentsModuleView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 if !row.position.isEmpty {
+                    // Plain fills on the chips: the row card is the only material layer.
                     Text(row.position.uppercased())
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(.system(size: labelFontSize, weight: .bold, design: .rounded))
                         .foregroundStyle(.primary.opacity(0.9))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.09))
-                        .background(.thinMaterial)
-                        .clipShape(Capsule())
+                        .background(Color.primary.opacity(0.12), in: Capsule())
                 }
 
                 Text(row.name.isEmpty ? "—" : row.name)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: nameFontSize, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 if let notes = row.notes, !notes.isEmpty {
                     Text(notes)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .font(.system(size: notesFontSize, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -426,13 +435,11 @@ struct RosterTeamAssignmentsModuleView: View {
 
             if let team = row.team, !config.groupByTeam {
                 Text(team)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(.system(size: labelFontSize, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.primary.opacity(0.06))
-                    .background(.thinMaterial)
-                    .clipShape(Capsule())
+                    .background(Color.primary.opacity(0.10), in: Capsule())
             }
         }
         .padding(.horizontal, 8)

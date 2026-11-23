@@ -59,7 +59,7 @@ struct TileGroupCreateSheet: View {
                 Text("Color")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                ColorPicker("", selection: $color, supportsOpacity: false)
+                ColorPicker("Group color", selection: $color, supportsOpacity: false)
                     .labelsHidden()
             }
 
@@ -105,6 +105,7 @@ struct TileGroupCreateSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { onCancel() }
+                    .keyboardShortcut(.cancelAction)
                 Button(actionTitle) { onCommit() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

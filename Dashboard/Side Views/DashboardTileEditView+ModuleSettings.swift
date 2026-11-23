@@ -6,6 +6,19 @@ import CoreAudio
 
 extension DashboardTileEditView {
 
+    /// Applies `change` to the local copy (for an immediate UI refresh), then writes it to the
+    /// tile through the inspector's undo path, named "Change <settingsName> Settings".
+    /// A drag or a burst of typing in one module's settings becomes a single undo step.
+    func commitModuleEdit(
+        _ moduleID: UUID,
+        settingsName: String,
+        _ change: (inout DashboardModuleModel) -> Void
+    ) {
+        guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
+        change(&editableModules[idx])
+        onCommitModuleChange(moduleID, TileEditorCopy.moduleSettingsActionName(settingsName), change)
+    }
+
     @ViewBuilder func moduleSettings_person(module: DashboardModuleModel) -> some View {
         // Module-owned settings (PersonTileView.swift)
         let moduleID = module.id
@@ -24,19 +37,7 @@ extension DashboardTileEditView {
                 return initialModel
             },
             set: { newValue in
-                guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-
-                var updatedModule = editableModules[idx]
-                updatedModule.kind = .person(newValue)
-                editableModules[idx] = updatedModule
-
-                if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }),
-                   var tileModules = tab.tiles[tileIndex].modules,
-                   let moduleIndex = tileModules.firstIndex(where: { $0.id == moduleID }) {
-                    tileModules[moduleIndex] = updatedModule
-                    tab.tiles[tileIndex].modules = tileModules
-                }
-
+                commitModuleEdit(moduleID, settingsName: "Person") { $0.kind = .person(newValue) }
                 persistChanges()
             }
         )
@@ -162,14 +163,8 @@ extension DashboardTileEditView {
                     ?? RosterTeamAssignmentsConfig.defaults()
             },
             set: { newValue in
-                guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-                editableModules[idx].rosterTeamAssignmentsConfig = newValue
-                if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                    if var tileModules = tab.tiles[tileIndex].modules,
-                       let moduleIndex = tileModules.firstIndex(where: { $0.id == moduleID }) {
-                        tileModules[moduleIndex].rosterTeamAssignmentsConfig = newValue
-                        tab.tiles[tileIndex].modules = tileModules
-                    }
+                commitModuleEdit(moduleID, settingsName: "Roster Team Assignments") {
+                    $0.rosterTeamAssignmentsConfig = newValue
                 }
                 persistChanges()
             }
@@ -264,11 +259,7 @@ extension DashboardTileEditView {
         ShureModuleSettingsInspector(
             config: configBinding,
             channels: shureChannelDescriptors,
-            showsTitle: $shureModuleShowsTitle,
-            onPersist: {
-                onSaveShureModuleShowsTitle(shureModuleShowsTitle)
-                persistChanges()
-            }
+            onPersist: { persistChanges() }
         )
         .onAppear {
             // Seed module-owned config once (migration from tile-level initial values).
@@ -283,8 +274,13 @@ extension DashboardTileEditView {
                 seeded.showBattery = initialShureShowBattery
                 seeded.showRFStrength = initialShureShowRFStrength
 
+                // A one-time migration, not an edit: write it without an undo step (like the
+                // ProPresenter/Resolume seeding). Undoing it would only re-seed on appear.
                 editableModules[currentIdx].shureConfig = seeded
-                onUpdateShureModuleConfig(moduleID, seeded)
+                if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }),
+                   let moduleIndex = tab.tiles[tileIndex].modules?.firstIndex(where: { $0.id == moduleID }) {
+                    tab.tiles[tileIndex].modules?[moduleIndex].shureConfig = seeded
+                }
                 persistChanges()
             }
         }
@@ -297,19 +293,11 @@ extension DashboardTileEditView {
                 editableModules.first(where: { $0.id == moduleID })?.shureOverviewConfig ?? ShureOverviewModuleConfig.default()
             },
             set: { newValue in
-                guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-                editableModules[idx].shureOverviewConfig = newValue
-
                 // Write config back into the live dashboard model so the tile
                 // re-renders immediately (e.g. displayStyle cards/list switch).
-                if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                    if var tileModules = tab.tiles[tileIndex].modules,
-                       let moduleIndex = tileModules.firstIndex(where: { $0.id == moduleID }) {
-                        tileModules[moduleIndex].shureOverviewConfig = newValue
-                        tab.tiles[tileIndex].modules = tileModules
-                    }
+                commitModuleEdit(moduleID, settingsName: "Shure Overview") {
+                    $0.shureOverviewConfig = newValue
                 }
-
                 persistChanges()
             }
         )
@@ -342,18 +330,7 @@ extension DashboardTileEditView {
                 editableModules.first(where: { $0.id == moduleID })?.sennheiserConfig ?? SennheiserWirelessModuleConfig()
             },
             set: { newValue in
-                guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-                editableModules[idx].sennheiserConfig = newValue
-
-                // Persist config back into the dashboard model
-                if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                    if var tileModules = tab.tiles[tileIndex].modules,
-                       let moduleIndex = tileModules.firstIndex(where: { $0.id == moduleID }) {
-                        tileModules[moduleIndex].sennheiserConfig = newValue
-                        tab.tiles[tileIndex].modules = tileModules
-                    }
-                }
-
+                commitModuleEdit(moduleID, settingsName: "Sennheiser") { $0.sennheiserConfig = newValue }
                 persistChanges()
             }
         )
@@ -375,22 +352,13 @@ extension DashboardTileEditView {
                 return seeded
             },
             set: { newValue in
-                guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-                var updatedModule = editableModules[idx]
-                updatedModule.proPresenterConfig = newValue
-                editableModules[idx] = updatedModule
+                guard editableModules.contains(where: { $0.id == moduleID }) else { return }
 
                 // Push live config updates so the module immediately switches endpoints/modes.
                 ProPresenterModulePlugin.sharedService.setConfig(moduleID: moduleID, config: newValue)
 
                 // Persist ProPresenter module config back into the dashboard model.
-                if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                    if var tileModules = tab.tiles[tileIndex].modules,
-                       let moduleIndex = tileModules.firstIndex(where: { $0.id == moduleID }) {
-                        tileModules[moduleIndex].proPresenterConfig = newValue
-                        tab.tiles[tileIndex].modules = tileModules
-                    }
-                }
+                commitModuleEdit(moduleID, settingsName: "ProPresenter") { $0.proPresenterConfig = newValue }
                 persistChanges()
             }
         )
@@ -477,6 +445,9 @@ extension DashboardTileEditView {
         let modelBinding = Binding<TextModuleModel>(
             get: { module.textModel ?? initialModel },
             set: { newValue in
+                if let idx = editableModules.firstIndex(where: { $0.id == module.id }) {
+                    editableModules[idx].kind = .text(newValue)
+                }
                 onUpdateTextModule(module.id, newValue)
                 persistChanges()
             }
@@ -630,6 +601,9 @@ extension DashboardTileEditView {
         let modelBinding = Binding<ButtonModuleModel>(
             get: { module.buttonModel ?? initialModel },
             set: { newValue in
+                if let idx = editableModules.firstIndex(where: { $0.id == module.id }) {
+                    editableModules[idx].kind = .button(newValue)
+                }
                 onUpdateButtonModule(module.id, newValue)
                 persistChanges()
             }
@@ -683,6 +657,9 @@ extension DashboardTileEditView {
                 return initialModel
             },
             set: { newValue in
+                if let idx = editableModules.firstIndex(where: { $0.id == module.id }) {
+                    editableModules[idx].kind = .separator(newValue)
+                }
                 onUpdateSeparator(module.id, newValue)
                 persistChanges()
             }
@@ -706,20 +683,7 @@ extension DashboardTileEditView {
                 return seeded
             },
             set: { newValue in
-                guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-
-                // Update local copy for immediate UI refresh.
-                editableModules[idx].resolumeConfig = newValue
-
-                // Persist Resolume module config back into the dashboard model.
-                if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                    if var tileModules = tab.tiles[tileIndex].modules,
-                       let moduleIndex = tileModules.firstIndex(where: { $0.id == moduleID }) {
-                        tileModules[moduleIndex].resolumeConfig = newValue
-                        tab.tiles[tileIndex].modules = tileModules
-                    }
-                }
-
+                commitModuleEdit(moduleID, settingsName: "Resolume") { $0.resolumeConfig = newValue }
                 persistChanges()
             }
         )
@@ -771,7 +735,7 @@ extension DashboardTileEditView {
                 get: { currentModel.isEnabled },
                 set: { v in var u = currentModel; u.isEnabled = v; updateModel(u) }
             ))
-            Toggle("Show module title", isOn: Binding(
+            Toggle("Show title", isOn: Binding(
                 get: { currentModel.showsTitle },
                 set: { v in var u = currentModel; u.showsTitle = v; updateModel(u) }
             ))
@@ -994,21 +958,21 @@ extension DashboardTileEditView {
 
             HStack {
                 Text(currentModel.weighting == .ca ? "Safe Color" : "Normal Color"); Spacer()
-                ColorPicker("", selection: Binding(
+                ColorPicker(currentModel.weighting == .ca ? "Safe Color" : "Normal Color", selection: Binding(
                     get: { currentModel.limitColorNormal.swiftUIColor },
                     set: { v in var u = currentModel; u.limitColorNormal = CodableColor(v); updateModel(u) }
                 )).labelsHidden()
             }
             HStack {
                 Text(currentModel.weighting == .ca ? "Limit Color" : "Warning Color"); Spacer()
-                ColorPicker("", selection: Binding(
+                ColorPicker(currentModel.weighting == .ca ? "Limit Color" : "Warning Color", selection: Binding(
                     get: { currentModel.limitColorWarning.swiftUIColor },
                     set: { v in var u = currentModel; u.limitColorWarning = CodableColor(v); updateModel(u) }
                 )).labelsHidden()
             }
             HStack {
                 Text(currentModel.weighting == .ca ? "Out of Range Color" : "Alert Color"); Spacer()
-                ColorPicker("", selection: Binding(
+                ColorPicker(currentModel.weighting == .ca ? "Out of Range Color" : "Alert Color", selection: Binding(
                     get: { currentModel.limitColorAlert.swiftUIColor },
                     set: { v in var u = currentModel; u.limitColorAlert = CodableColor(v); updateModel(u) }
                 )).labelsHidden()
@@ -1072,17 +1036,7 @@ extension DashboardTileEditView {
             return DbReaderModuleModel()
         }()
         let updateModel: (DbReaderModuleModel) -> Void = { updated in
-            guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-            var updatedModule = editableModules[idx]
-            updatedModule.kind = .dbReader(updated)
-            editableModules[idx] = updatedModule
-            if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                if var tileModules = tab.tiles[tileIndex].modules,
-                   let moduleIndex = tileModules.firstIndex(where: { $0.id == moduleID }) {
-                    tileModules[moduleIndex] = updatedModule
-                    tab.tiles[tileIndex].modules = tileModules
-                }
-            }
+            commitModuleEdit(moduleID, settingsName: "SPL Meter") { $0.kind = .dbReader(updated) }
             persistChanges()
         }
         let dbReaderController = DbReaderControllerStore.shared.controller(moduleId: moduleID, tileId: tileID, settings: currentModel)
@@ -1177,13 +1131,7 @@ extension DashboardTileEditView {
             return RTAModuleModel()
         }()
         let update: (RTAModuleModel) -> Void = { updated in
-            guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-            var mod = editableModules[idx]; mod.kind = .rta(updated); editableModules[idx] = mod
-            if let ti = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                if var modules = tab.tiles[ti].modules, let mi = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[mi] = mod; tab.tiles[ti].modules = modules
-                }
-            }
+            commitModuleEdit(moduleID, settingsName: "RTA") { $0.kind = .rta(updated) }
             persistChanges()
         }
 
@@ -1379,13 +1327,7 @@ extension DashboardTileEditView {
             return SpectrogramModuleModel()
         }()
         let update: (SpectrogramModuleModel) -> Void = { updated in
-            guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-            var mod = editableModules[idx]; mod.kind = .spectrograph(updated); editableModules[idx] = mod
-            if let ti = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                if var modules = tab.tiles[ti].modules, let mi = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[mi] = mod; tab.tiles[ti].modules = modules
-                }
-            }
+            commitModuleEdit(moduleID, settingsName: "Spectrograph") { $0.kind = .spectrograph(updated) }
             persistChanges()
         }
 
@@ -1590,7 +1532,7 @@ extension DashboardTileEditView {
 
                 Spacer(minLength: 0)
 
-                ColorPicker("", selection: Binding(
+                ColorPicker("Transcript color for \(source.displayName.isEmpty ? "this input" : source.displayName)", selection: Binding(
                     get: { ctx.currentModel.sources.indices.contains(idx) ? ctx.currentModel.sources[idx].color.swiftUIColor : .white },
                     set: { v in
                         var updated = ctx.currentModel
@@ -1710,7 +1652,7 @@ extension DashboardTileEditView {
 
                 Spacer(minLength: 0)
 
-                ColorPicker("", selection: Binding(
+                ColorPicker("Transcript color for \(source.displayName.isEmpty ? "this input" : source.displayName)", selection: Binding(
                     get: { ctx.currentModel.sources.indices.contains(idx) ? ctx.currentModel.sources[idx].color.swiftUIColor : .white },
                     set: { v in
                         var updated = ctx.currentModel
@@ -1870,16 +1812,8 @@ extension DashboardTileEditView {
             if let limit = configuredSourceLimit, normalized.sources.count > limit {
                 normalized.sources = Array(normalized.sources.prefix(limit))
             }
-            guard let idx = editableModules.firstIndex(where: { $0.id == moduleID }) else { return }
-            var updatedModule = editableModules[idx]
-            updatedModule.kind = .liveTranscription(normalized)
-            editableModules[idx] = updatedModule
-            if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }) {
-                if var tileModules = tab.tiles[tileIndex].modules,
-                   let moduleIndex = tileModules.firstIndex(where: { $0.id == moduleID }) {
-                    tileModules[moduleIndex] = updatedModule
-                    tab.tiles[tileIndex].modules = tileModules
-                }
+            commitModuleEdit(moduleID, settingsName: "Live Transcription") {
+                $0.kind = .liveTranscription(normalized)
             }
             persistChanges()
         }

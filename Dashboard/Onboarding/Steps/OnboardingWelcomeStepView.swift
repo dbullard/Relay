@@ -30,6 +30,12 @@ struct OnboardingWelcomeStepView: View {
     ]
 
     var body: some View {
+        ScrollView {
+            welcomeContent
+        }
+    }
+
+    private var welcomeContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             Image(systemName: "wand.and.stars")
                 .font(.system(size: 48))
@@ -38,6 +44,7 @@ struct OnboardingWelcomeStepView: View {
                 .font(.title3.weight(.semibold))
             Text("We'll walk through connecting your services, finding devices on your network, and choosing audio inputs — then build a dashboard from what you set up. Every step is optional, and you can skip anything you don't use.")
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 8) {
                 ForEach(previewFeatures) { feature in
@@ -51,10 +58,8 @@ struct OnboardingWelcomeStepView: View {
                 }
             }
             .padding(.top, 8)
-
-            Spacer()
         }
         .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }

@@ -56,7 +56,7 @@ struct RichTextEditor_iOS: UIViewRepresentable {
             hostingController.view.topAnchor.constraint(equalTo: accessoryContainer.topAnchor),
             hostingController.view.bottomAnchor.constraint(equalTo: accessoryContainer.bottomAnchor),
         ])
-        accessoryContainer.frame = CGRect(x: 0, y: 0, width: 0, height: 44)
+        accessoryContainer.frame = CGRect(x: 0, y: 0, width: 0, height: 52)
         textView.inputAccessoryView = accessoryContainer
 
         context.coordinator.inputAccessoryHostingController = hostingController

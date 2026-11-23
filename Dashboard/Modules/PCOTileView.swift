@@ -906,7 +906,7 @@ struct PCOModuleSettingsInspector: View {
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Show header (Planning Center)", isOn: persistedBinding(for: \.showHeader))
+                    Toggle("Show title", isOn: persistedBinding(for: \.showHeader))
 
                     Toggle("Show summary line", isOn: persistedBinding(for: \.showSummaryLine))
 
@@ -1399,6 +1399,43 @@ private struct TeamAssignmentsContentHeightPreferenceKey: PreferenceKey {
     }
 }
 
+private struct TeamAssignmentRowBottomsPreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGFloat] = [:]
+
+    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// Fit-to-tile maths for the Team Assignments list: shrink to fit down to a readable
+/// floor, and past that count the rows that don't fit for a "+N more" footer.
+enum PCOTeamAssignmentsOverflow {
+    /// 14pt text shrinks to no less than ~10.5pt.
+    static let minimumScale: CGFloat = 0.75
+
+    static func scale(availableHeight: CGFloat, contentHeight: CGFloat) -> CGFloat {
+        guard availableHeight > 0, contentHeight > 0 else { return 1 }
+        return min(1, max(minimumScale, availableHeight / contentHeight))
+    }
+
+    static func overflows(availableHeight: CGFloat, contentHeight: CGFloat) -> Bool {
+        guard availableHeight > 0, contentHeight > 0 else { return false }
+        return contentHeight * minimumScale > availableHeight + 0.5
+    }
+
+    /// Rows whose bottom (scaled) falls below the space left above the footer.
+    static func hiddenRowCount(
+        rowBottoms: [CGFloat],
+        scale: CGFloat,
+        availableHeight: CGFloat,
+        footerHeight: CGFloat
+    ) -> Int {
+        guard rowBottoms.contains(where: { $0 * scale > availableHeight + 0.5 }) else { return 0 }
+        let visibleLimit = availableHeight - footerHeight
+        return rowBottoms.filter { $0 * scale > visibleLimit }.count
+    }
+}
+
 private struct RundownViewportWidthPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -1523,6 +1560,16 @@ struct PCOTileView: View {
     @State private var isLoadingRundown = false
     @State private var rundownError: String?
     @State private var lastAppliedSettingsKey: String?
+    /// Work queued by entering Live Mode, run by the live-refresh `.task(id:)` so it is
+    /// cancelled with the task instead of racing it in a detached `Task {}`.
+    @State private var pendingLiveEntryRefresh: PCOLiveEntryRefresh?
+
+    private enum PCOLiveEntryRefresh {
+        /// Cached data was restored; only the live snapshot needs a forced refresh.
+        case snapshotOnly
+        /// Nothing cached: fetch rundown and teams first, then the live snapshot.
+        case fullRefresh
+    }
 
     /// Tracks which service/plan the last successful rundown load came from.
     /// This lets us distinguish between a legitimate "no items" change (e.g.,
@@ -1800,8 +1847,15 @@ struct PCOTileView: View {
 
             if showsSignInAction, reason == Self.signInExpiredReason {
                 Button {
-                    // Planning Center sign-in lives in App Settings.
-                    NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+                    // Planning Center sign-in lives on Settings' External Connections page.
+                    NotificationCenter.default.post(
+                        name: .openSettingsRequested,
+                        object: nil,
+                        userInfo: [
+                            DashboardSettingsInitialSelection.notificationPageKey:
+                                DashboardSettingsInitialSelection.planningCenterPageValue
+                        ]
+                    )
                 } label: {
                     Text("Sign In Again")
                         .font(captionFont)
@@ -3105,19 +3159,10 @@ struct PCOTileView: View {
             if newValue {
                 guard shouldRenderPCODataSections else { return }
                 cacheCurrentState()
-                if restoreCachedStateIfAvailable() {
-                    Task {
-                        await refreshLiveSnapshotInBackgroundIfNeeded(force: true)
-                    }
-                    return
-                }
-                Task {
-                    await refreshRundownIfNeeded()
-                    await refreshTeamsIfNeeded()
-                    cacheCurrentState()
-                    await refreshLiveSnapshotInBackgroundIfNeeded(force: true)
-                }
+                // The async part runs in the live-refresh task below.
+                pendingLiveEntryRefresh = restoreCachedStateIfAvailable() ? .snapshotOnly : .fullRefresh
             } else {
+                pendingLiveEntryRefresh = nil
                 if restoreCachedStateIfAvailable() {
                     return
                 }
@@ -3128,8 +3173,26 @@ struct PCOTileView: View {
         .task(id: "pcoLiveRefresh|\(isLiveMode ? "1" : "0")|\(isPCOConfigOpen ? "1" : "0")|\(currentTabSnapshotKey)") {
             guard isLiveMode, !isLANSnapshotRendering, !isPCOConfigOpen else { return }
             guard shouldRenderPCODataSections else { return }
+            var justForcedRefresh = false
+            if let entry = pendingLiveEntryRefresh {
+                if entry == .fullRefresh {
+                    await refreshRundownIfNeeded()
+                    await refreshTeamsIfNeeded()
+                    cacheCurrentState()
+                }
+                guard !Task.isCancelled else { return }
+                await refreshLiveSnapshotInBackgroundIfNeeded(force: true)
+                guard !Task.isCancelled else { return }
+                // Cleared only once done, so a cancelled run (sheet opened) retries it.
+                pendingLiveEntryRefresh = nil
+                justForcedRefresh = true
+            }
             while isLiveMode && !Task.isCancelled {
-                await refreshLiveSnapshotInBackgroundIfNeeded()
+                if justForcedRefresh {
+                    justForcedRefresh = false
+                } else {
+                    await refreshLiveSnapshotInBackgroundIfNeeded()
+                }
                 do {
                     try await Task.sleep(nanoseconds: UInt64(Self.liveModeRefreshInterval * 1_000_000_000))
                 } catch {
@@ -3449,17 +3512,37 @@ struct PCOTileView: View {
         let horizontalAlignment: Alignment
 
         @State private var measuredHeight: CGFloat = 0
+        @State private var availableHeight: CGFloat = 0
+        /// Bottom edge of each row in unscaled content coordinates. Only measured
+        /// while the list overflows at the minimum scale, so the common case pays nothing.
+        @State private var rowBottoms: [UUID: CGFloat] = [:]
+
+        private static let contentSpace = "pcoTeamAssignmentsContent"
+        private static let overflowFooterHeight: CGFloat = 24
 
         private func scaleFactor(availableHeight: CGFloat) -> CGFloat {
-            guard availableHeight > 0, measuredHeight > 0 else { return 1 }
-            let scale = availableHeight / measuredHeight
-            return min(1, max(0.58, scale))
+            PCOTeamAssignmentsOverflow.scale(availableHeight: availableHeight, contentHeight: measuredHeight)
+        }
+
+        private var isOverflowing: Bool {
+            PCOTeamAssignmentsOverflow.overflows(availableHeight: availableHeight, contentHeight: measuredHeight)
+        }
+
+        private var hiddenRowCount: Int {
+            guard isOverflowing else { return 0 }
+            return PCOTeamAssignmentsOverflow.hiddenRowCount(
+                rowBottoms: Array(rowBottoms.values),
+                scale: scaleFactor(availableHeight: availableHeight),
+                availableHeight: availableHeight,
+                footerHeight: Self.overflowFooterHeight
+            )
         }
 
         var body: some View {
             GeometryReader { geometry in
                 let scale = scaleFactor(availableHeight: geometry.size.height)
                 content
+                    .coordinateSpace(.named(Self.contentSpace))
                     .background(
                         GeometryReader { contentGeometry in
                             Color.clear
@@ -3473,9 +3556,39 @@ struct PCOTileView: View {
                     .frame(width: geometry.size.width / max(scale, 0.001), alignment: .topLeading)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { newHeight in
+                availableHeight = newHeight
+            }
             .onPreferenceChange(TeamAssignmentsContentHeightPreferenceKey.self) { newHeight in
                 guard newHeight > 0 else { return }
                 measuredHeight = newHeight
+            }
+            .onPreferenceChange(TeamAssignmentRowBottomsPreferenceKey.self) { bottoms in
+                rowBottoms = bottoms
+            }
+            .overlay(alignment: .bottomTrailing) {
+                let hidden = hiddenRowCount
+                if hidden > 0 {
+                    Text("+\(hidden) more")
+                        .font(captionFont.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.7), in: Capsule())
+                        .frame(height: Self.overflowFooterHeight)
+                        .accessibilityLabel("\(hidden) more assignments not shown")
+                }
+            }
+        }
+
+        /// Reports a row's bottom edge, only while the list overflows.
+        private func rowBottomReporter(_ rowID: UUID) -> some View {
+            GeometryReader { rowGeometry in
+                Color.clear.preference(
+                    key: TeamAssignmentRowBottomsPreferenceKey.self,
+                    value: isOverflowing ? [rowID: rowGeometry.frame(in: .named(Self.contentSpace)).maxY] : [:]
+                )
             }
         }
 
@@ -3528,12 +3641,14 @@ struct PCOTileView: View {
                         ) {
                             ForEach(rows) { row in
                                 rowCard(row, useTwoColumns: true)
+                                    .background { if isOverflowing { rowBottomReporter(row.id) } }
                             }
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 5) {
                             ForEach(rows) { row in
                                 rowCard(row, useTwoColumns: false)
+                                    .background { if isOverflowing { rowBottomReporter(row.id) } }
                             }
                         }
                     }

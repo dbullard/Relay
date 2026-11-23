@@ -11,73 +11,103 @@ struct DashboardTileContextMenu: View {
     let onEditRequested: (Bool) -> Void
     let onDelete: () -> Void
     let onPersist: (_ reconcileGraphNodes: Bool) -> Void
+    /// Registers an undo step (call before the edit it undoes).
+    let onUndoSnapshot: (_ actionName: String) -> Void
     let onAlignSelectedTilesToGrid: () -> Void
     let onResolveTileOverlapsToGrid: () -> Void
     let onDistributeSpacingHorizontally: () -> Void
     let onDistributeSpacingVertically: () -> Void
 
+    /// Tiles the menu acts on: the selection when this tile is part of it, otherwise just
+    /// this tile (right-clicking a tile doesn't change the selection).
+    private var targetTileIDs: Set<UUID> {
+        selectedTileIDs.contains(tile.id) ? selectedTileIDs : [tile.id]
+    }
+
     var body: some View {
+        let targetCount = DashboardMenuTitles.targetTileCount(tileID: tile.id, selectedTileIDs: selectedTileIDs)
+
         if !isEmptyTile {
             Button {
                 onEditRequested(false)
             } label: {
-                Label("Edit Tile(s)…", systemImage: "slider.horizontal.3")
+                Label(DashboardMenuTitles.editTiles(count: targetCount), systemImage: "slider.horizontal.3")
             }
         }
 
         if !isLiveMode {
+            if !isEmptyTile {
+                Divider()
+            }
+
             Button {
-                NotificationCenter.default.post(name: .createTileGroupRequested, object: nil)
+                if targetCount > 1 {
+                    // Same path as Edit ▸ Duplicate (⌘D), which duplicates the selection.
+                    NotificationCenter.default.post(name: .duplicateTileRequested, object: nil)
+                } else {
+                    duplicateTile()
+                }
             } label: {
-                DashboardSymbolLabel("Group Tile(s)…", preferred: "square.grid.2x2")
+                Label(DashboardMenuTitles.duplicateTiles(count: targetCount), systemImage: "square.on.square")
+            }
+
+            if targetCount >= 2 {
+                Button {
+                    NotificationCenter.default.post(name: .createTileGroupRequested, object: nil)
+                } label: {
+                    DashboardSymbolLabel(DashboardMenuTitles.groupTiles(count: targetCount), preferred: "square.grid.2x2")
+                }
+            }
+
+            Button {
+                NotificationCenter.default.post(name: .dashboardHideTilesRequested, object: targetTileIDs)
+            } label: {
+                Label("Hide", systemImage: "eye.slash")
             }
 
             Divider()
 
-            Button {
-                duplicateTile()
+            Menu {
+                Button {
+                    onDistributeSpacingHorizontally()
+                } label: {
+                    Label("Tidy Up Horizontally", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                }
+                .disabled(selectedTileIDs.count < 2)
+
+                Button {
+                    onDistributeSpacingVertically()
+                } label: {
+                    Label("Tidy Up Vertically", systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down")
+                }
+                .disabled(selectedTileIDs.count < 2)
+
+                if snapToGrid, gridSize > 0 {
+                    Button {
+                        onAlignSelectedTilesToGrid()
+                    } label: {
+                        DashboardSymbolLabel("Align to Grid", preferred: "square.grid.3x3")
+                    }
+                }
+
+                if gridSize > 0 {
+                    Button {
+                        onResolveTileOverlapsToGrid()
+                    } label: {
+                        DashboardSymbolLabel("Resolve Overlaps", preferred: "arrow.triangle.branch")
+                    }
+                }
             } label: {
-                Label("Duplicate Tile", systemImage: "square.on.square")
+                Label("Arrange", systemImage: "rectangle.3.group")
             }
-            .disabled(selectedTileIDs.count > 1)
 
             Divider()
-            
-            Button {
-                onDistributeSpacingHorizontally()
-            } label: {
-                Label("Tidy Up Horizontally", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-            }
-            .disabled(selectedTileIDs.count < 2)
-            
-            Button {
-                onDistributeSpacingVertically()
-            } label: {
-                Label("Tidy Up Vertically", systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down")
-            }
-            .disabled(selectedTileIDs.count < 2)
-
-            if snapToGrid, gridSize > 0 {
-                Button {
-                    onAlignSelectedTilesToGrid()
-                } label: {
-                    DashboardSymbolLabel("Align Selected Tiles to Grid", preferred: "square.grid.3x3")
-                }
-            }
-
-            if gridSize > 0 {
-                Button {
-                    onResolveTileOverlapsToGrid()
-                } label: {
-                    DashboardSymbolLabel("Resolve Tile Overlaps", preferred: "arrow.triangle.branch")
-                }
-            }
         }
 
         Button(role: .destructive) {
             onDelete()
         } label: {
-            Label(selectedTileIDs.count > 1 ? "Delete Tile(s)" : "Delete Tile", systemImage: "trash")
+            Label(DashboardMenuTitles.deleteTiles(count: targetCount), systemImage: "trash")
         }
     }
 
@@ -126,6 +156,7 @@ struct DashboardTileContextMenu: View {
             contentPadding: tile.contentPadding
         )
 
+        onUndoSnapshot("Duplicate Tile")
         tab.tiles.append(duplicate)
         onPersist(true)
     }

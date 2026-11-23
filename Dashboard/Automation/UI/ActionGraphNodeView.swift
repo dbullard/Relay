@@ -296,6 +296,9 @@ struct ActionGraphNodeView<Settings: View>: View {
     let warningStyle: ActionNodeWarningStyle
     let isRunning: Bool
     let onDismissWarning: (() -> Void)?
+    /// Result of the last run (OSC/HTTP/MIDI/Shure/Sennheiser), shown under the header.
+    let runStatus: GraphActionRunStatus?
+    let onDismissRunStatus: (() -> Void)?
 
     init(
         nodeId: UUID,
@@ -310,6 +313,8 @@ struct ActionGraphNodeView<Settings: View>: View {
         warningStyle: ActionNodeWarningStyle = .warning,
         isRunning: Bool = false,
         onDismissWarning: (() -> Void)? = nil,
+        runStatus: GraphActionRunStatus? = nil,
+        onDismissRunStatus: (() -> Void)? = nil,
         isSelected: Bool,
         isHoverReceiver: Bool,
         isLinkingTarget: Bool,
@@ -329,6 +334,8 @@ struct ActionGraphNodeView<Settings: View>: View {
         self.warningStyle = warningStyle
         self.isRunning = isRunning
         self.onDismissWarning = onDismissWarning
+        self.runStatus = runStatus
+        self.onDismissRunStatus = onDismissRunStatus
         self.isSelected = isSelected
         self.isHoverReceiver = isHoverReceiver
         self.isLinkingTarget = isLinkingTarget
@@ -337,17 +344,26 @@ struct ActionGraphNodeView<Settings: View>: View {
         self.settings = settings
     }
 
+    private var isActionRunning: Bool {
+        isRunning || runStatus?.isRunning == true
+    }
+
     var body: some View {
         GraphNodeChromeContainer(
             tint: nodeTintColor,
             border: Color.white.opacity(0.10),
             isSelected: isSelected,
             isHoverReceiver: isHoverReceiver,
-            showsError: warningStyle == .error && warningText != nil,
+            showsError: (warningStyle == .error && warningText != nil) || runStatus?.isFailure == true,
             leadingOverlay: AnyView(receiverNub)
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 headerRow
+                if let runStatus {
+                    GraphActionRunStatusRow(status: runStatus, onDismiss: onDismissRunStatus)
+                } else if let warningText {
+                    GraphNodeMessageRow(text: warningText, isError: warningStyle == .error)
+                }
                 settings()
             }
         }
@@ -416,11 +432,11 @@ struct ActionGraphNodeView<Settings: View>: View {
                 onRun()
             }) {
                 HStack(spacing: 6) {
-                    if isRunning {
+                    if isActionRunning {
                         ProgressView()
                             .controlSize(.small)
                     }
-                    Text(isRunning ? "Refreshing…" : "Run")
+                    Text(isRunning ? "Refreshing…" : (isActionRunning ? "Running…" : "Run"))
                         .font(.subheadline)
                 }
                 .padding(.horizontal, 12)
@@ -431,6 +447,7 @@ struct ActionGraphNodeView<Settings: View>: View {
                 )
             }
             .buttonStyle(.plain)
+            // Only the app-control refresh blocks re-running; a send in flight can be re-sent.
             .disabled(isLinkingTarget || isRunning)
         }
     }
@@ -1523,7 +1540,8 @@ struct OSCSendActionSettingsView: View {
                     .font(.caption)
                     .opacity(0.8)
 
-                ForEach(arguments.indices, id: \.self) { index in
+                // Keyed by argument id so moving or deleting a row keeps each row's state.
+                ForEach(Array(arguments.enumerated()), id: \.element.id) { index, _ in
                     argumentRow(at: index)
                 }
 
@@ -1558,24 +1576,36 @@ struct OSCSendActionSettingsView: View {
                 arguments.swapAt(index, index - 1)
             } label: {
                 Image(systemName: "arrow.up")
+                    .frame(minWidth: graphMinimumHitTarget, minHeight: graphMinimumHitTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(GraphBorderlessButtonStyle())
             .disabled(index == arguments.startIndex)
+            .help("Move Up")
+            .accessibilityLabel("Move argument \(index + 1) up")
 
             Button {
                 arguments.swapAt(index, index + 1)
             } label: {
                 Image(systemName: "arrow.down")
+                    .frame(minWidth: graphMinimumHitTarget, minHeight: graphMinimumHitTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(GraphBorderlessButtonStyle())
             .disabled(index == arguments.index(before: arguments.endIndex))
+            .help("Move Down")
+            .accessibilityLabel("Move argument \(index + 1) down")
 
             Button(role: .destructive) {
                 arguments.remove(at: index)
             } label: {
                 Image(systemName: "trash")
+                    .frame(minWidth: graphMinimumHitTarget, minHeight: graphMinimumHitTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(GraphBorderlessButtonStyle())
+            .help("Delete Argument")
+            .accessibilityLabel("Delete argument \(index + 1)")
         }
     }
 

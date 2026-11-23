@@ -115,6 +115,8 @@ struct TimeModuleView: View {
 
     private struct CountdownRuntimeState {
         var remainingSeconds: Int
+        /// Seconds past zero; the countdown keeps running into overrun.
+        var overrunSeconds: Int = 0
         var isRunning: Bool
         /// When a running countdown reaches zero. Time is derived from this, so ticks
         /// skipped while typing, off-screen or with the ticker paused don't lose time.
@@ -223,8 +225,16 @@ struct TimeModuleView: View {
         isLiveMode && autoStartCountdownInLiveMode
     }
     @State private var remainingSeconds: Int = 300
+    @State private var overrunSeconds: Int = 0
     @State private var isCountdownRunning: Bool = false
     @State private var countdownEndDate: Date? = nil
+    /// Set when Reset is tapped in Live Mode; Reset there asks first.
+    @State private var pendingLiveReset: TimeDisplayMode?
+
+    /// Past zero: running into overrun, or paused there.
+    private var isCountdownOver: Bool {
+        remainingSeconds <= 0 && (isCountdownRunning || overrunSeconds > 0)
+    }
 
     // Clock settings
 
@@ -276,7 +286,24 @@ struct TimeModuleView: View {
             // update the remaining time if the countdown is not currently running.
             if !isCountdownRunning {
                 remainingSeconds = newValue
+                overrunSeconds = 0
             }
+        }
+        .confirmationDialog(
+            pendingLiveReset == .timer ? "Reset the timer?" : "Reset the countdown?",
+            isPresented: Binding(
+                get: { pendingLiveReset != nil },
+                set: { if !$0 { pendingLiveReset = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                if pendingLiveReset == .timer { resetTimer() } else { resetCountdown() }
+                pendingLiveReset = nil
+            }
+            Button("Cancel", role: .cancel) { pendingLiveReset = nil }
+        } message: {
+            Text("You're in Live Mode.")
         }
         .onAppear {
             restoreCountdownRuntimeStateIfNeeded()
@@ -292,6 +319,7 @@ struct TimeModuleView: View {
                 startCountdownForLiveModeEntry()
             } else if !newValue, !isCountdownRunning {
                 remainingSeconds = countdownSeconds
+                overrunSeconds = 0
             }
         }
         .onChange(of: autoStartTimerInLiveMode, initial: false) { _, newValue in
@@ -303,11 +331,19 @@ struct TimeModuleView: View {
         .onChange(of: remainingSeconds, initial: false) { _, _ in
             persistCountdownRuntimeState()
         }
+        .onChange(of: overrunSeconds, initial: false) { _, _ in
+            persistCountdownRuntimeState()
+        }
         .onChange(of: isCountdownRunning, initial: false) { _, running in
             if running {
-                // Keep an end date restored from the runtime store; otherwise anchor now.
+                // Keep an end date restored from the runtime store; otherwise anchor now
+                // (in the past when resuming a paused overrun, so it keeps counting up).
                 if countdownEndDate == nil {
-                    countdownEndDate = Date().addingTimeInterval(TimeInterval(remainingSeconds))
+                    countdownEndDate = TimeModuleClock.countdownEndDate(
+                        resumingAt: Date(),
+                        remainingSeconds: remainingSeconds,
+                        overrunSeconds: overrunSeconds
+                    )
                 }
             } else {
                 countdownEndDate = nil
@@ -373,16 +409,35 @@ struct TimeModuleView: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(formatSeconds(remainingSeconds))
-                    .font(timeFont)
-                    .foregroundStyle(resolvedPrimaryColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    if isCountdownOver {
+                        Label(applyCapitalization("OVER"), systemImage: "exclamationmark.circle.fill")
+                            .font(.system(size: max(11, baseFontSize * 0.55), weight: .bold))
+                            .foregroundStyle(Color.red)
+                    }
+                    Text(isCountdownOver ? "+" + formatSeconds(overrunSeconds) : formatSeconds(remainingSeconds))
+                        .font(timeFont)
+                        .foregroundStyle(isCountdownOver ? Color.red : resolvedPrimaryColor)
+                        .contentTransition(.numericText())
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Countdown")
+                .accessibilityValue(
+                    isCountdownOver
+                        ? "Over by \(formatSeconds(overrunSeconds))"
+                        : formatSeconds(remainingSeconds)
+                )
 
                 Spacer()
 
                 if !hidesCountdownStartButtonInLiveMode {
                     Button(isCountdownRunning ? "Pause" : "Start") {
-                        if remainingSeconds <= 0 {
+                        // Pause keeps everything, overrun included; Start from a paused
+                        // overrun resumes it. Only a countdown stopped at exactly zero
+                        // (nothing to resume) starts over from the full duration.
+                        if !isCountdownRunning && remainingSeconds <= 0 && !isCountdownOver {
                             remainingSeconds = countdownSeconds
+                            overrunSeconds = 0
                         }
                         isCountdownRunning.toggle()
                     }
@@ -390,28 +445,43 @@ struct TimeModuleView: View {
                 }
 
                 Button("Reset") {
-                    isCountdownRunning = false
-                    remainingSeconds = countdownSeconds
+                    if isLiveMode {
+                        pendingLiveReset = .countdown
+                    } else {
+                        resetCountdown()
+                    }
                 }
             }
         }
         .multilineTextAlignment(resolvedTextAlignment)
         .frame(maxWidth: .infinity, alignment: resolvedHorizontalAlignment)
         .onAppear {
-            if remainingSeconds <= 0 || remainingSeconds > countdownSeconds {
+            // A countdown in overrun (running or paused past zero) keeps its state.
+            if (remainingSeconds <= 0 && !isCountdownOver) || remainingSeconds > countdownSeconds {
                 remainingSeconds = countdownSeconds
+                overrunSeconds = 0
             }
         }
         .onReceive(sharedTick) { date in
             // Skipping a tick only delays the redraw: the value comes from the end date.
+            // Past zero the countdown keeps running and counts the overrun up.
             guard !isTextInputActive else { return }
             guard selectedMode == .countdown else { return }
             guard isCountdownRunning, let countdownEndDate else { return }
             remainingSeconds = TimeModuleClock.countdownRemaining(endDate: countdownEndDate, now: date)
-            if remainingSeconds <= 0 {
-                isCountdownRunning = false
-            }
+            overrunSeconds = TimeModuleClock.countdownOverrun(endDate: countdownEndDate, now: date)
         }
+    }
+
+    private func resetCountdown() {
+        isCountdownRunning = false
+        remainingSeconds = countdownSeconds
+        overrunSeconds = 0
+    }
+
+    private func resetTimer() {
+        isTimerRunning = false
+        timerSeconds = 0
     }
 
     private var timerView: some View {
@@ -431,8 +501,11 @@ struct TimeModuleView: View {
                 }
 
                 Button("Reset") {
-                    isTimerRunning = false
-                    timerSeconds = 0
+                    if isLiveMode {
+                        pendingLiveReset = .timer
+                    } else {
+                        resetTimer()
+                    }
                 }
             }
 
@@ -471,13 +544,16 @@ struct TimeModuleView: View {
             return
         }
         if state.isRunning, let endDate = state.endDate {
-            // Catch up on time that passed while this tile wasn't on screen.
-            let remaining = TimeModuleClock.countdownRemaining(endDate: endDate, now: Date())
-            remainingSeconds = remaining
-            countdownEndDate = remaining > 0 ? endDate : nil
-            isCountdownRunning = remaining > 0
+            // Catch up on time that passed while this tile wasn't on screen,
+            // including any overrun past zero.
+            let now = Date()
+            remainingSeconds = TimeModuleClock.countdownRemaining(endDate: endDate, now: now)
+            overrunSeconds = TimeModuleClock.countdownOverrun(endDate: endDate, now: now)
+            countdownEndDate = endDate
+            isCountdownRunning = true
         } else {
             remainingSeconds = state.remainingSeconds
+            overrunSeconds = state.overrunSeconds
             isCountdownRunning = state.isRunning
         }
     }
@@ -486,6 +562,7 @@ struct TimeModuleView: View {
         CountdownRuntimeStore.shared.setState(
             CountdownRuntimeState(
                 remainingSeconds: remainingSeconds,
+                overrunSeconds: overrunSeconds,
                 isRunning: isCountdownRunning,
                 endDate: countdownEndDate
             ),
@@ -541,8 +618,11 @@ struct TimeModuleView: View {
     }
 
     private func startCountdownForLiveModeEntry() {
+        // Already running (possibly in overrun after the tile was re-shown): leave it.
+        guard !isCountdownRunning else { return }
         if remainingSeconds <= 0 || remainingSeconds > countdownSeconds {
             remainingSeconds = countdownSeconds
+            overrunSeconds = 0
         }
         isCountdownRunning = countdownSeconds > 0
     }
@@ -563,6 +643,22 @@ enum TimeModuleClock {
     /// Whole seconds elapsed since `startDate`.
     static func timerElapsed(startDate: Date, now: Date) -> Int {
         max(0, Int(now.timeIntervalSince(startDate).rounded(.down)))
+    }
+
+    /// Whole seconds past the countdown's end date (0 until it has passed).
+    /// Counts up from 0 as `countdownRemaining` reaches 0, so the display goes
+    /// 0:01 → 0:00 → +0:01 without skipping or repeating a second.
+    static func countdownOverrun(endDate: Date, now: Date) -> Int {
+        timerElapsed(startDate: endDate, now: now)
+    }
+
+    /// End date for a countdown (re)started at `now`: ahead by the time left, or, when
+    /// resuming a paused overrun, behind by the overrun so it continues from there.
+    static func countdownEndDate(resumingAt now: Date, remainingSeconds: Int, overrunSeconds: Int) -> Date {
+        if remainingSeconds > 0 {
+            return now.addingTimeInterval(TimeInterval(remainingSeconds))
+        }
+        return now.addingTimeInterval(-TimeInterval(max(0, overrunSeconds)))
     }
 }
 
@@ -856,7 +952,7 @@ struct TimeModuleSettingsHost: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle("Show header", isOn: Binding(
+            Toggle("Show title", isOn: Binding(
                 get: { config.showHeader },
                 set: { newValue in
                     config.showHeader = newValue

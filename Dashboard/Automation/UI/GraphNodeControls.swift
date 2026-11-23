@@ -314,24 +314,26 @@ struct GraphPicker<SelectionValue: Hashable, Content: View, Label: View>: View {
                 ForEach(subviews) { subview in
                     let selected = isSelected(subview)
                     let tag = subview.containerValues.tag(for: SelectionValue.self)
-                    subview
-                        .font(controlFont)
-                        .lineLimit(1)
-                        .foregroundStyle(selected ? Color.primary : Color.secondary)
-                        .padding(.horizontal, 8)
-                        .frame(minWidth: 28, maxHeight: .infinity)
-                        .background(
-                            // Concentric with the track (ui-rules S1).
-                            RoundedRectangle(cornerRadius: outerRadius - inset)
-                                .fill(selected ? GraphControlMetrics.selectedSegmentFill : Color.clear)
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            guard isEnabled, let tag else { return }
-                            selection = tag
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                    // A Button (not a tap gesture) so Tab and Space can operate it.
+                    Button {
+                        guard isEnabled, let tag else { return }
+                        selection = tag
+                    } label: {
+                        subview
+                            .font(controlFont)
+                            .lineLimit(1)
+                            .foregroundStyle(selected ? Color.primary : Color.secondary)
+                            .padding(.horizontal, 8)
+                            .frame(minWidth: 28, maxHeight: .infinity)
+                            .background(
+                                // Concentric with the track (ui-rules S1).
+                                RoundedRectangle(cornerRadius: outerRadius - inset)
+                                    .fill(selected ? GraphControlMetrics.selectedSegmentFill : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
         }
@@ -448,27 +450,28 @@ private struct GraphPickerMenuRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 10, weight: .semibold))
-                .opacity(isSelected ? 1 : 0)
-                .frame(width: 12)
-            subview
-                .lineLimit(1)
-            Spacer(minLength: 0)
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .opacity(isSelected ? 1 : 0)
+                    .frame(width: 12)
+                subview
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isHovered ? Color.white : Color.primary)
+            .padding(.horizontal, 6)
+            .frame(minHeight: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isHovered ? Color.accentColor : Color.clear)
+            )
+            .contentShape(Rectangle())
         }
-        .foregroundStyle(isHovered ? Color.white : Color.primary)
-        .padding(.horizontal, 6)
-        .frame(minHeight: 22)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(isHovered ? Color.accentColor : Color.clear)
-        )
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .onTapGesture(perform: action)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -642,20 +645,22 @@ struct GraphSwitchToggleStyle: ToggleStyle {
                 if labelsVisibility != .hidden {
                     configuration.label
                 }
-                Capsule()
-                    .fill(configuration.isOn ? Color.accentColor : GraphControlMetrics.controlPressedFill)
-                    .overlay(alignment: configuration.isOn ? .trailing : .leading) {
-                        Circle()
-                            .fill(Color.white)
-                            .padding(2)
-                            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
-                    }
-                    .frame(width: size.width, height: size.height)
-                    .contentShape(Capsule())
-                    .onTapGesture {
-                        guard isEnabled else { return }
-                        configuration.isOn.toggle()
-                    }
+                Button {
+                    guard isEnabled else { return }
+                    configuration.isOn.toggle()
+                } label: {
+                    Capsule()
+                        .fill(configuration.isOn ? Color.accentColor : GraphControlMetrics.controlPressedFill)
+                        .overlay(alignment: configuration.isOn ? .trailing : .leading) {
+                            Circle()
+                                .fill(Color.white)
+                                .padding(2)
+                                .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+                        }
+                        .frame(width: size.width, height: size.height)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
             }
             .opacity(isEnabled ? 1 : 0.5)
             .accessibilityElement(children: .combine)
@@ -677,6 +682,18 @@ struct GraphCheckboxToggleStyle: ToggleStyle {
         @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
+            Button {
+                guard isEnabled else { return }
+                configuration.isOn.toggle()
+            } label: {
+                checkboxLabel
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(configuration.isOn ? Text("On") : Text("Off"))
+        }
+
+        private var checkboxLabel: some View {
             HStack(spacing: 6) {
                 RoundedRectangle(cornerRadius: 3.5)
                     .fill(configuration.isOn ? Color.accentColor : GraphControlMetrics.fieldFill)
@@ -701,14 +718,6 @@ struct GraphCheckboxToggleStyle: ToggleStyle {
             }
             .opacity(isEnabled ? 1 : 0.5)
             .contentShape(Rectangle())
-            .onTapGesture {
-                guard isEnabled else { return }
-                configuration.isOn.toggle()
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityValue(configuration.isOn ? Text("On") : Text("Off"))
-            .accessibilityAction { if isEnabled { configuration.isOn.toggle() } }
         }
     }
 }

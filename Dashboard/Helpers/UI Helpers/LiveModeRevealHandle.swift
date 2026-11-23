@@ -2,9 +2,10 @@
 //  LiveModeRevealHandle.swift
 //  Relay
 //
-//  A small always-present grabber at the top of the screen in Live Mode (macOS) that
-//  opens the live menu with a tap or a drag down — reliable on touch monitors, where
-//  there is no hover to trigger the reveal strip.
+//  A small always-present grabber at the top of the screen in Live Mode (macOS and iPad)
+//  that opens the live menu with a tap or a drag down — reliable on touch monitors and
+//  iPad, where there is no hover to trigger the reveal strip and the strip itself is
+//  invisible.
 //
 
 import SwiftUI
@@ -36,7 +37,6 @@ enum LiveModeRevealHandlePolicy {
     }
 }
 
-#if os(macOS)
 struct LiveModeRevealHandle: View {
     let isChromeVisible: Bool
     let onTap: () -> Void
@@ -66,6 +66,14 @@ struct LiveModeRevealHandle: View {
         self.onHoverChanged = onHoverChanged
     }
 
+    private static var outlineColor: Color {
+        #if os(macOS)
+        Color(nsColor: .windowBackgroundColor)
+        #else
+        Color(uiColor: .systemBackground)
+        #endif
+    }
+
     private var isShown: Bool {
         LiveModeRevealHandlePolicy.isShown(isChromeVisible: isChromeVisible, isHandleDragging: isTracking)
     }
@@ -73,7 +81,7 @@ struct LiveModeRevealHandle: View {
     var body: some View {
         Capsule()
             .fill(Color.primary.opacity(0.6))
-            .overlay(Capsule().strokeBorder(Color(nsColor: .windowBackgroundColor).opacity(0.6), lineWidth: 1))
+            .overlay(Capsule().strokeBorder(Self.outlineColor.opacity(0.6), lineWidth: 1))
             .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
             .frame(width: LiveModeRevealHandlePolicy.pillSize.width, height: LiveModeRevealHandlePolicy.pillSize.height)
             .padding(.top, 8)
@@ -145,4 +153,3 @@ struct LiveModeRevealHandle: View {
         }
     }
 }
-#endif

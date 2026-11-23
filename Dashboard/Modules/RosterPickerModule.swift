@@ -10,12 +10,27 @@ import SwiftUI
 struct RosterPickerModuleView: View {
     let model: RosterPickerModuleModel
     let tab: DashboardTab
+    /// Live shared rosters. When the selected roster is here, the tile reads it directly
+    /// so roster edits show up straight away; the cached copy is only a fallback
+    /// (e.g. LAN snapshots or callers that don't pass rosters).
+    var sharedRosters: [DashboardRoster] = []
 
     private var resolvedRoster: (columns: [DashboardRosterColumn], rows: [DashboardRosterRow]) {
-        if model.selectedRosterID != nil,
-           let cols = model.cachedRosterColumns,
-           let rows = model.cachedRosterRows {
-            return (cols, rows)
+        RosterPickerModuleView.resolveRoster(model: model, tab: tab, sharedRosters: sharedRosters)
+    }
+
+    static func resolveRoster(
+        model: RosterPickerModuleModel,
+        tab: DashboardTab,
+        sharedRosters: [DashboardRoster]
+    ) -> (columns: [DashboardRosterColumn], rows: [DashboardRosterRow]) {
+        if let rosterID = model.selectedRosterID {
+            if let live = sharedRosters.first(where: { $0.id == rosterID }) {
+                return (live.columns, live.rows)
+            }
+            if let cols = model.cachedRosterColumns, let rows = model.cachedRosterRows {
+                return (cols, rows)
+            }
         }
         return (tab.rosterColumns, tab.rosterRows)
     }
@@ -60,8 +75,16 @@ struct RosterPickerModuleView: View {
                         .lineLimit(2)
                         .minimumScaleFactor(0.6)
 
-                    if model.showsColumnName, let column = selectedColumn {
-                        metaChip(column.title)
+                    if (model.showsColumnName && selectedColumn != nil) || (model.showsRowNumber && rowIndex != nil) {
+                        VStack(alignment: .trailing, spacing: 4) {
+                            if model.showsColumnName, let column = selectedColumn {
+                                metaChip(column.title)
+                            }
+                            if model.showsRowNumber, let rowIndex {
+                                metaChip("Row \(rowIndex)")
+                                    .monospacedDigit()
+                            }
+                        }
                     }
                 }
             } else {
@@ -158,17 +181,21 @@ struct RosterPickerModuleSettingsView: View {
     }
 
     private var resolvedColumns: [DashboardRosterColumn] {
-        if model.selectedRosterID != nil, let cols = model.cachedRosterColumns {
-            return cols
-        }
-        return tab.rosterColumns
+        RosterPickerModuleView.resolveRoster(model: model, tab: tab, sharedRosters: sharedRosters).columns
     }
 
     private var resolvedRows: [DashboardRosterRow] {
-        if model.selectedRosterID != nil, let rows = model.cachedRosterRows {
-            return rows
-        }
-        return tab.rosterRows
+        RosterPickerModuleView.resolveRoster(model: model, tab: tab, sharedRosters: sharedRosters).rows
+    }
+
+    /// Keeps the cached copy (the fallback when live rosters aren't available) current.
+    private func refreshCachedRoster() {
+        guard let rosterID = model.selectedRosterID,
+              let roster = sharedRosters.first(where: { $0.id == rosterID }) else { return }
+        guard model.cachedRosterColumns != roster.columns || model.cachedRosterRows != roster.rows else { return }
+        model.cachedRosterColumns = roster.columns
+        model.cachedRosterRows = roster.rows
+        persistDeferred()
     }
 
     private var selectedColumn: DashboardRosterColumn? {
@@ -255,7 +282,7 @@ struct RosterPickerModuleSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                TextField("Header", text: Binding(
+                TextField("Title", text: Binding(
                     get: { model.header ?? "" },
                     set: { newValue in
                         let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -320,7 +347,7 @@ struct RosterPickerModuleSettingsView: View {
                 ))
                 .toggleStyle(.switch)
 
-                Toggle("Show header background", isOn: Binding(
+                Toggle("Title background", isOn: Binding(
                     get: { model.showsHeaderBackground },
                     set: { newValue in
                         model.showsHeaderBackground = newValue
@@ -342,11 +369,10 @@ struct RosterPickerModuleSettingsView: View {
             persistDeferred()
         }
         .onAppear {
-            guard let rosterID = model.selectedRosterID,
-                  let roster = sharedRosters.first(where: { $0.id == rosterID }) else { return }
-            model.cachedRosterColumns = roster.columns
-            model.cachedRosterRows = roster.rows
-            persistDeferred()
+            refreshCachedRoster()
+        }
+        .onChange(of: sharedRosters) { _, _ in
+            refreshCachedRoster()
         }
     }
 }

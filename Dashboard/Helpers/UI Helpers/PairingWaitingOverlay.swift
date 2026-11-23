@@ -42,6 +42,7 @@ struct PairingWaitingOverlay: View {
 
             Button("Cancel", action: onCancel)
                 .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
         }
         .padding(28)
         .frame(width: 320)

@@ -78,10 +78,13 @@ struct RelayLaunchScreenView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 22, height: 22)
                 .background(.quaternary, in: Circle())
+                .frame(minWidth: 28, minHeight: 28)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(12)
+        .padding(9)
         .help("Close Home")
+        .accessibilityLabel("Close Home")
     }
     #endif
 
@@ -130,9 +133,13 @@ struct RelayLaunchScreenView: View {
 
             Spacer()
 
+#if os(macOS)
+            // Startup files are macOS-only (they need a security-scoped bookmark), so
+            // iPad doesn't advertise them.
             startupFileSection
                 .padding(.horizontal, 12)
                 .padding(.bottom, 16)
+#endif
 
 #if os(macOS)
             if let onQuit {
@@ -182,11 +189,15 @@ struct RelayLaunchScreenView: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.tertiary)
+                            .frame(minWidth: 28, minHeight: 28)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help("Remove startup file")
+                    .accessibilityLabel("Remove startup file \(startupFileName)")
                 }
-                .padding(8)
+                .padding(.leading, 8)
+                .padding(.vertical, 2)
                 .background(.quaternary)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             } else {
@@ -254,8 +265,22 @@ struct RelayLaunchScreenView: View {
                     Image(systemName: "doc.richtext")
                         .font(.system(size: 48))
                         .foregroundStyle(.tertiary)
-                    Text("No recent files")
-                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    if filterText.isEmpty {
+                        Text("No recent files")
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            Button("New Dashboard") { showingNewDashboardSheet = true }
+                                .buttonStyle(.borderedProminent)
+                            Button("Open File…", action: onOpenFile)
+                                .buttonStyle(.bordered)
+                        }
+                    } else {
+                        Text("No recent files match “\(filterText)”")
+                            .foregroundStyle(.secondary)
+                        Button("Clear Filter") { filterText = "" }
+                            .buttonStyle(.bordered)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.top, 60)
@@ -426,6 +451,8 @@ private struct RecentFileCard: View {
         }
         .contextMenu {
             Button("Open") { onTap() }
+            #if os(macOS)
+            // Startup files rely on a security-scoped bookmark, which is macOS-only.
             Divider()
             if isPinned {
                 Button("Remove as Startup File") {
@@ -434,7 +461,6 @@ private struct RecentFileCard: View {
                 }
             } else {
                 Button("Set as Startup File") {
-                    #if os(macOS)
                     if let data = try? url.bookmarkData(
                         options: .withSecurityScope,
                         includingResourceValuesForKeys: nil,
@@ -446,9 +472,9 @@ private struct RecentFileCard: View {
                             forKey: "relay_startup_file_name"
                         )
                     }
-                    #endif
                 }
             }
+            #endif
         }
     }
 

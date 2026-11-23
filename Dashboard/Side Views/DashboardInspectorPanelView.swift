@@ -45,6 +45,13 @@ struct DashboardInspectorPanelView: View {
     @State private var initialTileSizeHeightSnapshot: String = ""
     @State private var initialTileSizeSnapshot: CGSize? = nil
 
+    /// Folds a slider drag (or a burst of colour-panel changes) into one undo step.
+    /// A reference box: updating it must not re-render the inspector.
+    @State private var undoCoalescing = InspectorUndoCoalescingBox()
+
+    /// The dashboard's undo manager (the one `pushUndoSnapshot` registers with).
+    @Environment(\.undoManager) private var undoManager
+
     // MARK: - Body
 
     var body: some View {
@@ -107,6 +114,8 @@ struct DashboardInspectorPanelView: View {
             tileID: tileValue.id,
             tileHeightPoints: tileHeightPoints,
             isMultiTileEdit: isMultiTileEdit,
+            tileName: tileValue.name,
+            selectedTileCount: selectedTileIDs.count,
             initialPerson: initialPerson,
             hasPCORundown: hasPCORundown,
             hasShureWireless: hasShureWireless,
@@ -225,195 +234,96 @@ struct DashboardInspectorPanelView: View {
             },
 
             onUpdateTextModule: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit Text Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .text(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Text")) { module in
+                    module.kind = .text(updatedModel)
                 }
             },
 
             onUpdateImageModule: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit Image Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .image(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Image")) { module in
+                    module.kind = .image(updatedModel)
                 }
             },
 
             onUpdateDocumentModule: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit Document Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .document(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Document")) { module in
+                    module.kind = .document(updatedModel)
                 }
             },
 
             onUpdateNDIModule: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit NDI Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .ndi(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("NDI")) { module in
+                    module.kind = .ndi(updatedModel)
                 }
             },
 
             onUpdateWebpageModule: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit Webpage Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .webpage(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Webpage")) { module in
+                    module.kind = .webpage(updatedModel)
                 }
             },
 
             onUpdateYouTubeStreamMonitorModule: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit YouTube Stream Monitor")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .youtubeStreamMonitor(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("YouTube Stream Monitor")) { module in
+                    module.kind = .youtubeStreamMonitor(updatedModel)
                 }
             },
 
             onUpdateButtonModule: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit Button Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .button(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Button")) { module in
+                    module.kind = .button(updatedModel)
                 }
             },
 
             onUpdateRosterPickerModule: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit Picker Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .rosterPicker(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Picker")) { module in
+                    module.kind = .rosterPicker(updatedModel)
                 }
             },
 
             onUpdateSeparator: { moduleID, updatedModel in
-                pushUndoSnapshot("Edit Separator Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].kind = .separator(updatedModel)
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Separator")) { module in
+                    module.kind = .separator(updatedModel)
                 }
             },
             onOpenPCOTabSettings: onOpenPCOTabSettings,
 
             onUpdateTimeModuleConfig: { moduleID, config in
-                pushUndoSnapshot("Edit Time Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].timeConfig = config
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Time")) { module in
+                    module.timeConfig = config
                 }
             },
 
             onUpdateTimecodeModuleConfig: { moduleID, config in
-                pushUndoSnapshot("Edit Timecode Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].timecodeConfig = config
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Timecode")) { module in
+                    module.timecodeConfig = config
                 }
             },
 
             onUpdateDAWTransportModuleConfig: { moduleID, config in
-                pushUndoSnapshot("Edit DAW Transport Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].dawTransportConfig = config
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("DAW Transport")) { module in
+                    module.dawTransportConfig = config
                 }
             },
 
             onUpdateModulePadding: { moduleID, top, bottom in
-                pushUndoSnapshot("Edit Module Padding")
-
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
-
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    if let top = top { modules[idx].paddingTop = top }
-                    if let bottom = bottom { modules[idx].paddingBottom = bottom }
-
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+                guard tileBinding.wrappedValue.modules?.contains(where: { $0.id == moduleID }) == true else { return }
+                commitTileEdit("Edit Module Padding", toSelection: false) { tile in
+                    guard let idx = tile.modules?.firstIndex(where: { $0.id == moduleID }) else { return }
+                    if let top = top { tile.modules?[idx].paddingTop = top }
+                    if let bottom = bottom { tile.modules?[idx].paddingBottom = bottom }
                 }
             },
 
             onUpdateModuleScale: { moduleID, scale in
-                pushUndoSnapshot("Edit Module Scale")
-
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules,
-                      let mIdx = modules.firstIndex(where: { $0.id == moduleID }) else {
-                    return
+                guard tileBinding.wrappedValue.modules?.contains(where: { $0.id == moduleID }) == true else { return }
+                commitTileEdit("Edit Module Scale", toSelection: false) { tile in
+                    guard let mIdx = tile.modules?.firstIndex(where: { $0.id == moduleID }) else { return }
+                    // Height is in points; nil means Auto.
+                    tile.modules?[mIdx].moduleHeightPoints = scale
+                    // Clear legacy scale so height points are the sole driver.
+                    tile.modules?[mIdx].moduleScale = nil
                 }
-
-                // Height is in points; nil means Auto.
-                modules[mIdx].moduleHeightPoints = scale
-                // Clear legacy scale so height points are the sole driver.
-                modules[mIdx].moduleScale = nil
-
-                tile.modules = modules
-                tileBinding.wrappedValue = tile
-                markUnsavedAndScheduleSave()
             },
 
             tab: tabBinding,
@@ -448,30 +358,13 @@ struct DashboardInspectorPanelView: View {
             },
 
             onSaveTileAppearance: { style, opacity, radius, color, gradient in
-                pushUndoSnapshot("Edit Tile Appearance")
-
-                if isMultiTileEdit {
-                    guard tabs.indices.contains(selectedTabIndex) else { return }
-                    for id in selectedTileIDs {
-                        if let idx = tabs[selectedTabIndex].tiles.firstIndex(where: { $0.id == id }) {
-                            tabs[selectedTabIndex].tiles[idx].backgroundStyle = style
-                            tabs[selectedTabIndex].tiles[idx].backgroundOpacity = opacity
-                            tabs[selectedTabIndex].tiles[idx].cornerRadius = radius
-                            tabs[selectedTabIndex].tiles[idx].backgroundCustomColor = color
-                            tabs[selectedTabIndex].tiles[idx].backgroundGradient = gradient
-                        }
-                    }
-                } else {
-                    var tile = tileBinding.wrappedValue
+                commitTileEdit("Edit Tile Appearance", toSelection: isMultiTileEdit) { tile in
                     tile.backgroundStyle = style
                     tile.backgroundOpacity = opacity
                     tile.cornerRadius = radius
                     tile.backgroundCustomColor = color
                     tile.backgroundGradient = gradient
-                    tileBinding.wrappedValue = tile
                 }
-
-                markUnsavedAndScheduleSave()
             },
 
             onPreviewTileAppearance: { style, opacity, radius, color, gradient in
@@ -515,22 +408,9 @@ struct DashboardInspectorPanelView: View {
             },
 
             onSaveTileContentPadding: { padding in
-                pushUndoSnapshot("Edit Tile Padding")
-
-                if isMultiTileEdit {
-                    guard tabs.indices.contains(selectedTabIndex) else { return }
-                    for id in selectedTileIDs {
-                        if let idx = tabs[selectedTabIndex].tiles.firstIndex(where: { $0.id == id }) {
-                            tabs[selectedTabIndex].tiles[idx].contentPadding = padding
-                        }
-                    }
-                } else {
-                    var tile = tileBinding.wrappedValue
+                commitTileEdit("Edit Tile Padding", toSelection: isMultiTileEdit) { tile in
                     tile.contentPadding = padding
-                    tileBinding.wrappedValue = tile
                 }
-
-                markUnsavedAndScheduleSave()
             },
 
             onSaveModuleLayout: { layout in
@@ -599,32 +479,14 @@ struct DashboardInspectorPanelView: View {
             initialTextVerticalAlignment: tileValue.textVerticalAlignment,
 
             onSaveTextFormatting: { size, weight, color, caps, justification, verticalAlignment in
-                pushUndoSnapshot("Edit Text Formatting")
-
-                if isMultiTileEdit {
-                    guard tabs.indices.contains(selectedTabIndex) else { return }
-                    for id in selectedTileIDs {
-                        if let idx = tabs[selectedTabIndex].tiles.firstIndex(where: { $0.id == id }) {
-                            tabs[selectedTabIndex].tiles[idx].textFontSize = size
-                            tabs[selectedTabIndex].tiles[idx].textFontWeight = weight
-                            tabs[selectedTabIndex].tiles[idx].textColor = color
-                            tabs[selectedTabIndex].tiles[idx].textCapitalization = caps
-                            tabs[selectedTabIndex].tiles[idx].textJustification = justification
-                            tabs[selectedTabIndex].tiles[idx].textVerticalAlignment = verticalAlignment
-                        }
-                    }
-                } else {
-                    var tile = tileBinding.wrappedValue
+                commitTileEdit("Edit Text Formatting", toSelection: isMultiTileEdit) { tile in
                     tile.textFontSize = size
                     tile.textFontWeight = weight
                     tile.textColor = color
                     tile.textCapitalization = caps
                     tile.textJustification = justification
                     tile.textVerticalAlignment = verticalAlignment
-                    tileBinding.wrappedValue = tile
                 }
-
-                markUnsavedAndScheduleSave()
             },
 
             initialTileSizeWidthText: initialTileSizeWidthSnapshot,
@@ -658,43 +520,49 @@ struct DashboardInspectorPanelView: View {
                 markUnsavedAndScheduleSave()
             },
 
-            onUpdatePCOModuleConfig: { moduleID, newConfig in
-                pushUndoSnapshot("Edit PCO Module")
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules else { return }
+            onContinuousEditChanged: { isEditing in
+                if isEditing {
+                    undoCoalescing.coalescer.beginContinuousEdit()
+                } else {
+                    undoCoalescing.coalescer.endContinuousEdit()
+                }
+            },
 
-                if let idx = modules.firstIndex(where: { $0.id == moduleID }) {
-                    modules[idx].pcoConfig = newConfig
-                    tile.modules = modules
-                    tileBinding.wrappedValue = tile
-                    markUnsavedAndScheduleSave()
+            onUpdatePCOModuleConfig: { moduleID, newConfig in
+                commitModuleEdit(moduleID, TileEditorCopy.moduleSettingsActionName("Planning Center")) { module in
+                    module.pcoConfig = newConfig
                 }
             },
 
             onUpdateShureModuleConfig: { moduleID, newConfig in
-                pushUndoSnapshot("Edit Shure Module")
+                let actionName = TileEditorCopy.moduleSettingsActionName("Shure")
+                commitTileEdit(
+                    actionName,
+                    coalescingKey: InspectorUndoCoalescer.moduleKey(actionName: actionName, moduleID: moduleID),
+                    toSelection: false
+                ) { tile in
+                    guard let moduleIndex = tile.modules?.firstIndex(where: { $0.id == moduleID }) else { return }
 
-                var tile = tileBinding.wrappedValue
-                guard var modules = tile.modules,
-                      let moduleIndex = modules.firstIndex(where: { $0.id == moduleID }) else {
-                    return
+                    // Update the per-module Shure configuration.
+                    tile.modules?[moduleIndex].shureConfig = newConfig
+
+                    // Keep tile-level Shure properties in sync for backward compatibility.
+                    tile.shureSelectedChannel = newConfig.selectedChannel
+                    tile.shureShowDeviceName = newConfig.showDeviceName
+                    tile.shureShowChannelName = newConfig.showChannelName
+                    tile.shureShowIPPort = newConfig.showIPPort
+                    tile.shureShowFrequency = newConfig.showFrequency
+                    tile.shureShowBattery = newConfig.showBattery
+                    tile.shureShowRFStrength = newConfig.showRFStrength
                 }
+            },
 
-                // Update the per-module Shure configuration.
-                modules[moduleIndex].shureConfig = newConfig
-                tile.modules = modules
+            onCommitModuleChange: { moduleID, actionName, change in
+                commitModuleEdit(moduleID, actionName, change)
+            },
 
-                // Keep tile-level Shure properties in sync for backward compatibility.
-                tile.shureSelectedChannel = newConfig.selectedChannel
-                tile.shureShowDeviceName = newConfig.showDeviceName
-                tile.shureShowChannelName = newConfig.showChannelName
-                tile.shureShowIPPort = newConfig.showIPPort
-                tile.shureShowFrequency = newConfig.showFrequency
-                tile.shureShowBattery = newConfig.showBattery
-                tile.shureShowRFStrength = newConfig.showRFStrength
-
-                tileBinding.wrappedValue = tile
-                markUnsavedAndScheduleSave()
+            onSuppressUndoRegistration: { duration in
+                undoCoalescing.coalescer.suppressRegistrations(until: Date().addingTimeInterval(duration))
             },
 
             initialShowsTitle: tileValue.showsTitle,
@@ -745,6 +613,15 @@ struct DashboardInspectorPanelView: View {
         .onChange(of: editingTileID, initial: false) { _, _ in
             captureInitialTileSizeSnapshot(tileValue: tileValue)
         }
+        // After an undo/redo the step being coalesced is gone; the next edit must open a new one.
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { note in
+            guard let manager = note.object as? UndoManager, manager === undoManager else { return }
+            undoCoalescing.coalescer.reset()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { note in
+            guard let manager = note.object as? UndoManager, manager === undoManager else { return }
+            undoCoalescing.coalescer.reset()
+        }
         .tutorialAnchor("root.inspector")
         .frame(width: inspectorPanelWidth)
         .padding(.trailing, 12)
@@ -752,6 +629,56 @@ struct DashboardInspectorPanelView: View {
         // iPad should stay dark in our app.
         .preferredColorScheme(.dark)
 #endif
+    }
+
+    /// Applies `change` to the edited tile (or every selected tile), registering an
+    /// undo step only when something actually changes and the change doesn't fold
+    /// into the current one (see `InspectorUndoCoalescer`).
+    private func commitTileEdit(
+        _ actionName: String,
+        coalescingKey: String? = nil,
+        toSelection: Bool,
+        _ change: (inout DashboardTileModel) -> Void
+    ) {
+        if toSelection {
+            guard tabs.indices.contains(selectedTabIndex) else { return }
+            var tab = tabs[selectedTabIndex]
+            for idx in tab.tiles.indices where selectedTileIDs.contains(tab.tiles[idx].id) {
+                change(&tab.tiles[idx])
+            }
+            guard tab != tabs[selectedTabIndex] else { return }
+            registerUndoIfNeeded(actionName, coalescingKey: coalescingKey)
+            tabs[selectedTabIndex] = tab
+        } else {
+            var tile = tileBinding.wrappedValue
+            change(&tile)
+            guard tile != tileBinding.wrappedValue else { return }
+            registerUndoIfNeeded(actionName, coalescingKey: coalescingKey)
+            tileBinding.wrappedValue = tile
+        }
+        markUnsavedAndScheduleSave()
+    }
+
+    /// Applies `change` to one module of the edited tile through the same coalescing
+    /// undo path, so a drag or a burst of typing in its settings is one undo step.
+    private func commitModuleEdit(
+        _ moduleID: UUID,
+        _ actionName: String,
+        _ change: (inout DashboardModuleModel) -> Void
+    ) {
+        commitTileEdit(
+            actionName,
+            coalescingKey: InspectorUndoCoalescer.moduleKey(actionName: actionName, moduleID: moduleID),
+            toSelection: false
+        ) { tile in
+            guard let idx = tile.modules?.firstIndex(where: { $0.id == moduleID }) else { return }
+            change(&tile.modules![idx])
+        }
+    }
+
+    private func registerUndoIfNeeded(_ actionName: String, coalescingKey: String? = nil) {
+        guard undoCoalescing.coalescer.shouldRegisterUndo(actionName: coalescingKey ?? actionName) else { return }
+        pushUndoSnapshot(actionName)
     }
 
     private func captureInitialTileSizeSnapshot(tileValue: DashboardTileModel) {
@@ -792,4 +719,10 @@ struct DashboardInspectorPanelView: View {
             initialTileSizeSnapshot = nil
         }
     }
+}
+
+/// Holds the inspector's `InspectorUndoCoalescer` by reference, so updating it
+/// from edit callbacks doesn't invalidate the view.
+private final class InspectorUndoCoalescingBox {
+    var coalescer = InspectorUndoCoalescer()
 }

@@ -84,6 +84,20 @@ struct DashboardTileContainer: View {
     @State private var isPCORundownColumnResizeActive: Bool = false
     @State private var lastGroupResizeSize: CGSize = .zero
     @State private var lastGroupResizeOffsetY: CGFloat = 0
+    /// Where the tile was released relative to where it settled (grid snap or an
+    /// overlap rejection). The settle animation springs this back to zero.
+    @State private var settleResidual: CGSize = .zero
+    @State private var settleTrigger = 0
+    #if os(iOS)
+    @State private var snapFeedbackTrigger = 0
+    #endif
+    /// A click on one tile of a multi-selection collapses the selection to it,
+    /// but only once a double-click (which edits the whole selection) is ruled out.
+    @State private var pendingSelectionCollapse: Task<Void, Never>?
+    /// Recognises a double-click from two single taps, so one exclusive tap gesture
+    /// handles both (see the tap gesture in `tileContainerView`).
+    @State private var tapSequence = DashboardTileTapSequence()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func moduleKindDiagnosticsKey(_ kind: DashboardModuleKind) -> String {
         switch kind {
@@ -200,18 +214,16 @@ struct DashboardTileContainer: View {
                 .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 2) {
-                // `remoteEditors` is an ephemeral presence snapshot handed down as a
-                // `let`-equivalent struct property for this render pass (recomputed
-                // by the parent canvas each frame); it cannot mutate mid-render, so
-                // positional identity here is safe.
-                ForEach(remoteEditors.indices, id: \.self) { i in
-                    Text(remoteEditors[i].name)
+                // Keyed by name (numbered when two editors share one), so a badge keeps
+                // its identity when editors join or leave instead of shifting by position.
+                ForEach(remotePresenceBadges, id: \.id) { badge in
+                    Text(badge.name)
                         .font(.system(size: max(8, 10 / safeZoom), weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                         .padding(.horizontal, 5 / safeZoom)
                         .padding(.vertical, 2 / safeZoom)
-                        .background(remoteEditors[i].color)
+                        .background(badge.color)
                         .clipShape(RoundedRectangle(cornerRadius: 3 / safeZoom))
                 }
             }
@@ -220,8 +232,22 @@ struct DashboardTileContainer: View {
         }
     }
 
+    private var remotePresenceBadges: [(id: String, name: String, color: Color)] {
+        var seen: [String: Int] = [:]
+        return remoteEditors.map { editor in
+            let occurrence = seen[editor.name, default: 0]
+            seen[editor.name] = occurrence + 1
+            return (id: "\(editor.name)#\(occurrence)", name: editor.name, color: editor.color)
+        }
+    }
+
     private var isOverlappingAnotherTile: Bool {
         guard !allowTileOverlap, isSelected, !isLiveMode else { return false }
+        // Other members of a multi-selection move with this tile, so their current
+        // positions aren't obstacles while it's being dragged.
+        let movesWithThisTile: Set<UUID> = (dragOffset != .zero && selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id))
+            ? selectedTileIDs
+            : []
 
         let currentRect = CGRect(
             x: tile.offset.width + dragOffset.width,
@@ -230,7 +256,7 @@ struct DashboardTileContainer: View {
             height: effectiveSize.height
         )
 
-        for other in tab.tiles where other.id != tile.id && !other.isHidden {
+        for other in tab.tiles where other.id != tile.id && !other.isHidden && !movesWithThisTile.contains(other.id) {
             let otherSize = DashboardTileSnappingHelper.effectiveSize(
                 for: other,
                 defaultTileSize: defaultTileSize
@@ -432,8 +458,32 @@ struct DashboardTileContainer: View {
 
         DispatchQueue.main.async {
             guard self.activeSnapEdges != snapEdges else { return }
+            let didEngageSnap = self.activeSnapEdges.isEmpty && !snapEdges.isEmpty
             self.activeSnapEdges = snapEdges
+            if didEngageSnap {
+                self.playSnapFeedback()
+            }
         }
+    }
+
+    private func playSnapFeedback() {
+        #if os(macOS)
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        #else
+        snapFeedbackTrigger &+= 1
+        #endif
+    }
+
+    /// Glides the just-committed tile from where it was released to where it
+    /// settled. `residual` is release position minus committed position.
+    private func settleAfterRelease(residual: CGSize, didSnap: Bool) {
+        guard abs(residual.width) > 0.5 || abs(residual.height) > 0.5 else { return }
+        if didSnap {
+            playSnapFeedback()
+        }
+        guard !reduceMotion else { return }
+        settleResidual = residual
+        settleTrigger &+= 1
     }
 
     private func clearActiveSnapEdgesIfNeeded() {
@@ -660,9 +710,15 @@ struct DashboardTileContainer: View {
     private func isInResizeHandleHitArea(_ point: CGPoint, size: CGSize) -> Bool {
         guard !isLiveMode, isSelected else { return false }
 
-        // Match ResizeHandle's 28pt hit frame so the move-drag gesture defers
-        // to the resize handle anywhere the resize cursor is shown.
-        let hitRadius = DashboardTileResizeHandleLayout.hitHalo
+        // Match the resize handles' hit radius (constant on screen at any zoom) so
+        // the move-drag gesture defers to them anywhere the resize cursor is shown.
+        // The radius is capped by tile size, and an iPad handle sizes itself from the
+        // stored size while the macOS surface uses the rendered one; taking the
+        // smaller keeps this from blocking a move where no handle would pick it up.
+        let hitRadius = min(
+            DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: size),
+            DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: tile.size ?? defaultTileSize)
+        )
         let layout = DashboardTileResizeHandleLayout(size: size)
 
         func near(_ target: CGPoint) -> Bool {
@@ -766,6 +822,21 @@ struct DashboardTileContainer: View {
                 x: tile.offset.width + dragOffset.width,
                 y: tile.offset.height + dragOffset.height + groupResizeRenderOffsetYDelta
             )
+            // Released tiles that grid-snap or bounce back from an overlap glide to
+            // their committed position instead of jumping: the tile starts where it
+            // was dropped (`settleResidual`) and springs to zero offset. Not used
+            // under Reduce Motion, where `settleTrigger` never changes.
+            .keyframeAnimator(initialValue: CGSize.zero, trigger: settleTrigger) { content, residual in
+                content.offset(residual)
+            } keyframes: { _ in
+                KeyframeTrack {
+                    MoveKeyframe(settleResidual)
+                    SpringKeyframe(CGSize.zero, duration: 0.3, spring: .init(duration: 0.3, bounce: 0))
+                }
+            }
+            #if os(iOS)
+            .sensoryFeedback(.alignment, trigger: snapFeedbackTrigger)
+            #endif
             .zIndex(
                 (isEditing)
                 ? 15           // actively edited tiles on top of all tiles
@@ -935,13 +1006,15 @@ struct DashboardTileContainer: View {
                     }
                     #endif
 
-                    if !interactionSession.groupDragFollowerIDs.isEmpty {
-                        actions.groupMoveCommit(anchorID: tile.id, translation: finalTranslation)
-                        interactionSession.reset()
-                    }
+                    // Members of a group drag move with this tile, so they're excluded
+                    // from its overlap check below and receive the same final (snapped
+                    // or rejected) translation, keeping the group's spacing intact.
+                    let groupFollowerIDs = interactionSession.groupDragFollowerIDs
 
-                    var newX = tile.offset.width + finalTranslation.width
-                    var newY = tile.offset.height + finalTranslation.height
+                    let releasedX = tile.offset.width + finalTranslation.width
+                    let releasedY = tile.offset.height + finalTranslation.height
+                    var newX = releasedX
+                    var newY = releasedY
 
                     #if os(macOS)
                     let isShiftDown = NSEvent.modifierFlags.contains(.shift)
@@ -963,6 +1036,7 @@ struct DashboardTileContainer: View {
                     // Allow tiles to live outside the canvas bounds; use the
                     // "Bring All Tiles Into Canvas" command to recover.
 
+                    var didRejectDrop = false
                     if !allowTileOverlap {
                         let proposedRect = CGRect(
                             x: newX,
@@ -972,7 +1046,7 @@ struct DashboardTileContainer: View {
                         )
 
                         var overlapsAnotherTile = false
-                        for other in tab.tiles where other.id != tile.id {
+                        for other in tab.tiles where other.id != tile.id && !groupFollowerIDs.contains(other.id) {
                             let otherSize = DashboardTileSnappingHelper.effectiveSize(for: other, defaultTileSize: defaultTileSize)
                             let otherRect = CGRect(
                                 x: other.offset.width,
@@ -990,12 +1064,26 @@ struct DashboardTileContainer: View {
                         if overlapsAnotherTile {
                             newX = tile.offset.width
                             newY = tile.offset.height
+                            didRejectDrop = true
                         }
                     }
+
+                    if !groupFollowerIDs.isEmpty {
+                        actions.groupMoveCommit(
+                            anchorID: tile.id,
+                            translation: CGSize(width: newX - tile.offset.width, height: newY - tile.offset.height)
+                        )
+                        interactionSession.reset()
+                    }
+
                     var updated = tile
                     updated.offset.width = newX
                     updated.offset.height = newY
                     actions.setTile(tabID: tab.id, tileID: tile.id, to: updated)
+                    settleAfterRelease(
+                        residual: CGSize(width: releasedX - newX, height: releasedY - newY),
+                        didSnap: !didRejectDrop
+                    )
 
                     actions.persist(reconcileGraphNodes: false)
                     clearActiveSnapEdgesIfNeeded()
@@ -1014,19 +1102,14 @@ struct DashboardTileContainer: View {
             // Let explicit child controls, like rundown column resize handles,
             // own their drag gestures without also moving the entire tile.
             .gesture(dragGesture, including: isLiveMode ? .subviews : .gesture)
+            // One exclusive single-tap gesture handles both click and double-click.
+            // Exclusive (`.gesture`), so a Button or text field inside the tile wins
+            // its own clicks and they don't select or open the tile. Single-count,
+            // so a click selects at once: a `TapGesture(count: 2)` here would make
+            // every click wait ~300ms for it to fail. `tapSequence` spots the
+            // second click of a double-click instead.
             .gesture(
-                TapGesture(count: 2).onEnded {
-                    if !(selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id)) {
-                        actions.primarySelect(tileID: tile.id)
-                    }
-                    actions.editRequested(tileID: tile.id, selectFirstModule: true)
-                },
-                including: editingGestureMask
-            )
-            .gesture(
-                TapGesture().onEnded {
-                    actions.primarySelect(tileID: tile.id)
-                },
+                TapGesture().onEnded { handleTileTap() },
                 including: editingGestureMask
             )
             .contextMenu {
@@ -1045,6 +1128,9 @@ struct DashboardTileContainer: View {
                         onDelete: { actions.delete(tileID: tile.id) },
                         onPersist: { reconcileGraphNodes in
                             actions.persist(reconcileGraphNodes: reconcileGraphNodes)
+                        },
+                        onUndoSnapshot: { actionName in
+                            actions.undoSnapshot(actionName)
                         },
                         onAlignSelectedTilesToGrid: alignSelectedTilesToGrid,
                         onResolveTileOverlapsToGrid: resolveTileOverlapsToGrid,
@@ -1069,10 +1155,137 @@ struct DashboardTileContainer: View {
                         actions.editRequested(tileID: tile.id, selectFirstModule: false)
                     },
                     onDelete: { actions.delete(tileID: tile.id) },
-                    onExitLiveMode: { actions.exitLiveMode() }
+                    onExitLiveMode: { actions.exitLiveMode() },
+                    onMove: accessibilityMove,
+                    onResize: accessibilityResize
                 )
             )
             // Removed .onChange and .sheet for showingTileEditor; editing now handled at root.
+    }
+
+    private static var doubleTapInterval: TimeInterval {
+        #if os(macOS)
+        NSEvent.doubleClickInterval
+        #else
+        0.3
+        #endif
+    }
+
+    private func handleTileTap() {
+        guard tapSequence.registerTap(at: Date(), doubleTapInterval: Self.doubleTapInterval) == .double else {
+            handleSingleTap()
+            return
+        }
+        pendingSelectionCollapse?.cancel()
+        pendingSelectionCollapse = nil
+        if !(selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id)) {
+            actions.primarySelect(tileID: tile.id)
+        }
+        actions.editRequested(tileID: tile.id, selectFirstModule: true)
+    }
+
+    private func handleSingleTap() {
+        #if os(macOS)
+        let extendsSelection = NSEvent.modifierFlags.contains(.shift)
+        #else
+        let extendsSelection = false
+        #endif
+        let isInMultiSelection = selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id)
+        guard isInMultiSelection, !extendsSelection else {
+            actions.primarySelect(tileID: tile.id)
+            return
+        }
+
+        // Only this case waits: a double-click on a tile of a multi-selection edits
+        // the whole selection, so collapsing it on the first click would break that.
+        let interval = Self.doubleTapInterval
+        let tileID = tile.id
+        pendingSelectionCollapse?.cancel()
+        pendingSelectionCollapse = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(interval))
+            // A double-click cancels this (see `handleTileTap`).
+            guard !Task.isCancelled else { return }
+            actions.primarySelect(tileID: tileID)
+        }
+    }
+
+    // MARK: VoiceOver move / resize
+
+    /// Moves this tile (and the rest of its multi-selection) one step, through the
+    /// same undo + group-move + commit path a drag uses.
+    private func accessibilityMove(_ move: DashboardTileAccessibilityAdjustment.Move) {
+        guard !isLiveMode, !draggingDisabled else { return }
+        let liveTab = actions.currentTab(id: tab.id) ?? tab
+        guard let current = liveTab.tiles.first(where: { $0.id == tile.id }) else { return }
+
+        let step = DashboardTileAccessibilityAdjustment.step(snapToGrid: snapToGrid, gridSize: gridSize)
+        let translation = DashboardTileAccessibilityAdjustment.translation(for: move, step: step)
+        let movingIDs: Set<UUID> = (selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id))
+            ? selectedTileIDs
+            : [tile.id]
+
+        if !allowTileOverlap {
+            func rect(_ t: DashboardTileModel, shiftedBy delta: CGSize = .zero) -> CGRect {
+                let size = DashboardTileSnappingHelper.effectiveSize(for: t, defaultTileSize: defaultTileSize)
+                return CGRect(x: t.offset.width + delta.width, y: t.offset.height + delta.height, width: size.width, height: size.height)
+            }
+            let moved = liveTab.tiles.filter { movingIDs.contains($0.id) }.map { rect($0, shiftedBy: translation) }
+            let obstacles = liveTab.tiles.filter { !movingIDs.contains($0.id) }.map { rect($0) }
+            if DashboardTileAccessibilityAdjustment.overlaps(moved, obstacles: obstacles) {
+                AccessibilityNotification.Announcement("Can't move, another tile is in the way").post()
+                return
+            }
+        }
+
+        actions.dragBegan(tileID: tile.id)
+        if movingIDs.count > 1 {
+            actions.groupMoveCommit(anchorID: tile.id, translation: translation)
+        }
+        var updated = current
+        updated.offset.width += translation.width
+        updated.offset.height += translation.height
+        actions.setTile(tabID: tab.id, tileID: tile.id, to: updated)
+        actions.persist(reconcileGraphNodes: false)
+        AccessibilityNotification.Announcement(
+            "Position \(Int(updated.offset.width.rounded())), \(Int(updated.offset.height.rounded()))"
+        ).post()
+    }
+
+    /// Resizes this tile one step through the same undo + commit path the resize
+    /// handles use.
+    private func accessibilityResize(_ resize: DashboardTileAccessibilityAdjustment.Resize) {
+        guard !isLiveMode, !draggingDisabled else { return }
+        let liveTab = actions.currentTab(id: tab.id) ?? tab
+        guard let current = liveTab.tiles.first(where: { $0.id == tile.id }) else { return }
+
+        let step = DashboardTileAccessibilityAdjustment.step(snapToGrid: snapToGrid, gridSize: gridSize)
+        let currentSize = DashboardTileMetrics.effectiveSize(for: current, defaultTileSize: defaultTileSize)
+        let newSize = DashboardTileAccessibilityAdjustment.resized(currentSize, by: resize, step: step)
+        guard newSize != currentSize else {
+            AccessibilityNotification.Announcement("Tile is at its minimum size").post()
+            return
+        }
+
+        if !allowTileOverlap {
+            let proposed = CGRect(x: current.offset.width, y: current.offset.height, width: newSize.width, height: newSize.height)
+            let obstacles = liveTab.tiles.filter { $0.id != tile.id }.map { other -> CGRect in
+                let size = DashboardTileSnappingHelper.effectiveSize(for: other, defaultTileSize: defaultTileSize)
+                return CGRect(x: other.offset.width, y: other.offset.height, width: size.width, height: size.height)
+            }
+            if DashboardTileAccessibilityAdjustment.overlaps([proposed], obstacles: obstacles) {
+                AccessibilityNotification.Announcement("Can't resize, another tile is in the way").post()
+                return
+            }
+        }
+
+        actions.resizeBegan()
+        var updated = current
+        updated.size = newSize
+        actions.setTile(tabID: tab.id, tileID: tile.id, to: updated)
+        actions.persist(reconcileGraphNodes: false)
+        AccessibilityNotification.Announcement(
+            "Size \(Int(newSize.width.rounded())) by \(Int(newSize.height.rounded()))"
+        ).post()
     }
 
     private func snapEdges(for offset: CGSize, size: CGSize) -> Set<DashboardTileSnapEdge> {
@@ -1932,7 +2145,7 @@ struct DashboardTileContainer: View {
                     return RosterPickerModuleModel()
                 }()
 
-                RosterPickerModuleView(model: model, tab: tab)
+                RosterPickerModuleView(model: model, tab: tab, sharedRosters: sharedRosters)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .modifier(
                         ModuleCornerClip(
@@ -2223,10 +2436,6 @@ struct DashboardTileContainer: View {
 
         }
             }
-            .simultaneousGesture(
-                TapGesture().onEnded { actions.recordInteractiveTileTap() },
-                including: isLiveMode ? .all : .none
-            )
             .allowsHitTesting(liveModeInteractionAllowed)
         }
 
@@ -2237,24 +2446,16 @@ struct DashboardTileContainer: View {
     /// grid intersection, using the current grid size. Has no effect if the grid size is
     /// zero or negative.
     private func alignSelectedTilesToGrid() {
-        guard gridSize > 0 else { return }
+        guard let tiles = DashboardTileArrangeOperations.alignedToGrid(
+            tab.tiles, selectedIDs: selectedTileIDs, gridSize: gridSize
+        ) else { return }
+
+        if tiles != tab.tiles {
+            actions.undoSnapshot("Align to Grid")
+        }
 
         var updatedTab = tab
-        for idx in updatedTab.tiles.indices {
-            let id = updatedTab.tiles[idx].id
-            guard selectedTileIDs.contains(id) else { continue }
-
-            var t = updatedTab.tiles[idx]
-            let x = t.offset.width
-            let y = t.offset.height
-
-            let snappedX = (x / gridSize).rounded() * gridSize
-            let snappedY = (y / gridSize).rounded() * gridSize
-
-            t.offset.width = snappedX
-            t.offset.height = snappedY
-            updatedTab.tiles[idx] = t
-        }
+        updatedTab.tiles = tiles
         actions.setTab(updatedTab)
 
         actions.persist(reconcileGraphNodes: false)
@@ -2284,6 +2485,9 @@ struct DashboardTileContainer: View {
 
             let size = DashboardTileSnappingHelper.effectiveSize(for: t, defaultTileSize: defaultTileSize)
             currentX += size.width + gap
+        }
+        if updatedTab.tiles != tab.tiles {
+            actions.undoSnapshot("Tidy Up Tiles")
         }
         actions.setTab(updatedTab)
 
@@ -2316,6 +2520,9 @@ struct DashboardTileContainer: View {
             let size = DashboardTileSnappingHelper.effectiveSize(for: t, defaultTileSize: defaultTileSize)
             currentY += size.height + gap
         }
+        if updatedTab.tiles != tab.tiles {
+            actions.undoSnapshot("Tidy Up Tiles")
+        }
         actions.setTab(updatedTab)
 
         actions.persist(reconcileGraphNodes: false)
@@ -2325,102 +2532,45 @@ struct DashboardTileContainer: View {
     /// If there is a selection, only selected (visible) tiles are moved. Otherwise,
     /// all visible tiles are considered. Hidden tiles are ignored.
     private func resolveTileOverlapsToGrid() {
-        guard gridSize > 0 else { return }
+        guard let resolved = DashboardTileArrangeOperations.overlapsResolved(
+            tab.tiles,
+            selectedIDs: selectedTileIDs,
+            gridSize: gridSize,
+            canvasSize: canvasSize,
+            defaultTileSize: defaultTileSize
+        ) else { return }
+
+        if resolved.didChange {
+            actions.undoSnapshot("Resolve Tile Overlaps")
+        }
 
         var updatedTab = tab
-        let visibleTiles = updatedTab.tiles.filter { !$0.isHidden }
-        guard !visibleTiles.isEmpty else { return }
-
-        let selectedIDs = selectedTileIDs
-        let targetIDs: Set<UUID> = selectedIDs.isEmpty
-            ? Set(visibleTiles.map(\.id))
-            : selectedIDs
-
-        guard !targetIDs.isEmpty else { return }
-
-        func rectFor(tile: DashboardTileModel, offset: CGSize? = nil) -> CGRect {
-            let size = DashboardTileSnappingHelper.effectiveSize(for: tile, defaultTileSize: defaultTileSize)
-            let origin = offset ?? tile.offset
-            return CGRect(x: origin.width, y: origin.height, width: size.width, height: size.height)
-        }
-
-        var occupiedRects: [CGRect] = []
-        for tile in updatedTab.tiles where !tile.isHidden && !targetIDs.contains(tile.id) {
-            occupiedRects.append(rectFor(tile: tile))
-        }
-
-        let canvasWidth = canvasSize.width > 0 ? canvasSize.width : 1200
-        let canvasHeight = canvasSize.height > 0 ? canvasSize.height : 800
-        let maxRadius = Int(ceil(max(canvasWidth, canvasHeight) / gridSize)) + 2
-
-        func findNearestFreeOffset(
-            baseOffset: CGSize,
-            size: CGSize
-        ) -> CGSize {
-            let maxX = max(0, canvasWidth - size.width)
-            let maxY = max(0, canvasHeight - size.height)
-
-            func clamped(_ offset: CGSize) -> CGSize {
-                CGSize(
-                    width: min(max(offset.width, 0), maxX),
-                    height: min(max(offset.height, 0), maxY)
-                )
-            }
-
-            func fits(_ offset: CGSize) -> Bool {
-                let rect = CGRect(x: offset.width, y: offset.height, width: size.width, height: size.height)
-                return !occupiedRects.contains { $0.intersects(rect) }
-            }
-
-            let snappedBase = CGSize(
-                width: (baseOffset.width / gridSize).rounded() * gridSize,
-                height: (baseOffset.height / gridSize).rounded() * gridSize
-            )
-            let start = clamped(snappedBase)
-            if fits(start) { return start }
-
-            for radius in 1...maxRadius {
-                for dx in -radius...radius {
-                    for dy in -radius...radius {
-                        if max(abs(dx), abs(dy)) != radius { continue }
-                        let candidate = CGSize(
-                            width: start.width + CGFloat(dx) * gridSize,
-                            height: start.height + CGFloat(dy) * gridSize
-                        )
-                        let clampedCandidate = clamped(candidate)
-                        if fits(clampedCandidate) {
-                            return clampedCandidate
-                        }
-                    }
-                }
-            }
-
-            return start
-        }
-
-        var didPushUndo = false
-
-        for index in updatedTab.tiles.indices {
-            var tile = updatedTab.tiles[index]
-            guard !tile.isHidden, targetIDs.contains(tile.id) else { continue }
-
-            let size = DashboardTileSnappingHelper.effectiveSize(for: tile, defaultTileSize: defaultTileSize)
-            let newOffset = findNearestFreeOffset(baseOffset: tile.offset, size: size)
-
-            if newOffset != tile.offset {
-                if !didPushUndo {
-                    actions.undoSnapshot("Resolve Tile Overlaps")
-                    didPushUndo = true
-                }
-
-                tile.offset = newOffset
-                updatedTab.tiles[index] = tile
-            }
-
-            occupiedRects.append(rectFor(tile: tile, offset: newOffset))
-        }
+        updatedTab.tiles = resolved.tiles
         actions.setTab(updatedTab)
 
         actions.persist(reconcileGraphNodes: false)
+    }
+}
+
+/// Turns a stream of single taps into single- and double-tap events, so a tile can
+/// use one exclusive single-count tap gesture (instant select, child controls win)
+/// and still recognise a double-click.
+struct DashboardTileTapSequence {
+    enum Kind: Equatable {
+        case single
+        case double
+    }
+
+    private var lastSingleTapAt: Date?
+
+    /// A tap within `doubleTapInterval` of the previous single tap completes a
+    /// double-tap; a third quick tap starts over as a single tap.
+    mutating func registerTap(at now: Date, doubleTapInterval: TimeInterval) -> Kind {
+        if let lastSingleTapAt, now.timeIntervalSince(lastSingleTapAt) <= doubleTapInterval {
+            self.lastSingleTapAt = nil
+            return .double
+        }
+        lastSingleTapAt = now
+        return .single
     }
 }
