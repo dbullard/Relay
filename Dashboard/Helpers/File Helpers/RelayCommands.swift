@@ -575,6 +575,9 @@ extension Notification.Name {
 
 extension Notification.Name {
     static let prodLinkDeleteGraphSelectionRequested = Notification.Name("Relay.DeleteGraphSelectionRequested")
+    /// Edit ▸ Delete in Automation view: deletes a selected link, otherwise the selected nodes,
+    /// like the graph's Delete key. (The floating menu's node delete keeps the name above.)
+    static let dashboardDeleteGraphSelectionRequested = Notification.Name("Relay.DeleteGraphMenuSelectionRequested")
 }
 
 extension Notification.Name {

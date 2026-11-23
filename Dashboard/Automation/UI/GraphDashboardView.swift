@@ -6129,6 +6129,12 @@ var body: some View {
         .onReceive(NotificationCenter.default.publisher(for: .prodLinkDeleteGraphSelectionRequested)) { _ in
             deleteSelectedGraphNodes()
         }
+        // Edit ▸ Delete, and on iPad the Delete key when the menu's shortcut takes it before
+        // the graph's key handler: the same action as the graph's own Delete key.
+        .onReceive(NotificationCenter.default.publisher(for: .dashboardDeleteGraphSelectionRequested)) { _ in
+            guard isWorkEnabled, !showAddNodePopover else { return }
+            deleteGraphSelection()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .prodLinkUnhideAllGraphNodesRequested)) { _ in
             unhideAllGraphNodes()
         }

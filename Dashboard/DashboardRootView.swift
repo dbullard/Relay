@@ -3880,7 +3880,8 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                 guard !shouldBlockDelete else { return }
                 // Edit ▸ Delete acts on whatever the visible view has selected.
                 if layoutMode == .graph {
-                    NotificationCenter.default.post(name: .prodLinkDeleteGraphSelectionRequested, object: nil)
+                    // Like the graph's Delete key: a selected link first, else the selected nodes.
+                    NotificationCenter.default.post(name: .dashboardDeleteGraphSelectionRequested, object: nil)
                 } else {
                     deleteSelectedTiles()
                 }
@@ -9081,6 +9082,13 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         }
         canvasActions.onEditRequested = { tileID, selectFirstModule in
             guard !isLiveMode else { return }
+            // Editing a tile outside the selection (right-click or sidebar row) edits that
+            // tile alone: select it first, or the inspector would edit the old selection.
+            if !selectedTileIDs.contains(tileID) {
+                selectedTileIDs = [tileID]
+                selectionSource = .canvas
+                groupSelectionColor = nil
+            }
             let resolvedTileID = (selectedTileIDs.count > 1 && selectedTileIDs.contains(tileID)) ? (selectedTileIDs.first ?? tileID) : tileID
             withAnimation(.easeInOut(duration: 0.25)) {
                 editingTileID = resolvedTileID
