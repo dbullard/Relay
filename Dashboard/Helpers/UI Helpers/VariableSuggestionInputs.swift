@@ -436,6 +436,10 @@ struct AutomationVariableTokenField: View {
     /// GraphNodeControls.swift).
     @State private var isEditing = false
     @State private var editingStartedAt = Date.distantPast
+    @State private var editingEndedAt = Date.distantPast
+    #if os(macOS)
+    @FocusState private var isDisplayFocused: Bool
+    #endif
     @Environment(\.isEnabled) private var isEnabled
 
     /// Ends editing when the text view loses focus, except during the click that started
@@ -444,6 +448,14 @@ struct AutomationVariableTokenField: View {
     private func endEditing() {
         guard Date().timeIntervalSince(editingStartedAt) >= 0.4 else { return }
         isEditing = false
+        editingEndedAt = Date()
+    }
+
+    private func beginEditing() {
+        guard isEnabled, !isEditing else { return }
+        GraphTextEditingClaim.claim()
+        editingStartedAt = Date()
+        isEditing = true
     }
 
     var body: some View {
@@ -508,19 +520,25 @@ struct AutomationVariableTokenField: View {
         .clipped()
         .contentShape(Rectangle())
         .onTapGesture {
-            guard isEnabled else { return }
-            GraphTextEditingClaim.claim()
-            editingStartedAt = Date()
-            isEditing = true
+            beginEditing()
+        }
+        // Reachable with Tab like a text field: `.edit` focus is in the key loop even
+        // without Keyboard Navigation turned on. Focusing it swaps in the real editor,
+        // which takes focus as it appears.
+        .focusable(isEnabled, interactions: .edit)
+        .focused($isDisplayFocused)
+        .onChange(of: isDisplayFocused) { _, focused in
+            // Ignore focus coming straight back as editing ends (e.g. Esc), which
+            // would otherwise reopen the editor at once.
+            guard focused, Date().timeIntervalSince(editingEndedAt) >= 0.3 else { return }
+            beginEditing()
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(title))
         .accessibilityValue(Text(verbatim: text))
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
-            guard isEnabled else { return }
-            GraphTextEditingClaim.claim()
-            isEditing = true
+            beginEditing()
         }
     }
     #endif

@@ -172,6 +172,9 @@ struct DashboardTileEditView: View {
     let initialTileSize: CGSize?
     let onBeginTileSizeEdit: () -> Void
     let onUpdateTileSizeLive: (Double?, Double?) -> Void
+    /// A slider drag began (true) or ended (false), so the owner can fold the drag's
+    /// changes into a single undo step.
+    let onContinuousEditChanged: (Bool) -> Void
 
     @Binding var tab: DashboardTab
     let sharedRosters: [DashboardRoster]
@@ -223,6 +226,8 @@ struct DashboardTileEditView: View {
     @State private var tileSizeWidthText: String = ""
     @State private var tileSizeHeightText: String = ""
     @State private var hasStartedTileSizeEdit: Bool = false
+    /// Shown under the size fields when a committed value isn't a number.
+    @State private var tileSizeInputHint: String?
     @FocusState private var tileSizeFieldFocus: TileSizeField?
     
     @State private var selectedInspectorTab: InspectorTab = .modules
@@ -384,6 +389,7 @@ struct DashboardTileEditView: View {
         initialTileSize: CGSize? = nil,
         onBeginTileSizeEdit: @escaping () -> Void = {},
         onUpdateTileSizeLive: @escaping (Double?, Double?) -> Void = { _, _ in },
+        onContinuousEditChanged: @escaping (Bool) -> Void = { _ in },
         onUpdatePCOModuleConfig: @escaping (UUID, PCOModuleConfig) -> Void,
         onUpdateShureModuleConfig: @escaping (UUID, ShureModuleConfig) -> Void,
         initialShowsTitle: Bool,
@@ -459,6 +465,7 @@ struct DashboardTileEditView: View {
         self.initialTileSize = initialTileSize
         self.onBeginTileSizeEdit = onBeginTileSizeEdit
         self.onUpdateTileSizeLive = onUpdateTileSizeLive
+        self.onContinuousEditChanged = onContinuousEditChanged
         self.onUpdatePCOModuleConfig = onUpdatePCOModuleConfig
         self.onUpdateShureModuleConfig = onUpdateShureModuleConfig
         self.initialShowsTitle = initialShowsTitle
@@ -1600,12 +1607,13 @@ extension DashboardTileEditView {
                 #endif
             } else {
                 // Tab selector for the inspector content
-                Picker("", selection: $selectedInspectorTab) {
+                Picker("Inspector section", selection: $selectedInspectorTab) {
                     ForEach(InspectorTab.allCases) { tab in
                         Text(tab.label).tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .background {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(.ultraThinMaterial)
@@ -2469,7 +2477,7 @@ extension DashboardTileEditView {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Background Color")
-                    ColorPicker("", selection: $backgroundColor, supportsOpacity: false)
+                    ColorPicker("Background color", selection: $backgroundColor, supportsOpacity: false)
                         .labelsHidden()
                         .disabled(useGradientBackground)
                 }
@@ -2485,7 +2493,7 @@ extension DashboardTileEditView {
                 if useGradientBackground {
                     HStack {
                         Text("Gradient Top")
-                        ColorPicker("", selection: $gradientStartColor, supportsOpacity: true)
+                        ColorPicker("Gradient top color", selection: $gradientStartColor, supportsOpacity: true)
                             .labelsHidden()
                     }
 #if os(macOS)
@@ -2494,7 +2502,7 @@ extension DashboardTileEditView {
 
                     HStack {
                         Text("Gradient Bottom")
-                        ColorPicker("", selection: $gradientEndColor, supportsOpacity: true)
+                        ColorPicker("Gradient bottom color", selection: $gradientEndColor, supportsOpacity: true)
                             .labelsHidden()
                     }
 #if os(macOS)
@@ -2505,7 +2513,7 @@ extension DashboardTileEditView {
                 HStack {
                     Text("Opacity")
 
-                    Slider(value: $backgroundOpacity, in: 0.2...1.0)
+                    Slider(value: $backgroundOpacity, in: 0.2...1.0, onEditingChanged: onContinuousEditChanged)
 
                     // Editable percentage field (0–100%)
                     let opacityPercentBinding = Binding<Double>(
@@ -2539,10 +2547,10 @@ extension DashboardTileEditView {
                         backgroundOpacity = DashboardTileDefaults.backgroundOpacity
                         pushTileAppearanceLive()
                     } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.caption2)
+                        InspectorResetButtonLabel(font: .caption2)
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Reset opacity")
 #if os(macOS)
                     .help("Reset opacity to default")
 #endif
@@ -2553,7 +2561,7 @@ extension DashboardTileEditView {
 
                 HStack {
                     Text("Corner Radius")
-                    Slider(value: $cornerRadius, in: 0...40)
+                    Slider(value: $cornerRadius, in: 0...40, onEditingChanged: onContinuousEditChanged)
                     HStack(spacing: 2) {
                         TextField(
                             "",
@@ -2574,14 +2582,14 @@ extension DashboardTileEditView {
                         cornerRadius = Double(DashboardTileDefaults.cornerRadius)
                         pushTileAppearanceLive()
                     } label: {
-                        Image(systemName: "arrow.counterclockwise")
                         #if os(iOS)
-                        .font(tertiaryLabelFont)
+                        InspectorResetButtonLabel(font: tertiaryLabelFont)
                         #else
-                        .font(.caption2)
+                        InspectorResetButtonLabel(font: .caption2)
                         #endif
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Reset corner radius")
 #if os(macOS)
                     .help("Reset corner radius to default")
 #endif
@@ -2657,10 +2665,9 @@ extension DashboardTileEditView {
                     TextField("Width", text: $tileSizeWidthText)
                         .frame(width: 70)
                         .textFieldStyle(.roundedBorder)
+                        .monospacedDigit()
                         .focused($tileSizeFieldFocus, equals: .width)
-                        .onChange(of: tileSizeWidthText, initial: false) { _, _ in
-                            pushTileSizeLive()
-                        }
+                        .onSubmit { commitTileSizeFields() }
 
                     Text("×")
                         .foregroundStyle(.secondary)
@@ -2669,21 +2676,42 @@ extension DashboardTileEditView {
                     TextField("Height", text: $tileSizeHeightText)
                         .frame(width: 70)
                         .textFieldStyle(.roundedBorder)
+                        .monospacedDigit()
                         .focused($tileSizeFieldFocus, equals: .height)
-                        .onChange(of: tileSizeHeightText, initial: false) { _, _ in
-                            pushTileSizeLive()
-                        }
+                        .onSubmit { commitTileSizeFields() }
 
                     Spacer(minLength: 0)
 
                     Button {
                         tileSizeWidthText = initialTileSizeWidthText
                         tileSizeHeightText = initialTileSizeHeightText
+                        tileSizeInputHint = nil
                         applyTileSizeEdits()
                     } label: {
-                        Image(systemName: "arrow.counterclockwise")
+                        InspectorResetButtonLabel(font: .body)
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Reset tile size")
+#if os(macOS)
+                    .help("Reset tile size")
+#endif
+                }
+                // Typing used to resize the tile on every keystroke; the size now
+                // applies when you press Return or leave the field.
+                .onChange(of: tileSizeFieldFocus, initial: false) { oldFocus, newFocus in
+                    guard oldFocus != nil, oldFocus != newFocus else { return }
+                    commitTileSizeFields()
+                }
+
+                if let tileSizeInputHint {
+                    Label(tileSizeInputHint, systemImage: "exclamationmark.triangle.fill")
+                        #if os(iOS)
+                        .font(secondaryLabelFont)
+                        #else
+                        .font(.caption2)
+                        #endif
+                        .foregroundStyle(.orange)
+                        .transition(.opacity)
                 }
 
                 let labelPrefix = (initialTileSize == nil) ? "Default" : "Original"
@@ -2707,7 +2735,7 @@ extension DashboardTileEditView {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Module Padding")
-                    Slider(value: $tileContentPadding, in: 0...50)
+                    Slider(value: $tileContentPadding, in: 0...50, onEditingChanged: onContinuousEditChanged)
                     HStack(spacing: 2) {
                         TextField(
                             "",
@@ -2728,10 +2756,10 @@ extension DashboardTileEditView {
                         tileContentPadding = Double(DashboardTileDefaults.contentPadding)
                         pushTileContentPaddingLive()
                     } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.caption2)
+                        InspectorResetButtonLabel(font: .caption2)
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Reset module padding")
     #if os(macOS)
                     .help("Reset padding to default")
     #endif
@@ -2771,7 +2799,7 @@ extension DashboardTileEditView {
         VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Font Size")
-                    Slider(value: $textFontSize, in: 12...120)
+                    Slider(value: $textFontSize, in: 12...120, onEditingChanged: onContinuousEditChanged)
                     HStack(spacing: 2) {
                         TextField(
                             "",
@@ -2792,14 +2820,14 @@ extension DashboardTileEditView {
                         textFontSize = DashboardTileDefaults.textFontSize
                         pushTextFormattingLive()
                     } label: {
-                        Image(systemName: "arrow.counterclockwise")
                         #if os(iOS)
-                        .font(tertiaryLabelFont)
+                        InspectorResetButtonLabel(font: tertiaryLabelFont)
                         #else
-                        .font(.caption2)
+                        InspectorResetButtonLabel(font: .caption2)
                         #endif
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Reset font size")
 #if os(macOS)
                     .help("Reset font size to default")
 #endif
@@ -2810,12 +2838,13 @@ extension DashboardTileEditView {
 
                 HStack {
                     Text("Font Weight")
-                    Picker("", selection: $textFontWeight) {
+                    Picker("Font weight", selection: $textFontWeight) {
                         ForEach(PersonFontWeight.allCases) { weight in
                             Text(weight.label).tag(weight)
                         }
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden()
                 }
 #if os(macOS)
                 .help("Set the font weight for text in the tile.")
@@ -2823,7 +2852,7 @@ extension DashboardTileEditView {
 
                 HStack {
                     Text("Text Color")
-                    ColorPicker("", selection: $textColor, supportsOpacity: true)
+                    ColorPicker("Text color", selection: $textColor, supportsOpacity: true)
                         .labelsHidden()
                 }
 #if os(macOS)
@@ -2832,12 +2861,13 @@ extension DashboardTileEditView {
 
                 HStack {
                     Text("Capitalization")
-                    Picker("", selection: $textCapitalization) {
+                    Picker("Capitalization", selection: $textCapitalization) {
                         ForEach(TextCapitalizationStyle.allCases) { style in
                             Text(style.label).tag(style)
                         }
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden()
                 }
 #if os(macOS)
                 .help("Control how text is capitalized in the tile.")
@@ -2845,12 +2875,15 @@ extension DashboardTileEditView {
 
                 HStack {
                     Text("Alignment")
-                    Picker("", selection: $textJustification) {
+                    Picker("Alignment", selection: $textJustification) {
                         ForEach(TextJustificationStyle.allCases) { style in
-                            DashboardSymbolImage(style.systemImageName).tag(style)
+                            DashboardSymbolImage(style.systemImageName)
+                                .accessibilityLabel(style.label)
+                                .tag(style)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
 #if os(macOS)
                 .help("Set the text alignment for the tile.")
@@ -2858,12 +2891,15 @@ extension DashboardTileEditView {
 
                 HStack {
                     Text("Vertical Align")
-                    Picker("", selection: $textVerticalAlignment) {
+                    Picker("Vertical alignment", selection: $textVerticalAlignment) {
                         ForEach(TextVerticalAlignmentStyle.allCases) { style in
-                            DashboardSymbolImage(style.systemImageName).tag(style)
+                            DashboardSymbolImage(style.systemImageName)
+                                .accessibilityLabel(style.rawValue.capitalized)
+                                .tag(style)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
 #if os(macOS)
                 .help("Set the vertical alignment for text in the tile.")
@@ -3026,7 +3062,8 @@ extension DashboardTileEditView {
 
                     Slider(
                         value: heightBinding,
-                        in: Double(minimumHeightPoints(for: module))...Double(max(moduleHeightSliderMaxPoints(for: module), minimumHeightPoints(for: module) + 40))
+                        in: Double(minimumHeightPoints(for: module))...Double(max(moduleHeightSliderMaxPoints(for: module), minimumHeightPoints(for: module) + 40)),
+                        onEditingChanged: onContinuousEditChanged
                     )
 
                     HStack(spacing: 2) {
@@ -3053,10 +3090,10 @@ extension DashboardTileEditView {
                         }
                         updateModuleHeightPoints(moduleID: module.id, heightPoints: nil)
                     } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.caption2)
+                        InspectorResetButtonLabel(font: .caption2)
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Reset height to Auto")
 #if os(macOS)
                     .help("Reset height to Auto")
 #endif
@@ -3108,7 +3145,8 @@ extension DashboardTileEditView {
 
                     Slider(
                         value: topBinding,
-                        in: 0...200
+                        in: 0...200,
+                        onEditingChanged: onContinuousEditChanged
                     )
 
                     HStack(spacing: 2) {
@@ -3143,7 +3181,8 @@ extension DashboardTileEditView {
 
                     Slider(
                         value: bottomBinding,
-                        in: 0...200
+                        in: 0...200,
+                        onEditingChanged: onContinuousEditChanged
                     )
 
                     HStack(spacing: 2) {
@@ -3346,14 +3385,8 @@ extension DashboardTileEditView {
         guard hasInitializedInspectorState, !isSeedingInspectorState else { return }
         hasEditedTextFormatting = true
         let codableColor = CodableColor(textColor)
-        onPreviewTextFormatting(
-            textFontSize,
-            textFontWeight,
-            codableColor,
-            textCapitalization,
-            textJustification,
-            textVerticalAlignment
-        )
+        // `onSave…` writes the change itself. Previewing first made its undo
+        // snapshot record the new value instead of the one to return to.
         onSaveTextFormatting(
             textFontSize,
             textFontWeight,
@@ -3374,13 +3407,7 @@ extension DashboardTileEditView {
                 endColor: CodableColor(gradientEndColor)
             )
             : nil
-        onPreviewTileAppearance(
-            initialBackgroundStyle,
-            backgroundOpacity,
-            CGFloat(cornerRadius),
-            codableColor,
-            resolvedGradient
-        )
+        // See `pushTextFormattingLive`: save writes, so don't preview first.
         onSaveTileAppearance(
             initialBackgroundStyle,
             backgroundOpacity,
@@ -3394,7 +3421,7 @@ extension DashboardTileEditView {
         guard hasInitializedInspectorState, !isSeedingInspectorState else { return }
         hasEditedTileContentPadding = true
         let padding = CGFloat(tileContentPadding)
-        onPreviewTileContentPadding(padding)
+        // See `pushTextFormattingLive`: save writes, so don't preview first.
         onSaveTileContentPadding(padding)
     }
 
@@ -3419,19 +3446,37 @@ extension DashboardTileEditView {
         ordered.forEach { onDuplicateModule($0.id) }
     }
 
-    private func pushTileSizeLive() {
+    /// Applies the typed size (Return or focus leaving the fields). Input that
+    /// isn't a number reverts to the tile's current size with an inline hint.
+    private func commitTileSizeFields() {
         guard hasInitializedInspectorState, !isSeedingInspectorState else { return }
 
         let trimmedWidth = tileSizeWidthText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedHeight = tileSizeHeightText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let widthIsValid = trimmedWidth.isEmpty || Double(trimmedWidth) != nil
+        let heightIsValid = trimmedHeight.isEmpty || Double(trimmedHeight) != nil
 
-        if !trimmedWidth.isEmpty, Double(trimmedWidth) == nil { return }
-        if !trimmedHeight.isEmpty, Double(trimmedHeight) == nil { return }
+        guard widthIsValid, heightIsValid else {
+            if !widthIsValid { tileSizeWidthText = String(Int(currentTileSize.width.rounded())) }
+            if !heightIsValid { tileSizeHeightText = String(Int(currentTileSize.height.rounded())) }
+            let message = "Width and height must be numbers"
+            withAnimation(.easeOut(duration: 0.15)) { tileSizeInputHint = message }
+            AccessibilityNotification.Announcement(message).post()
+            return
+        }
 
-        let widthInput = trimmedWidth.isEmpty ? nil : Double(trimmedWidth)
-        let heightInput = trimmedHeight.isEmpty ? nil : Double(trimmedHeight)
+        if tileSizeInputHint != nil {
+            withAnimation(.easeOut(duration: 0.15)) { tileSizeInputHint = nil }
+        }
 
+        let widthInput = Double(trimmedWidth)
+        let heightInput = Double(trimmedHeight)
         guard widthInput != nil || heightInput != nil else { return }
+
+        // Nothing to do when the fields still show the current size.
+        let widthChanged = widthInput.map { abs($0 - Double(currentTileSize.width)) > 0.5 } ?? false
+        let heightChanged = heightInput.map { abs($0 - Double(currentTileSize.height)) > 0.5 } ?? false
+        guard widthChanged || heightChanged else { return }
 
         beginTileSizeEditIfNeeded()
         onUpdateTileSizeLive(widthInput, heightInput)
@@ -3507,4 +3552,25 @@ private enum InspectorTab: String, CaseIterable, Identifiable {
 private enum TileSizeField: Hashable {
     case width
     case height
+}
+
+/// The ↺ glyph for inspector reset buttons: small to look at, with a full-size
+/// hit target (28pt on macOS, 44pt on iPad).
+private struct InspectorResetButtonLabel: View {
+    let font: Font
+
+    private static var minimumHitSize: CGFloat {
+        #if os(iOS)
+        return 44
+        #else
+        return 28
+        #endif
+    }
+
+    var body: some View {
+        Image(systemName: "arrow.counterclockwise")
+            .font(font)
+            .frame(minWidth: Self.minimumHitSize, minHeight: Self.minimumHitSize)
+            .contentShape(Rectangle())
+    }
 }

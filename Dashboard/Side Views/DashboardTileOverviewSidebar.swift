@@ -476,12 +476,15 @@ struct DashboardTileOverviewSidebar: View {
         .listRowBackground(
             isSelected ? Color.accentColor.opacity(0.12) : Color.clear
         )
-        .onTapGesture {
-            selectGroup(group, tileIds: tileIds)
-        }
+        // The double-tap must be attached first (innermost): a single tap declared
+        // ahead of it wins every click, so the double-tap never fired. The single tap
+        // runs simultaneously, so selection still happens on the first click.
         .onTapGesture(count: 2) {
             onEditGroup(group)
         }
+        .simultaneousGesture(TapGesture().onEnded {
+            selectGroup(group, tileIds: tileIds)
+        })
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(group.name))
         .accessibilityValue(Text("\(tileIds.count) tile\(tileIds.count == 1 ? "" : "s")\(isSelected ? ", selected" : "")"))
@@ -570,19 +573,16 @@ struct DashboardTileOverviewSidebar: View {
             isSelected ? Color.accentColor.opacity(0.12) : Color.clear
         )
         .opacity(tile.isHidden ? 0.80 : 1.0)
-#if os(iOS)
-        .onTapGesture {
-            handleTileSelection(tileID: tile.id)
-        }
-#else
-        .onTapGesture {
-            handleTileSelection(tileID: tile.id)
-        }
-        .tag(tile.id)
-#endif
+        // Double-tap first (innermost), single tap simultaneous: see the group row.
         .onTapGesture(count: 2) {
             beginRenamingTile(tile)
         }
+        .simultaneousGesture(TapGesture().onEnded {
+            handleTileSelection(tileID: tile.id)
+        })
+#if os(macOS)
+        .tag(tile.id)
+#endif
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(displayTitle(for: tile)))
         .accessibilityValue(Text("\(tileSummaryStatic(for: tile, in: tab))\(tile.isHidden ? ", hidden" : "")\(isSelected ? ", selected" : "")"))

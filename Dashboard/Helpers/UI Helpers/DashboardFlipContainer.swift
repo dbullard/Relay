@@ -36,6 +36,12 @@ struct FlipContainer<Front: View, Back: View>: View {
 
     // Keep both sides mounted; we only gate heavy work via environment while inactive.
     @State private var isTransitioning: Bool = false
+    /// The side the faces are drawn for. Follows `isFlipped` inside `withAnimation`,
+    /// so the completion callback knows when the turn has actually finished.
+    @State private var displayedFlipped: Bool
+    /// Bumped per flip, so an interrupted flip's completion doesn't end the newer one.
+    @State private var flipGeneration = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         isFlipped: Bool,
@@ -46,6 +52,7 @@ struct FlipContainer<Front: View, Back: View>: View {
         @ViewBuilder back: () -> Back
     ) {
         self.isFlipped = isFlipped
+        self._displayedFlipped = State(initialValue: isFlipped)
         self.duration = duration
         self.onFlipBegan = onFlipBegan
         self.onFlipCompleted = onFlipCompleted
@@ -73,12 +80,21 @@ struct FlipContainer<Front: View, Back: View>: View {
         isFlipped || isTransitioning
     }
 
+    /// Under Reduce Motion the sides crossfade in place instead of turning in 3D.
+    private func rotation(forBack isBack: Bool) -> Double {
+        guard !reduceMotion else { return 0 }
+        if isBack {
+            return displayedFlipped ? 0 : -180
+        }
+        return displayedFlipped ? 180 : 0
+    }
+
     var body: some View {
         ZStack {
             front
-                .opacity(isFlipped ? 0.0 : 1.0)
+                .opacity(displayedFlipped ? 0.0 : 1.0)
                 .rotation3DEffect(
-                    .degrees(isFlipped ? 180 : 0),
+                    .degrees(rotation(forBack: false)),
                     axis: (x: 0, y: 1, z: 0),
                     perspective: 0.75
                 )
@@ -86,21 +102,30 @@ struct FlipContainer<Front: View, Back: View>: View {
                 .environment(\.prodLinkIsWorkEnabled, frontWorkEnabled)
 
             back
-                .opacity(isFlipped ? 1.0 : 0.0)
+                .opacity(displayedFlipped ? 1.0 : 0.0)
                 .rotation3DEffect(
-                    .degrees(isFlipped ? 0 : -180),
+                    .degrees(rotation(forBack: true)),
                     axis: (x: 0, y: 1, z: 0),
                     perspective: 0.75
                 )
                 .environment(\.prodLinkIsActiveSide, backIsActive)
                 .environment(\.prodLinkIsWorkEnabled, backWorkEnabled)
         }
-        .animation(.easeInOut(duration: duration), value: isFlipped)
-        .onChange(of: isFlipped, initial: false) { _, _ in
+        .onChange(of: isFlipped, initial: false) { _, newValue in
             isTransitioning = true
-            onFlipBegan?(isFlipped)
+            onFlipBegan?(newValue)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.02) {
+            flipGeneration &+= 1
+            let generation = flipGeneration
+            let animation: Animation = reduceMotion
+                ? .easeInOut(duration: min(duration, 0.25))
+                : .easeInOut(duration: duration)
+            withAnimation(animation) {
+                displayedFlipped = newValue
+            } completion: {
+                // A flip that was interrupted by a newer one completes late; only
+                // the latest flip may end the transition.
+                guard generation == flipGeneration else { return }
                 isTransitioning = false
                 onFlipCompleted?(isFlipped)
             }
