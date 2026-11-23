@@ -416,6 +416,10 @@ struct DashboardRootView: View {
     @State private var localEditCountsByGroupID: [String: Int] = [:]
     @State private var orphanedBannerGroupID: String? = nil
     @State private var pendingApprovalRequestId: String? = nil
+    /// In Live Mode an incoming pairing request waits behind a non-blocking banner; this
+    /// is set when the operator taps its "Review" button. Reset whenever the request
+    /// being reviewed changes, so each later request waits for its own Review.
+    @State private var isPairingReviewRequested: Bool = false
     // Tracks a pairing request the user locally dismissed (Cancel, or swipe-to-dismiss
     // on iOS) while it's still in flight on the service side. activePairingRequest is
     // owned entirely by LANSharedTabsService and only cleared when the handshake
@@ -1240,6 +1244,9 @@ var body: some View {
                 guard pendingApprovalRequestId == nil, let first = newRequests.first else { return }
                 pendingApprovalRequestId = first.id
             }
+            .onChange(of: pendingApprovalRequestId, initial: false) { _, _ in
+                isPairingReviewRequested = false
+            }
             .onChange(of: lanService.activePairingRequest, initial: false) { _, newValue in
                 // Clear the local dismissal once the outstanding request resolves, so a
                 // future request — even one that happens to equal the dismissed one
@@ -1324,22 +1331,38 @@ var body: some View {
             }
             .onChange(of: lanService.remoteTabs.map(\.shareId), initial: false) { _, newIds in
                 if let selected = selectedLANShareId, !newIds.contains(selected) {
-                    lostLANDeviceName = selectedLANDeviceName ?? "LAN device"
-                    showLostLANAlert = true
+                    reportLostLANConnection(deviceName: selectedLANDeviceName ?? "LAN device")
                     selectedLANShareId = nil
                     selectedLANDeviceName = nil
                 }
                 if tabs.indices.contains(selectedTabIndex),
                    let shareId = tabs[selectedTabIndex].lanMirrorShareId,
                    !newIds.contains(shareId) {
-                    lostLANDeviceName = tabs[selectedTabIndex].lanMirrorDeviceName
-                        ?? selectedLANDeviceName
-                        ?? "LAN device"
-                    showLostLANAlert = true
+                    reportLostLANConnection(
+                        deviceName: tabs[selectedTabIndex].lanMirrorDeviceName
+                            ?? selectedLANDeviceName
+                            ?? "LAN device"
+                    )
                     jumpToNearestLocalTab(from: selectedTabIndex)
                 }
             }
         
+    }
+
+    /// "Connection Lost" is an alert in Edit Mode, but a non-blocking banner in Live Mode
+    /// so nothing pops over a running show.
+    private func reportLostLANConnection(deviceName: String) {
+        switch LiveModeInterruptionPolicy.connectionLostPresentation(isLiveMode: isLiveMode) {
+        case .modal:
+            lostLANDeviceName = deviceName
+            showLostLANAlert = true
+        case .banner:
+            presentNotification(
+                title: "Connection Lost",
+                message: "Lost connection to \(deviceName)",
+                durationSeconds: LiveModeInterruptionPolicy.connectionLostBannerDuration
+            )
+        }
     }
 
     private func withModeAndCanvasHandlers<Content: View>(_ content: Content) -> some View {
@@ -1986,6 +2009,9 @@ var body: some View {
     @ViewBuilder
     private func canvasBackgroundView() -> some View {
         if isLiveMode {
+            // A double-tap never exits Live Mode (a stray touch mid-show must not drop the
+            // operator out of it); leaving goes only through the explicit control or Cmd+L.
+            // Single taps act immediately rather than waiting out a double-tap window.
             Color.black
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
@@ -1993,52 +2019,43 @@ var body: some View {
                     guard isLiveModeChromeVisible else { return }
                     hideLiveModeChromeImmediately()
                 }
-                .onTapGesture(count: 2) {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        isLiveMode = false
+                #if os(iOS)
+                // iPad: a double-tap on empty canvas brings back the hidden live menu
+                // (the visible top handle does the same). As a simultaneous gesture it
+                // doesn't delay the single tap above.
+                .simultaneousGesture(
+                    TapGesture(count: 2).onEnded {
+                        guard isIPad, !isLiveModeChromeVisible else { return }
+                        showLiveModeChrome()
+                        scheduleLiveModeChromeHide(delay: 4.0, respectsHover: false)
                     }
-                }
+                )
+                #endif
         } else {
             Color.black
                 .ignoresSafeArea()
                 .contentShape(Rectangle()) // ensure the whole canvas is clickable
-                
-                // Double-tap: in Live Mode -> return to Edit Mode. In Edit Mode -> clear selection/inspector and add a tile.
+
+                // Double-tap: clear selection/inspector and add a tile.
                 .onTapGesture(count: 2) {
                     let isMirrorTabSelected = tabs.indices.contains(selectedTabIndex) && (tabs[selectedTabIndex].lanMirrorShareId != nil)
-
-                    // Live Mode: double-tap anywhere to return to Edit Mode.
-                    if isLiveMode {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            isLiveMode = false
-                        }
-                        return
-                    }
-
-                    // Edit Mode: double-tap to add a tile.
                     guard !isMirrorTabSelected else { return }
                     selectedTileIDs.removeAll()
                     editingTileID = nil
                     isInspectorVisible = false
-                    
+
                     addEmptyTile(openModuleCatalog: true)
                 }
-                // Single-click: just clear selection and close inspector
-                .onTapGesture {
-                    // Capture which tile was being edited so we can animate it back.
-                    let tileIDToReset = editingTileID
-
-                    editingTileID = nil
-                    isInspectorVisible = false
-
-                    if tileIDToReset != nil {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                selectedTileIDs.removeAll()
-                            }
-                        } else {
-                            selectedTileIDs.removeAll()
-                        }
-                }
+                // Single click: clear selection and close the inspector immediately. A
+                // simultaneous gesture fires on the first tap instead of waiting for the
+                // double-tap above to fail (which lagged every deselect).
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        editingTileID = nil
+                        isInspectorVisible = false
+                        selectedTileIDs.removeAll()
+                    }
+                )
                 .simultaneousGesture(
                     DragGesture()
                         .onChanged { value in
@@ -2641,6 +2658,12 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
         }
     }
 
+    /// The incoming pairing request currently waiting for the operator's decision, if any.
+    private var queuedPairingApprovalRequest: PendingPairingRequest? {
+        guard let requestId = pendingApprovalRequestId else { return nil }
+        return lanService.pendingPairingRequests.first(where: { $0.id == requestId })
+    }
+
     /// Toolbar + mode banner overlays.
     @ViewBuilder
     private func chromeOverlays() -> some View {
@@ -2648,7 +2671,7 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
         DashboardModeBannerOverlay(
             isVisible: modeBannerVisible,
             text: modeBannerText,
-            subtitle: modeBannerSubtitle ?? ((modeBannerVisible && modeBannerText == "Live Mode") ? "Double Tap to Exit" : nil),
+            subtitle: modeBannerSubtitle ?? ((modeBannerVisible && modeBannerText == "Live Mode" && isIPad) ? "Tap the handle at the top for the live menu" : nil),
             bottomPadding: 70
         )
         #else
@@ -2667,6 +2690,26 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                 text: banner.title,
                 subtitle: subtitle.isEmpty ? nil : subtitle,
                 bottomPadding: 70
+            )
+        }
+
+        if let request = queuedPairingApprovalRequest,
+           LiveModeInterruptionPolicy.showsPairingReviewBanner(
+               isLiveMode: isLiveMode,
+               hasQueuedRequest: true,
+               reviewRequested: isPairingReviewRequested
+           ) {
+            DashboardModeBannerOverlay(
+                isVisible: true,
+                text: LiveModeInterruptionPolicy.pairingBannerTitle(
+                    queuedCount: lanService.pendingPairingRequests.count
+                ),
+                subtitle: LiveModeInterruptionPolicy.pairingBannerSubtitle(
+                    deviceName: request.payload.deviceName
+                ),
+                bottomPadding: 130,
+                actionTitle: "Review",
+                action: { isPairingReviewRequested = true }
             )
         }
 
@@ -2963,6 +3006,23 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
                                 .onChanged(handleLiveModeChromeDragChanged)
                                 .onEnded(handleLiveModeChromeDragEnded)
                         )
+                        // Visible grabber so the hidden live menu is discoverable on iPad
+                        // (the strip above is invisible). Same handle as macOS: 44 pt target,
+                        // tap or drag down, VoiceOver action, Reduce Motion aware.
+                        .overlay(alignment: .top) {
+                            if isLiveMode {
+                                LiveModeRevealHandle(
+                                    isChromeVisible: isLiveModeChromeVisible,
+                                    onTap: {
+                                        showLiveModeChrome()
+                                        scheduleLiveModeChromeHide(delay: 4.0, respectsHover: false)
+                                    },
+                                    onDragChanged: handleLiveModeChromeDragChanged,
+                                    onDragEnded: handleLiveModeChromeDragEnded,
+                                    onHoverChanged: { _ in }
+                                )
+                            }
+                        }
 
                     if isLiveModeChromeVisible {
                         DashboardLiveModeChromeView(
@@ -4924,8 +4984,13 @@ private struct DashboardNotificationBanner: Identifiable, Equatable {
             // visible while the settings sheet is open (SwiftUI only supports one sheet
             // presentation at a time from the same presenter).
             guard !showingSettings else { return nil }
-            if let requestId = pendingApprovalRequestId,
-               let request = lanService.pendingPairingRequests.first(where: { $0.id == requestId }) {
+            // During a live show the request stays queued behind the Review banner (see
+            // chromeOverlays) until the operator taps Review or leaves Live Mode.
+            if let request = queuedPairingApprovalRequest,
+               LiveModeInterruptionPolicy.mayPresentPairingApproval(
+                   isLiveMode: isLiveMode,
+                   reviewRequested: isPairingReviewRequested
+               ) {
                 return .approval(request)
             }
             if let outgoing = lanService.activePairingRequest, outgoing != dismissedActivePairingRequest {
@@ -6176,6 +6241,9 @@ private func topToolbar() -> some View {
             deleteTiles(with: ids)
         },
         deleteSelectedTiles: {
+            // Same guard as the menu / Delete command: no deletes in Live Mode or
+            // while a text field has focus.
+            guard !shouldBlockDelete else { return }
             deleteSelectedTiles()
         },
         onTabInteractionChanged: { isActive in
@@ -6283,6 +6351,9 @@ private func topToolbar() -> some View {
             deleteTiles(with: ids)
         },
         deleteSelectedTiles: {
+            // Same guard as the menu / Delete command: no deletes in Live Mode or
+            // while a text field has focus.
+            guard !shouldBlockDelete else { return }
             deleteSelectedTiles()
         },
         onTabInteractionChanged: { isActive in
