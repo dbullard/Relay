@@ -10,6 +10,9 @@ struct SharedValuesWindow: View {
     @State private var syncedVariables = SyncedTabVariableStore.shared
     @State private var query = ""
     @State private var copiedName: String?
+    /// Variable awaiting delete confirmation (tiles reference variables by name, so a
+    /// delete silently blanks every tile that uses it).
+    @State private var pendingDeleteValue: SharedValue?
     @State private var showingCreateSheet = false
     @State private var editingManualValue: SharedValue?
     @State private var formattingClockValue: SharedValue?
@@ -294,7 +297,7 @@ struct SharedValuesWindow: View {
             copy: copy,
             edit: value.binding == .manual ? { editingManualValue = value } : nil,
             formatClock: isFormatableClockValue(value) ? { formattingClockValue = value } : nil,
-            delete: value.isSuggested ? nil : { delete(value) }
+            delete: value.isSuggested ? nil : { pendingDeleteValue = value }
         )
         .listRowInsets(EdgeInsets(top: 5, leading: 8, bottom: 5, trailing: 8))
         .listRowBackground(Color.clear)
@@ -618,13 +621,43 @@ struct SharedValuesWindow: View {
         .sheet(item: $formattingClockValue) { value in
             ClockFormatSheet(value: value)
         }
-        .alert("Variable Copied", isPresented: Binding(
-            get: { copiedName != nil },
-            set: { if !$0 { copiedName = nil } }
-        )) {
-            Button("OK", role: .cancel) { copiedName = nil }
-        } message: {
-            Text("\(copiedName ?? "Variable") copied — paste it where needed.")
+        .overlay(alignment: .bottom) {
+            // Lightweight, self-dismissing confirmation instead of a modal alert.
+            if let copiedName {
+                Label("Copied \(copiedName)", systemImage: "checkmark.circle.fill")
+                    .font(.callout.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                    .padding(.bottom, 16)
+                    .transition(.opacity)
+                    .accessibilityHidden(true)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: copiedName)
+        .task(id: copiedName) {
+            guard copiedName != nil else { return }
+            try? await Task.sleep(for: .seconds(1.6))
+            guard !Task.isCancelled else { return }
+            copiedName = nil
+        }
+        .confirmationDialog(
+            "Delete “\(pendingDeleteValue?.name ?? "variable")”?",
+            isPresented: Binding(
+                get: { pendingDeleteValue != nil },
+                set: { if !$0 { pendingDeleteValue = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDeleteValue
+        ) { value in
+            Button("Delete Variable", role: .destructive) {
+                delete(value)
+                pendingDeleteValue = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeleteValue = nil }
+        } message: { value in
+            Text(deleteConfirmationMessage(for: value))
         }
         #if os(macOS)
         .background(VariablesWindowActivationBehavior())
@@ -672,7 +705,21 @@ struct SharedValuesWindow: View {
     private func copy(_ value: SharedValue) {
         if picker.insertOrCopy(name: "shared:\(value.name)") == .copied {
             copiedName = value.name
+            AccessibilityNotification.Announcement("Copied \(value.name)").post()
         }
+    }
+
+    private func deleteConfirmationMessage(for value: SharedValue) -> String {
+        let token = "#{shared:\(value.name)}"
+        let computedCount = SharedValueReferenceCounter.computedReferenceCount(
+            to: value.name,
+            in: store.snapshot.values.filter { $0.id != value.id }
+        )
+        var message = "Tiles and automations that use \(token) will show nothing until a variable with that name exists again. This can't be undone."
+        if computedCount > 0 {
+            message = "\(computedCount) computed variable\(computedCount == 1 ? "" : "s") use\(computedCount == 1 ? "s" : "") it. " + message
+        }
+        return message
     }
 
     private func pin(_ observation: OSCAddressObservation) {
@@ -1133,7 +1180,7 @@ private struct ClockFormatSheet: View {
             }
             .navigationTitle(key == "clock:date" ? "Format Date" : "Format Time")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         ClockFormatPreferences.save(
@@ -1244,7 +1291,7 @@ private struct SharedValueCreationSheet: View {
             }
             .navigationTitle("New Variable")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") { add() }
                         .disabled(!canAdd)
@@ -1338,7 +1385,7 @@ private struct ManualSharedValueEditSheet: View {
             }
             .navigationTitle("Edit Variable")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         let payload: SharedValuePayload = switch type {
@@ -1457,5 +1504,35 @@ private struct SharedValueRow: View {
         }
         guard let date = value.lastUpdatedAt else { return "Never received" }
         return "\(value.status.rawValue.capitalized) • Updated \(date.formatted(.relative(presentation: .named)))"
+    }
+}
+
+/// Finds which variables refer to another by name, so a delete can say what it breaks.
+/// Only computed variables are checked: tile text lives in dashboard documents that this
+/// window can't see.
+enum SharedValueReferenceCounter {
+    /// Whether `expression` contains a `#{name}` or `#{shared:name}` token for `name`,
+    /// matched the same way names are normalized when variables are created.
+    static func expression(_ expression: String, references name: String) -> Bool {
+        let target = normalizeSharedValueName(name)
+        guard !target.isEmpty else { return false }
+        var remainder = expression[...]
+        while let open = remainder.range(of: "#{") {
+            guard let close = remainder[open.upperBound...].firstIndex(of: "}") else { return false }
+            var key = String(remainder[open.upperBound..<close])
+            if key.lowercased().hasPrefix("shared:") {
+                key.removeFirst("shared:".count)
+            }
+            if normalizeSharedValueName(key) == target { return true }
+            remainder = remainder[remainder.index(after: close)...]
+        }
+        return false
+    }
+
+    static func computedReferenceCount(to name: String, in values: [SharedValue]) -> Int {
+        values.reduce(0) { count, value in
+            guard case let .computed(expression, _) = value.binding else { return count }
+            return count + (self.expression(expression, references: name) ? 1 : 0)
+        }
     }
 }

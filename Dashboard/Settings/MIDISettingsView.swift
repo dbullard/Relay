@@ -237,10 +237,10 @@ struct ControlInputsSettingsView: View {
             content()
         }
         .padding(14)
-        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
     }
 
@@ -249,7 +249,7 @@ struct ControlInputsSettingsView: View {
             Text(title)
             Spacer()
             Circle()
-                .fill(isActive ? Color.green.opacity(0.9) : Color.white.opacity(0.25))
+                .fill(isActive ? Color.green.opacity(0.9) : Color.secondary.opacity(0.5))
                 .frame(width: 8, height: 8)
             Text(status)
                 .foregroundStyle(.secondary)
