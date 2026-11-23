@@ -14,13 +14,28 @@ struct OnboardingWizardView: View {
             stepContent
             footer
         }
+        #if os(macOS)
         .frame(minWidth: 720, minHeight: 820)
+        #else
+        // A fixed 720x820 minimum overflows iPad form sheets; use the larger page
+        // size and let the steps lay out (and scroll) within it.
+        .presentationSizing(.page)
+        #endif
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title(for: controller.step))
-                .font(.title2.weight(.bold))
+            HStack(alignment: .firstTextBaseline) {
+                Text(title(for: controller.step))
+                    .font(.title2.weight(.bold))
+                Spacer()
+                // Every step can be left. Configuration made so far is already saved to
+                // its own store (devices, audio inputs, connections); no dashboard is
+                // created until Review & Create, so closing never drops a dashboard.
+                Button("Close") { controller.stop() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("Close setup. Anything you've configured so far is kept.")
+            }
             OnboardingStepDotsView(
                 steps: controller.activeSteps,
                 current: controller.step,

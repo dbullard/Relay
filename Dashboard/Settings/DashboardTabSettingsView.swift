@@ -319,6 +319,7 @@ private struct TabGeneralSettingsView: View {
             Button("Cancel") {
                 dismiss()
             }
+            .keyboardShortcut(.cancelAction)
             Button("Save") {
                 saveAndDismiss()
             }
@@ -487,6 +488,7 @@ private struct TabScheduleSettingsView: View {
                         revertDraft()
                         dismiss()
                     }
+                    .keyboardShortcut(.cancelAction)
                     Button("Save") {
                         applyDraftToTab()
                         dismiss()

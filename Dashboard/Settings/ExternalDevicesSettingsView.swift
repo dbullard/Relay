@@ -565,18 +565,7 @@ struct ExternalDevicesSettingsView: View {
 
 #if os(macOS)
             Button {
-                store.addDevice()
-                if let last = store.devices.last {
-                    selectedDeviceID = last.id
-                    selectedDeviceIDs = [last.id]
-                    pendingNewDeviceID = last.id
-                    didConfirmNewDevice = false
-                    showingEditor = true
-                    expandedKinds.insert(last.kind)
-                    withAnimation {
-                        proxy.scrollTo(last.id, anchor: .center)
-                    }
-                }
+                addNewDevice(proxy: proxy)
             } label: {
                 Image(systemName: "plus")
                     .font(.body)
@@ -648,18 +637,7 @@ struct ExternalDevicesSettingsView: View {
     private func externalDevicesToolbar(proxy: ScrollViewProxy) -> some View {
         Group {
             Button {
-                store.addDevice()
-                if let last = store.devices.last {
-                    selectedDeviceID = last.id
-                    selectedDeviceIDs = [last.id]
-                    pendingNewDeviceID = last.id
-                    didConfirmNewDevice = false
-                    showingEditor = true
-                    expandedKinds.insert(last.kind)
-                    withAnimation {
-                        proxy.scrollTo(last.id, anchor: .center)
-                    }
-                }
+                addNewDevice(proxy: proxy)
             } label: {
                 Image(systemName: "plus")
             }
@@ -839,6 +817,12 @@ struct ExternalDevicesSettingsView: View {
 
                 Spacer()
 
+                if selectedDiscoveryKeys.isEmpty && !discoveryService.results.isEmpty {
+                    Text("Select devices to add")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Button(action: {
                     let addedDevices = addSelectedDiscoveryResults()
                     autoSyncX32AfterDiscovery(addedDevices)
@@ -854,9 +838,10 @@ struct ExternalDevicesSettingsView: View {
                     }
                     startShureRefresh(devices: shureDevices)
                 }) {
-                    Text("Done")
+                    Text(discoveryAddButtonTitle)
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(selectedDiscoveryKeys.isEmpty)
             }
             }
@@ -1402,6 +1387,16 @@ struct ExternalDevicesSettingsView: View {
         selectedDiscoveryKeys.removeAll()
     }
 
+    /// The scan sheet's primary action names what it does ("Add 2 Devices") rather than a
+    /// disabled "Done", so it's clear the user needs to select results first.
+    private var discoveryAddButtonTitle: String {
+        switch selectedDiscoveryKeys.count {
+        case 0: return "Add Selected"
+        case 1: return "Add 1 Device"
+        case let count: return "Add \(count) Devices"
+        }
+    }
+
     private var devicesList: some View {
         List(selection: $selectedDeviceIDs) {
             if isReorderingActive {
@@ -1444,15 +1439,60 @@ struct ExternalDevicesSettingsView: View {
 #endif
     }
 
+    /// True when the list is empty because nothing has been added yet (as opposed to a
+    /// search that matches nothing).
+    private var hasNoDevicesAndNoQuery: Bool {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !store.devices.contains(where: { !hiddenKinds.contains($0.kind) })
+    }
+
+    @ViewBuilder
     private var emptyDevicesView: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("No devices match your search.")
-                .font(.subheadline)
-            Text("Try a different name, model, or IP address.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        if hasNoDevicesAndNoQuery {
+            ContentUnavailableView {
+                Label("No Devices Yet", systemImage: "dot.radiowaves.left.and.right")
+            } description: {
+                Text("Scan your network to find mixers and wireless receivers, or add a device by IP address.")
+            } actions: {
+                Button("Scan Network") {
+                    showsDiscoverySheet = true
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Add Device") {
+                    addNewDevice(proxy: nil)
+                }
+                .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("No devices match your search.")
+                    .font(.subheadline)
+                Text("Try a different name, model, or IP address.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 8)
         }
-        .padding(.vertical, 8)
+    }
+
+    /// Adds a blank device and opens its editor (shared by the toolbar "+" and the
+    /// empty-state "Add Device" action).
+    private func addNewDevice(proxy: ScrollViewProxy?) {
+        store.addDevice()
+        guard let last = store.devices.last else { return }
+        selectedDeviceID = last.id
+        selectedDeviceIDs = [last.id]
+        pendingNewDeviceID = last.id
+        didConfirmNewDevice = false
+        showingEditor = true
+        expandedKinds.insert(last.kind)
+        if let proxy {
+            withAnimation {
+                proxy.scrollTo(last.id, anchor: .center)
+            }
+        }
     }
 
     private func groupHeader(_ group: (kind: ExternalDeviceKind, devices: [ExternalDeviceConfig])) -> some View {

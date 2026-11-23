@@ -97,7 +97,7 @@ struct DashboardProPresenterSettingsView: View {
                                 Circle()
                                     .fill(statusColor(ok: ok, testing: testing))
                                     .frame(width: 10, height: 10)
-                                    .help(statusHelpText(ok: ok, testing: testing, msg: msg, latency: latency))
+                                    .accessibilityHidden(true)
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(profile.name)
@@ -105,6 +105,11 @@ struct DashboardProPresenterSettingsView: View {
 
                                     Text("\(profile.host):\(profile.port)")
                                         .font(.caption2)
+                                        .foregroundStyle(.secondary)
+
+                                    // The dot's colour is paired with a word.
+                                    Text(statusWord(ok: ok, testing: testing, latency: latency))
+                                        .font(.caption2.weight(.semibold))
                                         .foregroundStyle(.secondary)
 
                                     if let msg, !msg.isEmpty {
@@ -217,7 +222,7 @@ struct DashboardProPresenterSettingsView: View {
                                 Circle()
                                     .fill(discoveryStatusColor(for: device))
                                     .frame(width: 10, height: 10)
-                                    .help(discoveryStatusHelpText(for: device))
+                                    .accessibilityHidden(true)
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(device.name)
@@ -225,6 +230,12 @@ struct DashboardProPresenterSettingsView: View {
                                     Text("\(device.host):\(device.port)")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
+                                    // Visible status (was tooltip-only, which iPad and
+                                    // VoiceOver never see).
+                                    Text(discoveryStatusHelpText(for: device))
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(device.lastError != nil && !device.isValidated && !device.isValidating ? Color.red : Color.secondary)
+                                        .lineLimit(2)
                                     if let note = device.detailNote, !note.isEmpty {
                                         Text(note)
                                             .font(.caption2)
@@ -239,7 +250,8 @@ struct DashboardProPresenterSettingsView: View {
                                     $0.host == device.host && $0.port == device.port
                                 }
                                 if alreadySaved {
-                                    Image(systemName: "checkmark.circle.fill")
+                                    Label("Saved", systemImage: "checkmark.circle.fill")
+                                        .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .help("Already saved")
                                 } else {
@@ -456,13 +468,13 @@ struct DashboardProPresenterSettingsView: View {
         return .gray.opacity(0.6)
     }
 
-    private func statusHelpText(ok: Bool?, testing: Bool, msg: String?, latency: Int?) -> String {
+    private func statusWord(ok: Bool?, testing: Bool, latency: Int?) -> String {
         if testing { return "Testing…" }
         if ok == true {
-            if let latency { return "Connected ✓ (\(latency) ms)" }
-            return "Connected ✓"
+            if let latency { return "Connected · \(latency) ms" }
+            return "Connected"
         }
-        if ok == false { return msg ?? "Connection failed" }
+        if ok == false { return "Connection failed" }
         return "Not tested yet"
     }
 
@@ -618,6 +630,7 @@ private struct ProPresenterQuickAddSheet: View {
 
             HStack {
                 Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Add") { onSave(password) }
                     .keyboardShortcut(.defaultAction)
@@ -706,6 +719,7 @@ private struct ProPresenterSaveProfileSheet: View {
 
             HStack {
                 Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Save", action: onSave)
                     .keyboardShortcut(.defaultAction)
@@ -769,6 +783,7 @@ private struct ProPresenterEditProfileSheet: View {
 
             HStack {
                 Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Save") {
                     let trimmed = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)

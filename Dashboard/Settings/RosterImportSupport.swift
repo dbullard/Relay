@@ -684,6 +684,7 @@ struct RosterImportReviewView: View {
                     onCancel()
                     dismiss()
                 }
+                .keyboardShortcut(.cancelAction)
                 Button("Save") {
                     performImport()
                 }

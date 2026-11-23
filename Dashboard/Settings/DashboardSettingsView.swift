@@ -178,6 +178,7 @@ struct DashboardSettingsView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Close") { dismiss() }
+                            .keyboardShortcut(.cancelAction)
                     }
                 }
             } detail: {
@@ -205,6 +206,7 @@ struct DashboardSettingsView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Close") { dismiss() }
+                            .keyboardShortcut(.cancelAction)
                     }
                 }
             }
@@ -350,14 +352,14 @@ struct ExternalConnectionsSettingsView: View {
                 ForEach(Array(visiblePages.enumerated()), id: \.element) { index, page in
                     if index > 0 {
                         Rectangle()
-                            .fill(Color.white.opacity(0.12))
+                            .fill(Color.primary.opacity(0.12))
                             .frame(width: 1)
                     }
                     segment(page)
                 }
             }
             .frame(height: 30)
-            .background(Color.white.opacity(0.06), in: Capsule())
+            .background(Color.primary.opacity(0.06), in: Capsule())
         }
 
         private func segment(_ page: ConnectionPage) -> some View {

@@ -54,3 +54,14 @@ struct OnboardingChecklistRow<Trailing: View>: View {
         .contentShape(Rectangle())
     }
 }
+
+extension View {
+    /// Exposes a checklist row's checked state to VoiceOver. Apply it to the control
+    /// that wraps an `OnboardingChecklistRow` (the checkbox glyph alone is not read).
+    func onboardingChecklistCheckedState(_ isChecked: Bool) -> some View {
+        self
+            .accessibilityValue(isChecked ? "Checked" : "Unchecked")
+            .accessibilityAddTraits(isChecked ? .isSelected : [])
+            .accessibilityHint(isChecked ? "Double-tap to leave it out." : "Double-tap to include it.")
+    }
+}

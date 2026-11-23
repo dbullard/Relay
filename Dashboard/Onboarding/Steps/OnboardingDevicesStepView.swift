@@ -16,11 +16,31 @@ struct OnboardingDevicesStepView: View {
                 Spacer()
                 if discoveryService.isScanning {
                     ProgressView()
+                        .controlSize(.small)
                 }
+                Button {
+                    discoveryService.startScan()
+                } label: {
+                    Label("Rescan", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .disabled(discoveryService.isScanning)
             }
+
+            Text("Some devices (DiGiCo consoles, Shure ANX4 / ADTD / ADTQ) don't answer network discovery. Add them by IP address later in Settings › External Devices.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             ScrollView {
                 VStack(spacing: 8) {
+                    if discoveryService.results.isEmpty && !discoveryService.isScanning {
+                        Text("No devices found yet. Check that this device is on the same network as your gear, then Rescan.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                    }
                     ForEach(discoveryService.results) { result in
                         let isAdded = addedResultKeys.contains(discoveryKey(for: result))
                         Button {

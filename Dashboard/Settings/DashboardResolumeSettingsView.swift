@@ -155,7 +155,7 @@ struct DashboardResolumeSettingsView: View {
             Circle()
                 .fill(statusColor(ok: ok, testing: testing, enabled: profile.isEnabled))
                 .frame(width: 10, height: 10)
-                .help(statusHelpText(ok: ok, testing: testing, enabled: profile.isEnabled, msg: msg, latency: latency))
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(profile.name.isEmpty ? "Resolume" : profile.name)
@@ -166,6 +166,11 @@ struct DashboardResolumeSettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+
+                // The dot's colour is paired with a word.
+                Text(statusWord(ok: ok, testing: testing, enabled: profile.isEnabled, latency: latency))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
                 if let msg, !msg.isEmpty, profile.isEnabled {
                     Text(msg)
@@ -207,14 +212,14 @@ struct DashboardResolumeSettingsView: View {
         return .gray.opacity(0.6)
     }
 
-    private func statusHelpText(ok: Bool?, testing: Bool, enabled: Bool, msg: String?, latency: Int?) -> String {
+    private func statusWord(ok: Bool?, testing: Bool, enabled: Bool, latency: Int?) -> String {
         if !enabled { return "Disabled" }
         if testing { return "Testing…" }
         if ok == true {
-            if let latency { return "Connected ✓ (\(latency) ms)" }
-            return "Connected ✓"
+            if let latency { return "Connected · \(latency) ms" }
+            return "Connected"
         }
-        if ok == false { return msg ?? "Connection failed" }
+        if ok == false { return "Connection failed" }
         return "Not tested yet"
     }
 
@@ -342,6 +347,7 @@ private struct ResolumeProfileEditorSheet: View {
 
             HStack {
                 Button("Cancel") { onCancel() }
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Save") {
                     // Basic sanitization

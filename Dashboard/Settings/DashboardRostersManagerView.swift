@@ -220,6 +220,7 @@ struct DashboardRostersManagerView: View {
                 Button("Cancel") {
                     dismiss()
                 }
+                .keyboardShortcut(.cancelAction)
                 .disabled(isImporting)
 
                 Spacer()
