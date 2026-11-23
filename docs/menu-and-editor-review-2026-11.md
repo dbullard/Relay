@@ -2,6 +2,18 @@
 
 Scope: the macOS menu bar (`RelayCommands.swift`), the iPad "more" menus, the toolbar, every context menu, the Live Mode menu, and the tile editor (inspector). I read the code on branch `audit/remaining` and judged it against the macOS/iPadOS Human Interface Guidelines. Nothing was run, so look at the proposed structures in the app before committing to them.
 
+## Status — 23 November 2026
+
+The fixes that needed no decision are done on `audit/remaining` (branches `feat/menu-cleanup` and `feat/editor-cleanup`):
+- **Menu bar:** File reordered; an Arrange *submenu* inside Edit (not a new top-level menu); View toggles for Tile Overview, Inspector and Show Grid; zoom commands; Window menu items; Tabs menu items.
+- **Context menus:** reordered with count labels; a new empty-canvas menu.
+- **Sidebar:** Edit and Delete added, "pt" units, and Bring Forward / Send Backward (list order is stacking order).
+- **Tile editor:** undo for every module, the header names the tile, disabled-state captions, one title vocabulary, iPad parity, and the panel width fix.
+
+Both apps build and the covering tests pass. Nothing has been tried in the running app yet. The decisions in section 5 are still open; nothing in them was implemented.
+
+---
+
 **Summary.** The commands exist, but they're scattered. The same action has different names in different places, and several actions are reachable from only one place (usually a context menu or a sidebar row) that people won't find. The tile editor is in good shape: one inspector, two tabs, changes apply live. But it splits tile-wide settings across three surfaces, and a dozen module types change settings without undo.
 
 ---
@@ -39,7 +51,7 @@ Scope: the macOS menu bar (`RelayCommands.swift`), the iPad "more" menus, the to
 1. **Edit holds canvas and layout commands that aren't edits.** Resize Dashboard Canvas…, Bring All Tiles Into Canvas, and (on iPad) Snap/Grid/Guides belong in a layout menu. Meanwhile the arrange commands people look for (Tidy Up, Align to Grid, Resolve Overlaps, Distribute) are only in the tile context menu and the selection toolbar.
 2. **One action, several names.**
    - "Resize Dashboard Canvas…" (Edit), "Canvas Size…" (tab menu) and "Change dashboard size" are the same thing.
-   - "Tidy Up" (context menu) and "Distribute" (selection toolbar) are the same thing.
+   - ~~"Tidy Up" and "Distribute" are the same thing.~~ *Correction:* they're different. Tidy Up packs tiles edge to edge and keeps their sizes; Distribute resizes them into a grid that fills the canvas. Both names stay.
    - "Auto-Hide Menu" (macOS) and "Auto-hide Toolbar" (iPad) are the same thing; the macOS name is wrong, since the item hides the toolbar, not a menu.
    - "Edit Size…" (sidebar, in px) and the inspector's W×H (in pt) edit the same value with different units.
 3. **Mode-dependent titles don't always switch.** Duplicate becomes "Duplicate Node" in Automation view, but "Delete Selected Tiles" and "Group Selected Tiles…" stay tile-worded and stay enabled there.
