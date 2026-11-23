@@ -1789,6 +1789,18 @@ private func releasePairingHandshakeSlot() {
 /// class is @MainActor-isolated throughout, so the slot bookkeeping itself needs
 /// no additional locking.
 private func requestPairing(with peer: Peer, reason: String) async -> Bool {
+    // Unsigned/ad-hoc test builds use an in-memory keychain, so they have none of the real
+    // app's pairing secrets and can't keep a new one past quitting. Without this, opening a
+    // dashboard with synced tabs in a test build sent pairing requests to the user's other
+    // Relay computers (the automatic resync path calls this), popping approval prompts there.
+    guard Keychain.usesSystemKeychain else {
+        // Only explain it for an explicit Connect/Reconnect in Settings; background resyncs
+        // fail quietly instead of raising an alert every poll.
+        if reason == "connect" || reason == "reconnect" {
+            lastPairingFailureMessage = "This test build of Relay can't pair with other computers. Use a signed build to connect to \(peer.deviceName ?? "the other computer")."
+        }
+        return false
+    }
     await acquirePairingHandshakeSlot()
     defer { releasePairingHandshakeSlot() }
     lastPairingFailureMessage = nil

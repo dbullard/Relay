@@ -341,8 +341,9 @@ final class DbReaderController: ObservableObject {
         guard !samples.isEmpty else { return nil }
         let values = samples.map(\.value)
         guard let minValue = values.min(), let maxValue = values.max() else { return nil }
-        let total = values.reduce(0.0, +)
-        return CalibrationStats(average: total / Double(values.count), min: minValue, max: maxValue)
+        // Energy average: a plain mean of dB values reads low when the level fluctuates.
+        guard let average = DecibelMath.powerMean(values) else { return nil }
+        return CalibrationStats(average: average, min: minValue, max: maxValue)
     }
 
     private func startSubscriptionIfNeeded() {

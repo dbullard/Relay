@@ -1438,10 +1438,10 @@ struct DbReaderCalibrationSheet: View {
             applyAfterCapture = false
             return
         }
-        capturedSpl = captureValues.last
+        capturedSpl = DecibelMath.powerMean(captureValues)
         if !captureRawValues.isEmpty {
-            let sum = captureRawValues.reduce(0, +)
-            capturedRawDbFS = sum / Double(captureRawValues.count)
+            // Energy average: a plain mean of dB values reads low when the level fluctuates.
+            capturedRawDbFS = DecibelMath.powerMean(captureRawValues)
         }
         if applyAfterCapture {
             applyAfterCapture = false
