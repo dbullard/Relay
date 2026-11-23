@@ -59,10 +59,10 @@ final class AudioAnalysisAccuracyTests: XCTestCase {
         }
     }
 
-    func testFullScaleToneReadsZeroDbInItsBand() async {
-        // A Hann-windowed 0 dBFS tone spreads over neighbouring bins (amplitudes 1, ½, ½
-        // for a bin-aligned tone with this normalisation). With the ENBW correction the
-        // band should read 0 dB, not +1.76 dB.
+    func testFullScaleToneReadsSameAsSPLMeterInItsBand() async {
+        // A Hann-windowed full-scale tone spreads over neighbouring bins (amplitudes 1, ½, ½
+        // for a bin-aligned tone with this normalisation). With the ENBW correction and RMS
+        // scaling the band reads −3.01 dB, the same as the SPL meter's Z level for that tone.
         let processor = RTABandProcessor(resolution: .oct, frequencyRangeLow: 20, frequencyRangeHigh: 20_000)
         let binCount = 4096
         let sampleRate = 48_000.0
@@ -81,7 +81,7 @@ final class AudioAnalysisAccuracyTests: XCTestCase {
             result = await processor.process(frame: f, timeSmoothing: .fast, peakHoldDecayDbPerSec: 20)
         }
         let band1k = try? XCTUnwrap(result.first { abs($0.centerHz - 1_000) < 1 })
-        XCTAssertEqual(band1k?.energyDb ?? -999, 0, accuracy: 0.1)
+        XCTAssertEqual(band1k?.energyDb ?? -999, -3.01, accuracy: 0.1)
     }
 
     // MARK: - Decibel averaging

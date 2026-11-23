@@ -329,10 +329,10 @@ struct RTATileView: View {
 
         var lines: [(color: Color?, text: String)]
         if entries.count == 1 {
-            lines = [(nil, "\(AudioReadoutFormatting.formatHz(band.centerHz))  \(AudioReadoutFormatting.formatDb(entries[0].db))")]
+            lines = [(nil, "\(AudioReadoutFormatting.formatHz(band.centerHz))  \(AudioReadoutFormatting.formatDb(entries[0].db, unit: model.levelScale.unitLabel))")]
         } else {
             lines = [(nil, AudioReadoutFormatting.formatHz(band.centerHz))]
-            lines.append(contentsOf: entries.map { (Optional($0.color), AudioReadoutFormatting.formatDb($0.db)) })
+            lines.append(contentsOf: entries.map { (Optional($0.color), AudioReadoutFormatting.formatDb($0.db, unit: model.levelScale.unitLabel)) })
         }
 
         Self.drawReadoutLabel(ctx: &ctx, size: size, lines: lines, near: CGPoint(x: lineX, y: lineY))

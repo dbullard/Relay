@@ -1161,6 +1161,11 @@ extension DashboardTileEditView {
         }
     }
 
+    /// Calibration offset (dB) of an audio input, 0 if none/unknown.
+    func audioCalibrationOffset(for inputID: UUID?) -> Double {
+        inputID.flatMap { AudioInputsConfigStore.shared.input(for: $0)?.calibrationOffsetDb } ?? 0
+    }
+
     // MARK: - RTA Module Settings
 
     @ViewBuilder func moduleSettings_rta(module: DashboardModuleModel) -> some View {
@@ -1289,13 +1294,49 @@ extension DashboardTileEditView {
                     )
                 }
             }
+            // Level scale and weighting
+            let rtaCal = audioCalibrationOffset(for: currentModel.inputID)
+            let rtaShift = currentModel.levelScale == .calibrated ? rtaCal : 0
+            settingsSection("Levels") {
+                Picker("Scale", selection: Binding(
+                    get: { currentModel.levelScale },
+                    set: { v in
+                        guard v != currentModel.levelScale else { return }
+                        // Keep the same picture framed: move the range and alert thresholds
+                        // by the input's calibration offset.
+                        var u = currentModel
+                        let delta = v == .calibrated ? rtaCal : -rtaCal
+                        u.levelScale = v
+                        u.dBRangeLow += delta; u.dBRangeHigh += delta
+                        u.limitWarningDb += delta; u.limitAlertDb += delta
+                        update(u)
+                    }
+                )) {
+                    ForEach(AudioLevelScale.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Picker("Weighting", selection: Binding(
+                    get: { currentModel.weighting },
+                    set: { v in var u = currentModel; u.weighting = v; update(u) }
+                )) {
+                    Text("Z").tag(DbWeighting.z)
+                    Text("A").tag(DbWeighting.a)
+                    Text("C").tag(DbWeighting.c)
+                }
+                .pickerStyle(.segmented)
+                if currentModel.levelScale == .calibrated && rtaCal == 0 {
+                    Text("This input isn't calibrated yet, so dB SPL equals dBFS. Calibrate it in Settings → Audio.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
             // Level Range (threshold controls)
             settingsSection("Level Range") {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Noise Floor")
                         Spacer()
-                        Text("\(Int(currentModel.dBRangeLow)) dB")
+                        Text("\(Int(currentModel.dBRangeLow)) \(currentModel.levelScale.unitLabel)")
                             .foregroundStyle(.secondary).monospacedDigit()
                     }
                     Slider(
@@ -1303,14 +1344,14 @@ extension DashboardTileEditView {
                             get: { currentModel.dBRangeLow },
                             set: { v in var u = currentModel; u.dBRangeLow = v; update(u) }
                         ),
-                        in: -120...(-20)
+                        in: (-120 + rtaShift)...(-20 + rtaShift)
                     )
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Ceiling")
                         Spacer()
-                        Text("\(Int(currentModel.dBRangeHigh)) dB")
+                        Text("\(Int(currentModel.dBRangeHigh)) \(currentModel.levelScale.unitLabel)")
                             .foregroundStyle(.secondary).monospacedDigit()
                     }
                     Slider(
@@ -1320,7 +1361,7 @@ extension DashboardTileEditView {
                         ),
                         // RTA band energy sums multiple FFT bins, so it can read well above
                         // 0 dBFS even when no single bin is clipping — allow gaining down further.
-                        in: -40...30
+                        in: (-40 + rtaShift)...(30 + rtaShift)
                     )
                 }
             }
@@ -1439,12 +1480,28 @@ extension DashboardTileEditView {
             }
             // Level Range (threshold controls)
             if !currentModel.linkToRTA {
+                let specCal = audioCalibrationOffset(for: currentModel.inputID)
+                let specShift = currentModel.levelScale == .calibrated ? specCal : 0
                 settingsSection("Level Range") {
+                    Picker("Scale", selection: Binding(
+                        get: { currentModel.levelScale },
+                        set: { v in
+                            guard v != currentModel.levelScale else { return }
+                            var u = currentModel
+                            let delta = v == .calibrated ? specCal : -specCal
+                            u.levelScale = v
+                            u.dBRangeLow += delta; u.dBRangeHigh += delta
+                            update(u)
+                        }
+                    )) {
+                        ForEach(AudioLevelScale.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text("Noise Floor")
                             Spacer()
-                            Text("\(Int(currentModel.dBRangeLow)) dB")
+                            Text("\(Int(currentModel.dBRangeLow)) \(currentModel.levelScale.unitLabel)")
                                 .foregroundStyle(.secondary).monospacedDigit()
                         }
                         Slider(
@@ -1452,14 +1509,14 @@ extension DashboardTileEditView {
                                 get: { currentModel.dBRangeLow },
                                 set: { v in var u = currentModel; u.dBRangeLow = v; update(u) }
                             ),
-                            in: -120...(-20)
+                            in: (-120 + specShift)...(-20 + specShift)
                         )
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text("Ceiling")
                             Spacer()
-                            Text("\(Int(currentModel.dBRangeHigh)) dB")
+                            Text("\(Int(currentModel.dBRangeHigh)) \(currentModel.levelScale.unitLabel)")
                                 .foregroundStyle(.secondary).monospacedDigit()
                         }
                         Slider(
@@ -1467,7 +1524,7 @@ extension DashboardTileEditView {
                                 get: { currentModel.dBRangeHigh },
                                 set: { v in var u = currentModel; u.dBRangeHigh = v; update(u) }
                             ),
-                            in: -40...0
+                            in: (-40 + specShift)...(0 + specShift)
                         )
                     }
                 }

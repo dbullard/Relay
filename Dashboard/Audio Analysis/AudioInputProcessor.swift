@@ -33,21 +33,11 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
         var resolution: RTABandResolution
     }
 
-    private struct SmoothPair {
-        var fast: Double = 0
-        var slow: Double = 0
-    }
-
-    // MARK: Processing-queue state
-
-    private var smoothA = SmoothPair()
-    private var smoothC = SmoothPair()
-    private var smoothZ = SmoothPair()
+    /// SPL weighting and time-weighting state; recreated when the sample rate changes.
+    private var meter: SPLMeterDSP?
     private var noiseFloor: Double = -120
     private var lastSampleRate: Double = 0
 
-    private var filterA: WeightingFilter? = nil
-    private var filterC: WeightingFilter? = nil
 
     /// Reused per buffer so the processing path doesn't allocate.
     private var sampleScratch: [Double] = []
@@ -63,19 +53,21 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
     /// True after the watchdog has told subscribers the input went silent.
     private var isSignalStale = false
 
+    /// Holds the newest `longFFTSize` samples; the normal FFT reads the last `currentFFTSize`.
     private var fftRingBuffer: [Float] = []
     private var fftWriteIndex: Int = 0    // monotonically increasing — never reset below its current value
     private var fftNextFrameAt: Int = 0   // fire FFT when fftWriteIndex reaches this; advances by hopSize
-    private var fftSetup: OpaquePointer? = nil
-    private var fftWindow: [Float] = []
+    private var fftAnalyzer: FFTAnalyzer?
     private var currentFFTSize: Int = 0
-    // Pre-allocated working buffers for computeFFTFrame, resized in configureFFT.
-    // Avoids 4 × ~32 KB heap allocations per FFT frame (~23 Hz per source).
-    // fftSqrtMagnitudes is NOT pre-allocated; FFTFrame takes ownership of its own copy.
-    private var fftWindowed: [Float] = []
-    private var fftRealPart: [Float] = []
-    private var fftImagPart: [Float] = []
-    private var fftMagnitudes: [Float] = []
+    /// Long window for low-frequency RTA bands (see FFTFrame.lowFrequencyMagnitudes).
+    private var longFFTAnalyzer: FFTAnalyzer?
+    private var longFFTSize: Int = 0
+    private var lastLongSpectrum: [Float]?
+    private var framesSinceLongSpectrum = 0
+    /// Long-window length relative to the normal window.
+    static let lowFrequencyWindowFactor = 8
+    /// Recompute the long spectrum every this many normal frames (it changes slowly).
+    private static let longSpectrumEveryFrames = 4
 
     // MARK: Control-queue state
 
@@ -111,7 +103,6 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
         #else
         capture.stop()
         #endif
-        if let fftSetup { vDSP_destroy_fftsetup(fftSetup) }
     }
 
     // MARK: - Subscriber management
@@ -330,31 +321,12 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
             }
             extractSamples(from: buffer, frameCount: frameCount, channelIndex: config.channelIndex)
 
-            let dt = 1.0 / sampleRate
-            let alphaFast = exp(-dt / 0.125)
-            let alphaSlow  = exp(-dt / 1.0)
-            var instA: Double = 0, instC: Double = 0, instZ: Double = 0
-            var rawPeakThisBuffer: Double = 0
-
-            sampleScratch.withUnsafeBufferPointer { samples in
-                for i in 0..<frameCount {
-                    let z = samples[i]
-                    let a = filterA?.processSample(z) ?? z
-                    let c = filterC?.processSample(z) ?? z
-
-                    let z2 = z * z, a2 = a * a, c2 = c * c
-
-                    smoothZ.fast = alphaFast * smoothZ.fast + (1 - alphaFast) * z2
-                    smoothZ.slow = alphaSlow  * smoothZ.slow + (1 - alphaSlow) * z2
-                    smoothA.fast = alphaFast * smoothA.fast + (1 - alphaFast) * a2
-                    smoothA.slow = alphaSlow  * smoothA.slow + (1 - alphaSlow) * a2
-                    smoothC.fast = alphaFast * smoothC.fast + (1 - alphaFast) * c2
-                    smoothC.slow = alphaSlow  * smoothC.slow + (1 - alphaSlow) * c2
-
-                    rawPeakThisBuffer = max(rawPeakThisBuffer, abs(z))
-                    instZ += z2; instA += a2; instC += c2
-                }
+            if meter == nil { meter = SPLMeterDSP(sampleRate: sampleRate) }
+            let levels = sampleScratch.withUnsafeBufferPointer {
+                meter!.process(UnsafeBufferPointer(rebasing: $0[0..<frameCount]))
             }
+            var instA = levels.sumA, instC = levels.sumC, instZ = levels.sumZ
+            let rawPeakThisBuffer = levels.peak
 
             // Apply per-input calibration offset to dB outputs and scale linear powers
             // proportionally so Leq computations stay consistent.
@@ -369,29 +341,24 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
             let n = Double(frameCount)
             instA /= n; instC /= n; instZ /= n
 
-            func toDb(_ energy: Double) -> Double {
-                let rms = sqrt(max(0, energy))
-                return rms > 1e-10 ? 20 * log10(rms) : -120
-            }
-
             let rawPeakDbFS = rawPeakThisBuffer > 1e-10 ? 20 * log10(rawPeakThisBuffer) : -120
 
             // C-A is the difference between C-weighted and A-weighted dB levels.
             // The calibration offset cancels out (it shifts both C and A equally),
             // so no +cal is needed here.
-            let caFastDb = toDb(smoothC.fast) - toDb(smoothA.fast)
-            let caSlowDb = toDb(smoothC.slow) - toDb(smoothA.slow)
+            let caFastDb = levels.cFast - levels.aFast
+            let caSlowDb = levels.cSlow - levels.aSlow
 
             if !splContinuations.isEmpty {
                 let payload = SPLPayload(
-                    aFast: toDb(smoothA.fast) + cal, aSlow: toDb(smoothA.slow) + cal,
-                    cFast: toDb(smoothC.fast) + cal, cSlow: toDb(smoothC.slow) + cal,
-                    zFast: toDb(smoothZ.fast) + cal, zSlow: toDb(smoothZ.slow) + cal,
+                    aFast: levels.aFast + cal, aSlow: levels.aSlow + cal,
+                    cFast: levels.cFast + cal, cSlow: levels.cSlow + cal,
+                    zFast: levels.zFast + cal, zSlow: levels.zSlow + cal,
                     caFast: caFastDb, caSlow: caSlowDb,
                     // Raw values are digital levels (dBFS) and deliberately exclude the
                     // calibration offset — the automation trigger, log columns and
                     // calibration sheet all treat them as dBFS.
-                    rawDbFS: toDb(smoothZ.fast),
+                    rawDbFS: levels.zFast,
                     rawPeakDbFS: rawPeakDbFS,
                     aInstantPower: instA * linCal, cInstantPower: instC * linCal, zInstantPower: instZ * linCal,
                     clippingWarning: rawPeakThisBuffer >= 0.999,
@@ -456,9 +423,7 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
     }
 
     private func resetFilters(sampleRate: Double) {
-        filterA = WeightingFilter(weighting: .a, sampleRate: sampleRate)
-        filterC = WeightingFilter(weighting: .c, sampleRate: sampleRate)
-        smoothA = SmoothPair(); smoothC = SmoothPair(); smoothZ = SmoothPair()
+        meter = SPLMeterDSP(sampleRate: sampleRate)
     }
 
     /// FFT length for the finest resolution any subscriber asked for. The table in
@@ -483,28 +448,20 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
     }
 
     private func configureFFT(size: Int) {
-        if let existing = fftSetup { vDSP_destroy_fftsetup(existing) }
-        let log2n = vDSP_Length(log2(Double(size)).rounded())
-        fftSetup = vDSP_create_fftsetup(log2n, Int32(kFFTRadix2))
-        fftWindow = [Float](repeating: 0, count: size)
-        // DENORM (standard 0...1 Hann): its mean value of 0.5 is the coherent-gain loss
-        // compensated for below via the 2/n scale. NORM applies an extra sqrt(8/3)
-        // factor meant for noise/PSD averaging, which would throw off tone/level accuracy.
-        vDSP_hann_window(&fftWindow, vDSP_Length(size), Int32(vDSP_HANN_DENORM))
-        fftRingBuffer = [Float](repeating: 0, count: size)
+        fftAnalyzer = FFTAnalyzer(size: size)
+        longFFTSize = size * Self.lowFrequencyWindowFactor
+        longFFTAnalyzer = FFTAnalyzer(size: longFFTSize)
+        lastLongSpectrum = nil
+        framesSinceLongSpectrum = 0
+        fftRingBuffer = [Float](repeating: 0, count: longFFTSize)
         fftWriteIndex = 0
         fftNextFrameAt = size   // fire first frame once we have a full window of samples
-        let halfN = size / 2
-        fftWindowed = [Float](repeating: 0, count: size)
-        fftRealPart = [Float](repeating: 0, count: halfN)
-        fftImagPart = [Float](repeating: 0, count: halfN)
-        fftMagnitudes = [Float](repeating: 0, count: halfN)
     }
 
     /// Copies the first `count` samples of `sampleScratch` into the FFT ring buffer in at
     /// most two contiguous runs.
     private func appendToFFTRingBuffer(count: Int) {
-        let n = currentFFTSize
+        let n = fftRingBuffer.count
         guard n > 0 else { return }
         // Only the newest n samples can survive in the ring.
         let skip = max(0, count - n)
@@ -526,86 +483,32 @@ nonisolated final class AudioInputProcessor: @unchecked Sendable {
     }
 
     private func computeFFTFrame(sampleRate: Double) -> FFTFrame? {
-        guard let setup = fftSetup, currentFFTSize > 0 else { return nil }
-        let n = currentFFTSize
-        let halfN = n / 2
-        let log2n = vDSP_Length(log2(Double(n)).rounded())
+        guard let analyzer = fftAnalyzer, currentFFTSize > 0, analyzer.size == currentFFTSize else { return nil }
+        let capacity = fftRingBuffer.count
+        guard capacity >= currentFFTSize else { return nil }
 
-        // Apply the Hann window to the ring-buffer contents (oldest sample first) in two
-        // contiguous runs, into the pre-allocated buffer.
-        let startIdx = fftWriteIndex % n
-        let firstRun = n - startIdx
-        fftRingBuffer.withUnsafeBufferPointer { ring in
-            fftWindow.withUnsafeBufferPointer { win in
-                fftWindowed.withUnsafeMutableBufferPointer { out in
-                    vDSP_vmul(ring.baseAddress! + startIdx, 1, win.baseAddress!, 1,
-                              out.baseAddress!, 1, vDSP_Length(firstRun))
-                    if startIdx > 0 {
-                        vDSP_vmul(ring.baseAddress!, 1, win.baseAddress! + firstRun, 1,
-                                  out.baseAddress! + firstRun, 1, vDSP_Length(startIdx))
-                    }
-                }
+        /// The newest `length` samples, oldest first, as up to two contiguous runs.
+        func spectrum(_ fft: FFTAnalyzer, length: Int) -> [Float] {
+            let start = ((fftWriteIndex - length) % capacity + capacity) % capacity
+            let firstCount = min(length, capacity - start)
+            return fftRingBuffer.withUnsafeBufferPointer { ring in
+                fft.amplitudeSpectrum(first: ring.baseAddress! + start, firstCount: firstCount,
+                                      second: firstCount < length ? ring.baseAddress! : nil,
+                                      secondCount: length - firstCount)
             }
         }
 
-        // Real-input FFT via vDSP_fft_zrip ("z" = split-complex, "r" = real input, "ip" = in-place).
-        //
-        // Step 1 – vDSP_ctoz with stride 2:
-        //   Deinterleaves the n windowed real samples into halfN complex pairs (even sample ->
-        //   real, odd sample -> imag). IC is a stride over the *original real buffer's* element
-        //   spacing as seen through the DSPComplex reinterpretation, not a stride bounded by the
-        //   halfN capacity annotation on the pointer — that annotation only describes the *output*
-        //   element count read, not a byte-range check. Empirically verified: stride 1 here
-        //   silently reports every bin at half its true frequency (a bin-aligned tone at bin k
-        //   measures at bin k/2, confirmed by comparing against vDSP_fft_zip on the same signal),
-        //   which is the root cause of the RTA/spectrogram frequency axis reading roughly an
-        //   octave low. Stride 2 matches Apple's documented real-FFT packing and reproduces the
-        //   reference vDSP_fft_zip result exactly.
-        //
-        // Step 2 – vDSP_fft_zrip (NOT vDSP_fft_zip):
-        //   vDSP_fft_zip is the complex FFT; with log2n it processes n complex elements and
-        //   would write n floats into the halfN-float split buffers, overflowing by n/2 elements
-        //   and corrupting heap memory. vDSP_fft_zrip is the real FFT; it processes the n real
-        //   samples packed as halfN complex pairs and writes back exactly halfN complex bins.
-        //
-        // All three array storage pointers are pinned for the entire duration so DSPSplitComplex
-        // internal pointers remain valid across all vDSP calls.
-        fftRealPart.withUnsafeMutableBufferPointer { rPtr in
-            fftImagPart.withUnsafeMutableBufferPointer { iPtr in
-                fftMagnitudes.withUnsafeMutableBufferPointer { mPtr in
-                    var split = DSPSplitComplex(realp: rPtr.baseAddress!, imagp: iPtr.baseAddress!)
-                    fftWindowed.withUnsafeBufferPointer { wPtr in
-                        wPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfN) { cPtr in
-                            vDSP_ctoz(cPtr, 2, &split, 1, vDSP_Length(halfN))
-                        }
-                    }
-                    vDSP_fft_zrip(setup, &split, 1, log2n, FFTDirection(FFT_FORWARD))  // real FFT, not zip
-                    // Bin 0's imaginary slot is repurposed by the packed real-FFT format to hold
-                    // the Nyquist bin's (real-only) value, not a second bin's imaginary part.
-                    // Left alone, vDSP_zvmags would report magnitude[0] = DC^2 + Nyquist^2,
-                    // mixing 0 Hz energy with ~sampleRate/2 energy into the lowest band. There's
-                    // no separate slot for Nyquist in a halfN-bin output, so drop it and keep
-                    // bin 0 as pure DC.
-                    iPtr[0] = 0
-                    vDSP_zvmags(&split, 1, mPtr.baseAddress!, 1, vDSP_Length(halfN))
-                }
-            }
+        let magnitudes = spectrum(analyzer, length: currentFFTSize)
+        if let long = longFFTAnalyzer, fftWriteIndex >= longFFTSize,
+           lastLongSpectrum == nil || framesSinceLongSpectrum >= Self.longSpectrumEveryFrames - 1 {
+            lastLongSpectrum = spectrum(long, length: longFFTSize)
+            framesSinceLongSpectrum = 0
+        } else {
+            framesSinceLongSpectrum += 1
         }
-
-        // Convert power spectrum (squared magnitudes) to amplitude spectrum.
-        // sqrtMagnitudes is a new allocation per frame because FFTFrame takes ownership.
-        var sqrtMagnitudes = [Float](repeating: 0, count: halfN)
-        vvsqrtf(&sqrtMagnitudes, fftMagnitudes, [Int32(halfN)])
-
-        // Normalize to true signal amplitude: vDSP_fft_zrip's forward output is scaled 2x vs a
-        // standard DFT, and the (unity-max, DENORM) Hann window has a coherent gain of 0.5 that
-        // must be compensated for, so the two factors combine to a net 2/n. Verified against a
-        // 0 dBFS bin-aligned test tone: this yields exactly 1.0 amplitude (0 dB), matching the
-        // reference vDSP_fft_zip computation of the same signal.
-        var scale = Float(2.0) / Float(n)
-        vDSP_vsmul(sqrtMagnitudes, 1, &scale, &sqrtMagnitudes, 1, vDSP_Length(halfN))
-
-        return FFTFrame(magnitudes: sqrtMagnitudes, sampleRate: sampleRate,
-                        timestamp: Date().timeIntervalSinceReferenceDate, isRepeated: false)
+        return FFTFrame(magnitudes: magnitudes, sampleRate: sampleRate,
+                        timestamp: Date().timeIntervalSinceReferenceDate, isRepeated: false,
+                        calibrationOffsetDb: config.calibrationOffsetDb,
+                        lowFrequencyMagnitudes: lastLongSpectrum)
     }
 }

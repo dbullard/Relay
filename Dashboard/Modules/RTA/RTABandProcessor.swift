@@ -11,9 +11,14 @@ actor RTABandProcessor {
     private let resolution: RTABandResolution
 
     /// Equivalent noise bandwidth of the Hann window, in bins. A tone's power is smeared
-    /// over ~1.5 bins' worth of squared magnitude, so summed band power is divided by this
-    /// to read a 0 dBFS sine as 0 dB instead of +1.76 dB.
+    /// over ~1.5 bins' worth of squared magnitude, so summed band power is divided by this.
     static let hannENBW: Double = 1.5
+
+    /// The FFT magnitudes are peak amplitudes; a sine of peak A has mean-square power A²/2.
+    /// Dividing by 2 puts band levels on the same RMS scale as the SPL meter, so a tone
+    /// reads the same on both (a full-scale sine is −3.01 dB on each) and calibrated RTA
+    /// levels agree with the meter. Before this the RTA read tones 3.01 dB high.
+    static let peakToRMSPower: Double = 2
 
     /// Per-band FFT bin weights, rebuilt whenever the FFT length or sample rate changes.
     /// Band `i` uses `weightBins[weightOffsets[i] ..< weightOffsets[i + 1]]`.
@@ -22,6 +27,17 @@ actor RTABandProcessor {
     private var weightOffsets: [Int] = []
     private var weightsBinCount = 0
     private var weightsSampleRate: Double = 0
+
+    /// Same weights for the long low-frequency window (FFTFrame.lowFrequencyMagnitudes).
+    private var longWeightBins: [Int] = []
+    private var longWeightValues: [Double] = []
+    private var longWeightOffsets: [Int] = []
+    private var longWeightsBinCount = 0
+    /// Bands narrower than this many normal-window bins use the long window when present.
+    /// The Hann main lobe is 4 bins wide; validation shows bands need ~4+ bins to read a
+    /// centred tone within 0.1 dB, so 6 leaves margin.
+    static let minimumBinsPerBand: Double = 6
+    private var bandUsesLongWindow: [Bool] = []
 
     init(resolution: RTABandResolution, frequencyRangeLow: Double, frequencyRangeHigh: Double) {
         self.resolution = resolution
@@ -38,37 +54,87 @@ actor RTABandProcessor {
         peakHolds = Array(repeating: -120, count: bands.count)
     }
 
-    func process(frame: FFTFrame, timeSmoothing: RTATimeSmoothing, peakHoldDecayDbPerSec: Double) -> [RTABand] {
-        let binCount = frame.magnitudes.count
-        guard binCount > 0, frame.sampleRate > 0 else { return bands }
+    /// Per-band weighting (dB) at each band's centre, cached for the current weighting.
+    private var bandWeightingDb: [Double] = []
+    private var bandWeightingKind: DbWeighting?
+
+    /// `levelOffsetDb` shifts every band (the input's calibration offset for dB SPL);
+    /// `weighting` applies A/C weighting at each band's centre frequency.
+    func process(frame: FFTFrame, timeSmoothing: RTATimeSmoothing, peakHoldDecayDbPerSec: Double,
+                 levelOffsetDb: Double = 0, weighting: DbWeighting = .z) -> [RTABand] {
+        guard let powers = bandPowers(frame: frame) else { return bands }
+        if bandWeightingKind != weighting {
+            bandWeightingDb = bands.map { IECWeighting.dB(weighting, frequency: $0.centerHz) }
+            bandWeightingKind = weighting
+        }
         let now = frame.timestamp
         let dt = lastTimestamp > 0 ? min(max(now - lastTimestamp, 0), 0.5) : 0.05
         lastTimestamp = now
         let alpha = exp(-dt / timeSmoothing.tau)
+        for i in bands.indices {
+            smoothedEnergies[i] = alpha * smoothedEnergies[i] + (1 - alpha) * powers[i]
+            let db = (smoothedEnergies[i] > 1e-12 ? 10 * log10(smoothedEnergies[i]) : -120)
+                + levelOffsetDb + bandWeightingDb[i]
+            peakHolds[i] = db > peakHolds[i] ? db : max(db, peakHolds[i] - peakHoldDecayDbPerSec * dt)
+            bands[i].energyDb = db
+            bands[i].peakDb = peakHolds[i]
+        }
+        return bands
+    }
 
+    /// Band levels of a single frame with no time smoothing or peak hold (validation and
+    /// tests). Does not change this processor's smoothing state.
+    func instantaneousBands(frame: FFTFrame) -> [RTABand] {
+        guard let powers = bandPowers(frame: frame) else { return bands }
+        return bands.enumerated().map { i, band in
+            var b = band
+            b.energyDb = powers[i] > 1e-12 ? 10 * log10(powers[i]) : -120
+            b.peakDb = b.energyDb
+            return b
+        }
+    }
+
+    /// Power in each band for one frame.
+    private func bandPowers(frame: FFTFrame) -> [Double]? {
+        let binCount = frame.magnitudes.count
+        guard binCount > 0, frame.sampleRate > 0 else { return nil }
         if binCount != weightsBinCount || frame.sampleRate != weightsSampleRate {
             rebuildWeights(binCount: binCount, sampleRate: frame.sampleRate)
         }
-
+        let long = frame.lowFrequencyMagnitudes
+        if let long, long.count != longWeightsBinCount {
+            let w = Self.bandWeights(bands: bands, binCount: long.count, sampleRate: frame.sampleRate)
+            longWeightBins = w.bins; longWeightValues = w.values; longWeightOffsets = w.offsets
+            longWeightsBinCount = long.count
+        }
+        var powers = [Double](repeating: 0, count: bands.count)
+        let scale = Self.hannENBW * Self.peakToRMSPower
         frame.magnitudes.withUnsafeBufferPointer { mags in
             for i in bands.indices {
                 var power: Double = 0
-                var k = weightOffsets[i]
-                let end = weightOffsets[i + 1]
-                while k < end {
-                    let m = Double(mags[weightBins[k]])
-                    power += m * m * weightValues[k]
-                    k += 1
+                if let long, bandUsesLongWindow[i] {
+                    long.withUnsafeBufferPointer { lm in
+                        var k = longWeightOffsets[i]
+                        let end = longWeightOffsets[i + 1]
+                        while k < end {
+                            let m = Double(lm[longWeightBins[k]])
+                            power += m * m * longWeightValues[k]
+                            k += 1
+                        }
+                    }
+                } else {
+                    var k = weightOffsets[i]
+                    let end = weightOffsets[i + 1]
+                    while k < end {
+                        let m = Double(mags[weightBins[k]])
+                        power += m * m * weightValues[k]
+                        k += 1
+                    }
                 }
-                power /= Self.hannENBW
-                smoothedEnergies[i] = alpha * smoothedEnergies[i] + (1 - alpha) * power
-                let db = smoothedEnergies[i] > 1e-12 ? 10 * log10(smoothedEnergies[i]) : -120
-                peakHolds[i] = db > peakHolds[i] ? db : max(db, peakHolds[i] - peakHoldDecayDbPerSec * dt)
-                bands[i].energyDb = db
-                bands[i].peakDb = peakHolds[i]
+                powers[i] = power / scale
             }
         }
-        return bands
+        return powers
     }
 
     /// Each FFT bin k covers [(k − ½)·binHz, (k + ½)·binHz]. A band takes each bin's power
@@ -84,6 +150,8 @@ actor RTABandProcessor {
         weightOffsets = weights.offsets
         weightsBinCount = binCount
         weightsSampleRate = sampleRate
+        let binHz = sampleRate / Double(binCount * 2)
+        bandUsesLongWindow = bands.map { ($0.upperHz - $0.lowerHz) / binHz < Self.minimumBinsPerBand }
     }
 
     static func bandWeights(bands: [RTABand], binCount: Int, sampleRate: Double)

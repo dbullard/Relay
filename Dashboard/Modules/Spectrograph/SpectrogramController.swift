@@ -73,6 +73,7 @@ final class SpectrogramController: ObservableObject {
                           || newSettings.dBRangeHigh != settings.dBRangeHigh
         let enabledChanged = newSettings.isEnabled  != settings.isEnabled
         let scaleChanged   = newSettings.frequencyScale != settings.frequencyScale
+            || newSettings.levelScale != settings.levelScale
 
         settings = newSettings
 
@@ -247,6 +248,9 @@ final class SpectrogramController: ObservableObject {
             rebuildColumnMap(binCount: binCount, sampleRate: frame.sampleRate, width: width)
         }
         var row = [Float](repeating: -160, count: width)
+        // Bin magnitudes are peak amplitudes; −3.01 dB puts them on the SPL meter's RMS scale
+        // (same as the RTA), then the calibration offset gives dB SPL when selected.
+        let offset = Float(-3.0103 + (settings.levelScale == .calibrated ? frame.calibrationOffsetDb : 0))
         frame.magnitudes.withUnsafeBufferPointer { mags in
             for x in 0..<width {
                 var peak: Float = 0
@@ -256,7 +260,7 @@ final class SpectrogramController: ObservableObject {
                     if mags[bin] > peak { peak = mags[bin] }
                     bin += 1
                 }
-                row[x] = peak > 1e-10 ? 20 * log10(peak) : -160
+                row[x] = peak > 1e-10 ? 20 * log10(peak) + offset : -160
             }
         }
         return row

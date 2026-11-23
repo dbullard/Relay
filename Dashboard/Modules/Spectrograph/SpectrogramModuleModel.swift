@@ -17,6 +17,8 @@ struct SpectrogramModuleModel: Codable, Equatable {
     /// When true, follow the primary input source and dB range of the RTA module
     /// in this dashboard tab, instead of this module's own settings.
     var linkToRTA: Bool
+    /// dBFS, or calibrated dB SPL using the input's calibration offset.
+    var levelScale: AudioLevelScale
 
     init(
         inputID: UUID? = nil,
@@ -31,8 +33,10 @@ struct SpectrogramModuleModel: Codable, Equatable {
         isEnabled: Bool = true,
         isArmedByUser: Bool = false,
         showsTitle: Bool = false,
-        linkToRTA: Bool = false
+        linkToRTA: Bool = false,
+        levelScale: AudioLevelScale = .dbfs
     ) {
+        self.levelScale = levelScale
         self.inputID = inputID
         self.frequencyScale = frequencyScale
         self.dBRangeLow = dBRangeLow
@@ -50,7 +54,8 @@ struct SpectrogramModuleModel: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case inputID, frequencyScale, dBRangeLow, dBRangeHigh, scrollRate, colorMap,
-             showFrequencyAxis, showTimeAxis, opacity, isEnabled, isArmedByUser, showsTitle, linkToRTA
+             showFrequencyAxis, showTimeAxis, opacity, isEnabled, isArmedByUser, showsTitle, linkToRTA,
+             levelScale
     }
 
     /// Decodes leniently with defaults for any field, so documents saved before a field
@@ -73,6 +78,7 @@ struct SpectrogramModuleModel: Codable, Equatable {
         isArmedByUser = try c.decodeIfPresent(Bool.self, forKey: .isArmedByUser) ?? false
         showsTitle = try c.decodeIfPresent(Bool.self, forKey: .showsTitle) ?? false
         linkToRTA = try c.decodeIfPresent(Bool.self, forKey: .linkToRTA) ?? false
+        levelScale = try c.decodeIfPresent(AudioLevelScale.self, forKey: .levelScale) ?? .dbfs
     }
 }
 
