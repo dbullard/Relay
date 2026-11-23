@@ -26,10 +26,21 @@ struct DashboardKeyboardShortcutsView: View {
                 ("Cmd + L", "Toggle Live Mode", "Live Mode ends only with this or the live menu, never with a double-tap"),
                 ("Cmd + 1", "Switch to Canvas View", nil),
                 ("Cmd + 2", "Switch to Automation View", nil),
+                ("Cmd + Control + S", "Show or Hide Tile Overview", nil),
+                ("Cmd + Option + I", "Show or Hide Inspector", nil),
+                ("Cmd + + or Cmd + =", "Zoom In", nil),
+                ("Cmd + -", "Zoom Out", nil),
+                ("Cmd + 0", "Actual Size", nil),
                 ("Cmd + '", "Toggle Show Guides", nil),
-                ("Cmd + Control + M", "Toggle Auto-Hide Menu", nil),
                 ("Cmd + Option + G", "Toggle Snap to Grid", nil),
-                ("Cmd + Option + V", "Show Variables", "Mac only")
+                ("Cmd + Control + M", "Toggle Auto-Hide Toolbar", nil)
+            ]
+        ),
+        SectionModel(
+            title: "Window",
+            items: [
+                ("Cmd + Option + V", "Show Variables", "Mac only"),
+                ("Cmd + Option + R", "Show Rosters", "Mac only")
             ]
         ),
         SectionModel(
@@ -37,18 +48,18 @@ struct DashboardKeyboardShortcutsView: View {
             items: [
                 ("Cmd + D", "Duplicate Selected Tile or Node", nil),
                 ("Cmd + G", "Group Selected Tiles", nil),
-                ("Delete", "Delete Selected Tiles", "Edit Mode only"),
+                ("Delete", "Delete Selected Tiles or Nodes", "Edit Mode only"),
                 ("Cmd + Shift + H", "Hide or Show Selected", nil)
             ]
         ),
         SectionModel(
             title: "File",
             items: [
-                ("Cmd + Shift + 0", "Show or Close Home", nil),
                 ("Cmd + N", "New Dashboard", nil),
-                ("Cmd + O", "Open Dashboard", nil),
-                ("Cmd + S", "Save Dashboard", nil),
-                ("Cmd + Shift + S", "Save Dashboard As", nil),
+                ("Cmd + O", "Open", nil),
+                ("Cmd + Shift + 0", "Show or Close Home", nil),
+                ("Cmd + S", "Save", nil),
+                ("Cmd + Shift + S", "Save As", nil),
                 ("Cmd + ,", "Settings", nil)
             ]
         )

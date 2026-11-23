@@ -6041,6 +6041,12 @@ var body: some View {
             .onReceive(NotificationCenter.default.publisher(for: .duplicateGraphNodesRequested)) { _ in
                 duplicateSelectedGraphNodes()
             }
+            // View ▸ Zoom In / Zoom Out / Actual Size while the graph is showing.
+            .onReceive(NotificationCenter.default.publisher(for: .dashboardGraphZoomRequested)) { note in
+                guard isWorkEnabled, !isLiveMode,
+                      let command = note.object as? ViewportZoomCommand else { return }
+                applyGraphZoomCommand(command, viewSize: geo.size)
+            }
         }
         .onAppear {
             _ = installSendAllListenerIfNeeded()
@@ -10470,6 +10476,25 @@ private func visibleGraphRect(viewSize: CGSize) -> CGRect {
 private func clampZoom(_ z: CGFloat) -> CGFloat {
     // Keep conservative bounds; tweak to match your gesture limits if different.
     min(max(z, 0.25), 2.5)
+}
+
+/// Menu zoom: steps about the viewport centre like the zoom buttons; Actual Size matches
+/// the zoom controls' Actual Size (100%, graph centred).
+private func applyGraphZoomCommand(_ command: ViewportZoomCommand, viewSize: CGSize) {
+    switch command {
+    case .actualSize:
+        centerGraphBounds(in: viewSize, zoomLevel: 1.0)
+    case .zoomIn, .zoomOut:
+        guard let target = command.applied(
+            zoom: zoom,
+            pan: pan,
+            contentSize: .zero,
+            viewportSize: viewSize,
+            range: 0.25...2.5
+        ) else { return }
+        zoom = target.zoom
+        pan = target.pan
+    }
 }
 
 private func graphContentBounds() -> CGRect? {

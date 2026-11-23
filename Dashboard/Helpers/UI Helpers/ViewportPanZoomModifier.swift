@@ -305,17 +305,22 @@ struct ViewportPanZoomControls: View {
             return
         }
 
-        zoom = 1.0
-        if let contentSize, let viewportSize, viewportSize.width > 0, viewportSize.height > 0 {
-            let targetWidth = contentSize.width * zoom
-            let targetHeight = contentSize.height * zoom
-            pan = CGSize(
-                width: (viewportSize.width - targetWidth) * 0.5,
-                height: (viewportSize.height - targetHeight) * 0.5
-            )
-        } else {
-            pan = .zero
+        let target = Self.actualSizeViewport(contentSize: contentSize, viewportSize: viewportSize)
+        zoom = target.zoom
+        pan = target.pan
+    }
+
+    /// 100% zoom with the content centred in the viewport (or at the origin before the
+    /// viewport has a size). Shared with the View ▸ Actual Size menu command.
+    static func actualSizeViewport(contentSize: CGSize?, viewportSize: CGSize?) -> (zoom: CGFloat, pan: CGSize) {
+        let zoom: CGFloat = 1.0
+        guard let contentSize, let viewportSize, viewportSize.width > 0, viewportSize.height > 0 else {
+            return (zoom, .zero)
         }
+        return (zoom, CGSize(
+            width: (viewportSize.width - contentSize.width * zoom) * 0.5,
+            height: (viewportSize.height - contentSize.height * zoom) * 0.5
+        ))
     }
 
     private func fitToWindow() {
