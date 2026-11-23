@@ -274,8 +274,13 @@ extension DashboardTileEditView {
                 seeded.showBattery = initialShureShowBattery
                 seeded.showRFStrength = initialShureShowRFStrength
 
+                // A one-time migration, not an edit: write it without an undo step (like the
+                // ProPresenter/Resolume seeding). Undoing it would only re-seed on appear.
                 editableModules[currentIdx].shureConfig = seeded
-                onUpdateShureModuleConfig(moduleID, seeded)
+                if let tileIndex = tab.tiles.firstIndex(where: { $0.id == tileID }),
+                   let moduleIndex = tab.tiles[tileIndex].modules?.firstIndex(where: { $0.id == moduleID }) {
+                    tab.tiles[tileIndex].modules?[moduleIndex].shureConfig = seeded
+                }
                 persistChanges()
             }
         }
