@@ -767,7 +767,8 @@ final class ShureChannelMeter {
     @ObservationIgnored private var targetLevel: Double = 0
     @ObservationIgnored private var targetLeft: Double = 0
     @ObservationIgnored private var targetRight: Double = 0
-    @ObservationIgnored private var lastSampleAt: Date?
+    /// Not observed: it changes at packet rate. Views poll it through `hasStopped(at:)`.
+    @ObservationIgnored private(set) var lastSampleAt: Date?
 
     nonisolated static let staleAfter: TimeInterval = 8
     /// Share of the gap to the target closed per clock tick while falling (~0.2 s release).
@@ -818,6 +819,13 @@ final class ShureChannelMeter {
         let nextRight = Self.step(right, toward: targetRight)
         if nextRight != right { right = nextRight }
         return needsTicks
+    }
+
+    /// True once audio samples were arriving and then stopped for longer than `staleAfter`.
+    /// A meter that has never received anything isn't "stopped": the channel may simply be off.
+    func hasStopped(at now: Date) -> Bool {
+        guard let lastSampleAt else { return false }
+        return now.timeIntervalSince(lastSampleAt) > Self.staleAfter
     }
 
     nonisolated static func step(_ current: Double, toward target: Double) -> Double {
@@ -8483,6 +8491,16 @@ struct ShureWirelessModuleView: View {
             if !isPSM900Device {
                 Divider()
                 channelReportsSection
+                    // Without this, a dropped receiver kept showing its last frequency,
+                    // battery and meter as if they were live.
+                    .liveDataStatus(
+                        isConnected: !effectiveLiveMode || service.isConnected,
+                        isReconnecting: effectiveLiveMode && service.isReconnecting,
+                        lastUpdate: effectiveLiveMode ? service.lastHeardAt : nil,
+                        staleAfter: ShureChannelMeter.staleAfter,
+                        reason: effectiveLiveMode ? service.lastError : nil,
+                        badgeFont: captionFont
+                    )
             }
         }
     }
@@ -9024,7 +9042,7 @@ struct ShureWirelessModuleView: View {
                                             }
                                             Spacer()
 
-                                            ShureTileMicMeter(meter: channelMeter, isActive: micMeterIsActive)
+                                            ShureTileMicMeter(meter: channelMeter, isActive: micMeterIsActive, labelFont: captionFont)
                                         }
                                     }
                                 }
@@ -9818,16 +9836,43 @@ struct ShureModuleSettingsInspector: View {
 // MARK: - Live meter views
 
 /// The tile's mic audio meter: 8 segments, the last one lit by the receiver's own clip bit.
-/// Observes only the channel's `ShureChannelMeter`.
+/// Observes only the channel's `ShureChannelMeter`. Muted and "samples stopped" get their
+/// own label, because an empty bar otherwise looks exactly like a quiet talker.
 struct ShureTileMicMeter: View {
     let meter: ShureChannelMeter
     let isActive: Bool
+    var labelFont: Font = .caption
 
     var body: some View {
+        // Ticks once a second only to notice samples stopping; levels redraw through observation.
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let isMuted = isActive && meter.isMuted
+            let hasStopped = isActive && !isMuted && meter.hasStopped(at: context.date)
+            Group {
+                if isMuted {
+                    ShureMeterStateLabel(text: "MUTED", systemImage: "mic.slash.fill", tint: .orange, font: labelFont)
+                } else if hasStopped {
+                    ShureMeterStateLabel(text: "No audio data", systemImage: "waveform.slash", tint: .secondary, font: labelFont)
+                } else {
+                    segments
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Audio level")
+            .accessibilityValue(
+                isMuted ? "Muted"
+                    : hasStopped ? "No audio data"
+                    : isActive ? "\(ShureOverviewAudioBucket.micSegments(level: meter.level)) of \(ShureOverviewAudioBucket.segmentCount - 1)\(meter.isOverloaded ? ", clipping" : "")"
+                    : "Inactive"
+            )
+        }
+    }
+
+    private var segments: some View {
         let segmentCount = ShureOverviewAudioBucket.segmentCount
-        let litSegments = isActive && !meter.isMuted ? ShureOverviewAudioBucket.micSegments(level: meter.level) : 0
+        let litSegments = isActive ? ShureOverviewAudioBucket.micSegments(level: meter.level) : 0
         let isOverloaded = isActive && meter.isOverloaded
-        HStack(spacing: 2) {
+        return HStack(spacing: 2) {
             ForEach(0..<segmentCount, id: \.self) { index in
                 // The last segment is the receiver's clip alert (AUDIO_LED_BITMAP bit 7), not
                 // "fully pegged" by our own level math.
@@ -9838,6 +9883,26 @@ struct ShureTileMicMeter: View {
                     .frame(width: 8, height: 6)
             }
         }
+    }
+}
+
+/// Words + icon in place of a meter, for states an empty bar can't express.
+struct ShureMeterStateLabel: View {
+    let text: String
+    let systemImage: String
+    let tint: Color
+    let font: Font
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+            Text(text)
+                .fontWeight(.semibold)
+        }
+        .font(font)
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
     }
 }
 

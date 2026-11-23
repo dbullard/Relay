@@ -19,10 +19,12 @@ final class YouTubeStreamMonitorViewModel: ObservableObject {
         let nextKey = configKey(for: model)
         guard nextKey != currentConfigKey else { return }
 
-        stopMonitoring(clearSnapshot: false)
+        let nextBroadcastID = model.selectedBroadcastID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Keep the last snapshot across poll-setting changes, but never show another broadcast's numbers.
+        stopMonitoring(clearSnapshot: snapshot != nil && snapshot?.broadcastID != nextBroadcastID)
         currentConfigKey = nextKey
 
-        guard let broadcastID = model.selectedBroadcastID?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let broadcastID = nextBroadcastID,
               !broadcastID.isEmpty else {
             snapshot = nil
             errorMessage = nil
@@ -137,14 +139,23 @@ struct YouTubeStreamMonitorModuleView: View {
                 title: "No Broadcast Selected",
                 message: "Open module settings, connect YouTube, and choose a live broadcast to monitor."
             )
+        } else if let snapshot = viewModel.snapshot {
+            // Keep the last good values on screen; dim and badge them when a poll fails or goes quiet.
+            liveContent(snapshot: snapshot)
+                .liveDataStatus(
+                    isConnected: viewModel.errorMessage == nil,
+                    lastUpdate: snapshot.lastUpdatedAt,
+                    staleAfter: model.clampedPollIntervalSeconds * 3,
+                    reason: viewModel.errorMessage,
+                    badgeFont: .caption2
+                )
         } else if let message = viewModel.errorMessage {
+            // Only when nothing has loaded yet.
             placeholder(
                 systemImage: "exclamationmark.triangle",
                 title: "Unable To Load Stream",
                 message: message
             )
-        } else if let snapshot = viewModel.snapshot {
-            liveContent(snapshot: snapshot)
         } else {
             VStack(spacing: 12) {
                 ProgressView()

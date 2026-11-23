@@ -19,6 +19,8 @@ struct TimecodeModuleView: View {
     @State private var timecodeString: String = "--:--:--:--"
     @State private var isTimecodeLocked: Bool = false
     @State private var frameRateLabel: String = "Unknown"
+    /// Last MTC frame time, captured when lock drops (not every frame).
+    @State private var lastFrameAt: Date? = nil
 
     // MARK: - Text Formatting Helpers
 
@@ -111,7 +113,7 @@ struct TimecodeModuleView: View {
                 Text(timecodeString)
                     .font(timeFont)
                     .monospacedDigit()
-                    .foregroundStyle(isTimecodeLocked ? resolvedPrimaryColor : Color.red)
+                    .foregroundStyle(resolvedPrimaryColor)
             }
 
             // Show detected frame rate when we know it and have lock.
@@ -123,12 +125,23 @@ struct TimecodeModuleView: View {
         }
         .multilineTextAlignment(resolvedTextAlignment)
         .frame(maxWidth: .infinity, alignment: resolvedHorizontalAlignment)
+        // Lost lock: the frozen digits stay but dim, with a badge in words. The service
+        // drops lock 0.5 s after the last frame, so lock is the stale signal; lastUpdate is
+        // only passed once unlocked so it doesn't change at frame rate.
+        .liveDataStatus(
+            isConnected: isTimecodeLocked,
+            lastUpdate: isTimecodeLocked ? nil : lastFrameAt,
+            staleAfter: nil,
+            reason: isTimecodeLocked ? nil : "No timecode lock",
+            badgeFont: captionFont
+        )
         .clipShape(RoundedRectangle(cornerRadius: tileCornerRadius))
         .onReceive(TimecodeService.shared.$timecodeString) { value in
             timecodeString = value
         }
         .onReceive(TimecodeService.shared.$isLocked) { value in
             isTimecodeLocked = value
+            if !value { lastFrameAt = TimecodeService.shared.lastFrameAt }
         }
         .onReceive(TimecodeService.shared.$frameRateLabel) { value in
             frameRateLabel = value

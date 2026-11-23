@@ -20,6 +20,9 @@ final class NDIFramePipeline {
     private(set) var receivedFrameCount: Int = 0
     private(set) var latestFrameNumber: UInt64 = 0
     private(set) var retryCount: Int = 0
+    /// When the last frame arrived. Not observed: it changes every frame, and views read it
+    /// only to age a frame that has stopped updating.
+    @ObservationIgnored private(set) var lastFrameDate: Date?
 
     var latestResolutionText: String {
         if let latestFrame { return latestFrame.resolutionText }
@@ -41,6 +44,7 @@ final class NDIFramePipeline {
         receivedFrameCount = snapshot.receivedFrameCount
         latestFrameNumber = snapshot.latestFrameNumber
         retryCount = snapshot.retryCount
+        lastFrameDate = snapshot.lastFrameDate
     }
 
 }

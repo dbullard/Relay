@@ -329,6 +329,8 @@ public final class ResolumeConnection: ObservableObject {
 
     @Published public private(set) var state: ResolumeConnectionState = .idle
     @Published public private(set) var snapshot: ResolumeSnapshot = .init()
+    /// When a poll last succeeded for the current endpoint; nil until the first one.
+    @Published public private(set) var lastSuccessAt: Date?
 
     private let core = ResolumeConnectionCore()
 
@@ -348,8 +350,12 @@ public final class ResolumeConnection: ObservableObject {
     // MARK: Public API
 
     public func connect(endpoint: ResolumeEndpoint) {
+        // Already talking to this endpoint (e.g. the tile reappeared on a tab switch):
+        // keep the current state and data instead of flashing "Connecting…".
+        if currentEndpoint == endpoint, state != .idle { return }
         currentEndpoint = endpoint
         state = .connecting
+        lastSuccessAt = nil
         log("Connecting to \(endpoint.display)")
         // We don’t “open a socket” here—REST is stateless—so just mark idle/connected after first successful poll.
     }
@@ -359,6 +365,7 @@ public final class ResolumeConnection: ObservableObject {
         currentEndpoint = nil
         state = .idle
         snapshot = .init()
+        lastSuccessAt = nil
         log("Disconnected")
     }
 
@@ -417,6 +424,7 @@ public final class ResolumeConnection: ObservableObject {
                 compositionName: name,
                 rawJSONPreview: String(pretty.prefix(800))
             )
+            lastSuccessAt = snapshot.lastUpdated
 
             if case .connected = state {
                 // ok

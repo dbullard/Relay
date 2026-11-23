@@ -326,6 +326,7 @@
 				"Helpers/UI Helpers/FloatingAddMenuView.swift",
 				"Helpers/UI Helpers/JoinSyncedTabAction.swift",
 				"Helpers/UI Helpers/LeaveSyncedTabAction.swift",
+				"Helpers/UI Helpers/LiveDataStatus.swift",
 				"Helpers/UI Helpers/ModernCard.swift",
 				"Helpers/UI Helpers/ModifierTracker.swift",
 				"Helpers/UI Helpers/NameShortener.swift",

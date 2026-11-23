@@ -108,17 +108,17 @@ struct NDIModuleView: View {
                 displayMode: model.displayMode,
                 pipeline: activeStream?.pipeline
             )
-            .overlay(alignment: .topTrailing) {
-                if shouldShowReconnectBadge {
-                    Text("Reconnecting…")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.orange.opacity(0.85)))
-                        .padding(8)
-                }
-            }
+            // A frame that stops updating, or is held while reconnecting, goes dim with a
+            // badge. Centred so it clears the header and metrics chrome.
+            .liveDataStatus(
+                isConnected: frameStatus.isConnected,
+                isReconnecting: frameStatus.isReconnecting,
+                lastUpdate: frameStatus.lastUpdate,
+                staleAfter: frameStaleAfter,
+                reason: frameStatus.reason,
+                badgeFont: .caption,
+                badgeAlignment: .center
+            )
             .overlay(alignment: .top) {
                 headerOverlay
                     .padding(.horizontal, 14)
@@ -220,23 +220,7 @@ struct NDIModuleView: View {
 
     private var bottomOverlay: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Only show status text when there's an actual status to communicate —
-            // nil presentation means .connected with live video; no overlay needed.
-            if shouldShowBottomStatusText, let headline = currentPresentation?.headline {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(headline)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.white)
-
-                    if let subtitle = statusSubtitleText {
-                        Text(subtitle)
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.82))
-                            .lineLimit(2)
-                    }
-                }
-            }
-
+            // Status is shown once, in the centred status card; this is metrics only.
             if model.showOverlay {
                 overlayMetrics
             }
@@ -260,28 +244,40 @@ struct NDIModuleView: View {
         .allowsHitTesting(false)
     }
 
+    /// The tile's one status view. Only Retry Now takes clicks.
     private var centeredStatusOverlay: some View {
         VStack(spacing: 10) {
-            Image(systemName: centeredStatusSymbolName)
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.90))
+            VStack(spacing: 10) {
+                Image(systemName: centeredStatusSymbolName)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.90))
 
-            Text(currentPresentation?.headline ?? "Waiting for stream")
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.white)
+                Text(currentPresentation?.headline ?? "Waiting for stream")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
 
-            if let subtitle = statusSubtitleText {
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.78))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
+                if let subtitle = statusSubtitleText {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.78))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                }
+            }
+            .allowsHitTesting(false)
+
+            if case .retryNow(let action)? = currentPresentation?.recoveryAction {
+                Button("Retry Now", action: action)
+                    .font(.caption.weight(.semibold))
             }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.ultraThinMaterial))
-        .allowsHitTesting(false)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .allowsHitTesting(false)
+        )
     }
 
     private var overlayMetrics: some View {
@@ -308,16 +304,45 @@ struct NDIModuleView: View {
         .foregroundStyle(.white.opacity(0.84))
     }
 
+    /// No frame to show, or a held frame while paused (the stale badge doesn't cover pauses).
     private var shouldShowCenteredStatus: Bool {
-        pipeline?.latestFrame == nil
-    }
-
-    private var shouldShowBottomStatusText: Bool {
-        model.showOverlay || pipeline?.latestFrame == nil
+        guard let pipeline, pipeline.latestFrame != nil else { return true }
+        if case .suspended = pipeline.state { return true }
+        return false
     }
 
     private var shouldShowBottomOverlay: Bool {
-        model.showOverlay || pipeline?.latestFrame == nil
+        model.showOverlay
+    }
+
+    /// Inputs for the stale badge on a frame that's on screen. With no frame the centred
+    /// status card speaks instead, and a pause isn't stale, so both read as live.
+    private var frameStatus: (isConnected: Bool, isReconnecting: Bool, lastUpdate: Date?, reason: String?) {
+        guard let pipeline, pipeline.latestFrame != nil else { return (true, false, nil, nil) }
+        let lastUpdate = Self.coarseFrameDate(pipeline.lastFrameDate)
+        switch pipeline.state {
+        case .connected:
+            return (true, false, lastUpdate, nil)
+        case .connecting, .failed:
+            // The receiver keeps retrying and holds the last frame meanwhile.
+            return (false, true, lastUpdate, nil)
+        case .disconnected(let reason):
+            return (false, false, lastUpdate, reason)
+        case .idle, .suspended:
+            return (true, false, nil, nil)
+        }
+    }
+
+    /// About three frame intervals at the tier's frame rate, never under 2 s (1.5 s once
+    /// `coarseFrameDate` rounds down by up to 0.5 s). Poster (1 fps) gets 3 s.
+    private var frameStaleAfter: TimeInterval {
+        max(2, 3 / model.qualityTier.defaultFPS)
+    }
+
+    /// The last frame time rounded down to half a second, so the badge's inputs change
+    /// twice a second rather than at frame rate.
+    private static func coarseFrameDate(_ date: Date?) -> Date? {
+        date.map { Date(timeIntervalSinceReferenceDate: ($0.timeIntervalSinceReferenceDate * 2).rounded(.down) / 2) }
     }
 
     private var overlayWidth: CGFloat {
@@ -366,11 +391,6 @@ struct NDIModuleView: View {
             retryCount: pipeline.retryCount,
             onRetry: { reattachStream() }
         )
-    }
-
-    private var shouldShowReconnectBadge: Bool {
-        guard let pipeline = activeStream?.pipeline else { return false }
-        return pipeline.retryCount > 0 && pipeline.retryCount <= 3
     }
 
     private func chromePill(_ text: String, prominence: ChromePillProminence) -> some View {

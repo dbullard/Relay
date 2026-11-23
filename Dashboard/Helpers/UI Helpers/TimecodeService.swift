@@ -18,6 +18,9 @@ final class TimecodeService: ObservableObject {
     @Published var timecodeString: String = "--:--:--:--"
     @Published var isLocked: Bool = false
     @Published var frameRateLabel: String = "Unknown"
+    /// When the last MTC frame arrived. Not published (it changes every frame); tiles read
+    /// it when `isLocked` drops, to say how old the frozen value is.
+    private(set) var lastFrameAt: Date?
 
     /// Human-readable names of available MIDI input sources.
     @Published var availableSources: [String] = []
@@ -39,6 +42,7 @@ final class TimecodeService: ObservableObject {
         parser.onUpdate = { [weak self] update in
             guard let self = self else { return }
             DispatchQueue.main.async {
+                self.lastFrameAt = Date()
                 self.timecodeString = update.formatted
                 self.isLocked = true
                 if let label = update.frameRateLabel {

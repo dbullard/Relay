@@ -427,7 +427,12 @@ final class SennheiserWirelessService: ObservableObject {
     }
 
     private func pollDevice(_ device: ExternalDeviceConfig) async {
-        connectionStateByDevice[device.id] = .connecting
+        // Only show "connecting" when not already connected. Spectera calls this for every
+        // live-stream event; flipping to .connecting during each refresh made the tile flash
+        // "Connecting…" and hide the last snapshot while the request was in flight.
+        if connectionStateByDevice[device.id] != .connected {
+            connectionStateByDevice[device.id] = .connecting
+        }
 
         guard let model = device.sennheiserNetworkModel else {
             connectionStateByDevice[device.id] = .error
@@ -1746,25 +1751,38 @@ struct SennheiserWirelessTileView: View {
                 Text(applyCapitalization("Select a Sennheiser device in the inspector."))
                     .font(captionFont)
                     .foregroundStyle(resolvedSecondaryColor)
+            } else if let snap = snapshot {
+                // Keep the last snapshot on screen in every connection state; the shared
+                // status modifier dims it and says why (reconnecting / offline / no new data).
+                snapshotStatusBody(snap)
+                    .liveDataStatus(
+                        isConnected: !effectiveLiveMode || connectionState == .connected,
+                        isReconnecting: effectiveLiveMode && connectionState == .connecting,
+                        lastUpdate: effectiveLiveMode ? snap.updatedAt : nil,
+                        staleAfter: staleAfter,
+                        reason: effectiveLiveMode && connectionState == .error ? lastErrorMessage : nil,
+                        badgeFont: captionFont
+                    )
             } else {
                 switch connectionState {
                 case .connected:
-                    connectedStatusBody
+                    Text(applyCapitalization("No recent data for \(device?.name ?? "Sennheiser") — CH \(config.channelIndex)."))
+                        .font(captionFont)
+                        .foregroundStyle(resolvedSecondaryColor)
                 case .connecting:
-                    Text(applyCapitalization("Connecting…"))
-                        .font(captionFont)
-                        .foregroundStyle(resolvedSecondaryColor)
+                    LiveDataStatusBadge(status: .connecting, font: captionFont)
                 case .disconnected:
-                    Text(applyCapitalization("Disconnected"))
-                        .font(captionFont)
-                        .foregroundStyle(resolvedSecondaryColor)
+                    if effectiveLiveMode {
+                        LiveDataStatusBadge(status: .offline(lastUpdate: nil, reason: nil), font: captionFont)
+                    } else {
+                        Text(applyCapitalization("Disconnected"))
+                            .font(captionFont)
+                            .foregroundStyle(resolvedSecondaryColor)
+                    }
                 case .error:
-                    Text(applyCapitalization("Connection Error"))
-                        .font(captionFont)
-                        .foregroundStyle(resolvedSecondaryColor)
+                    LiveDataStatusBadge(status: .offline(lastUpdate: nil, reason: lastErrorMessage), font: captionFont)
 
-                    if let id = config.externalDeviceID,
-                       let err = service.lastErrorByDevice[id], !err.isEmpty {
+                    if let err = lastErrorMessage {
                         Text(err)
                             .font(.caption)
                             .foregroundStyle(resolvedSecondaryColor)
@@ -1776,48 +1794,128 @@ struct SennheiserWirelessTileView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private var connectedStatusBody: some View {
-        if let snap = snapshot, isRecentSnapshot(snap.updatedAt) {
-            let rfBars = barCount(from: snap.rfLevel01, maxBars: 5)
-            let audioBars = barCount(from: snap.audioLevel01, maxBars: 8)
+    private var lastErrorMessage: String? {
+        guard let id = config.externalDeviceID,
+              let err = service.lastErrorByDevice[id], !err.isEmpty else { return nil }
+        return err
+    }
 
-            VStack(alignment: .leading, spacing: 6) {
-                if config.showFrequency {
-                    statusRow(icon: "waveform.path.ecg", label: "Frequency", trailing: snap.frequencyMHz.map { String(format: "%.3f MHz", $0) } ?? "—")
-                }
-                if config.showBattery {
-                    statusRow(icon: "battery.100", label: "Battery", trailing: snap.batteryPercent.map { "\($0)%" } ?? "—")
-                }
+    /// Seconds without a new snapshot before the tile counts as stale.
+    /// EW-DX / Digital 6000 / MCP devices push meters continuously (sub-second), and the
+    /// service copies them into snapshots every poll interval, so a fresh `updatedAt`
+    /// is expected each poll; three missed polls (min 6s) means the data stopped.
+    /// Spectera snapshots only change on SSCv2 events (with a 60s fallback poll), so there
+    /// is no regular rhythm to measure against.
+    private var staleAfter: TimeInterval? {
+        if device?.sennheiserNetworkModel?.protocolKind == .sscv2Spectera { return nil }
+        return max(6.0, config.pollIntervalSeconds * 3.0)
+    }
 
-                if config.showRF || config.showAudio {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if config.showRF {
-                            meterRow(icon: "antenna.radiowaves.left.and.right", label: "RF", bars: rfBars, total: 5)
-                        }
-                        if config.showAudio {
-                            meterRow(icon: "speaker.wave.2.fill", label: "Audio", bars: audioBars, total: 8)
-                        }
+    private func snapshotStatusBody(_ snap: SennheiserChannelSnapshot) -> some View {
+        let rfBars = barCount(from: snap.rfLevel01, maxBars: 5)
+        let audioBars = barCount(from: snap.audioLevel01, maxBars: 8)
+        let isMuted = snap.warnings.contains(.muted)
+
+        return VStack(alignment: .leading, spacing: 6) {
+            if config.showFrequency {
+                statusRow(icon: "waveform.path.ecg", label: "Frequency", trailing: snap.frequencyMHz.map { String(format: "%.3f MHz", $0) } ?? "—")
+            }
+            if config.showBattery {
+                batteryRow(percent: snap.batteryPercent)
+            }
+
+            if config.showRF || config.showAudio {
+                VStack(alignment: .leading, spacing: 6) {
+                    if config.showRF {
+                        meterRow(
+                            icon: "antenna.radiowaves.left.and.right",
+                            label: "RF",
+                            bars: rfBars,
+                            total: 5,
+                            accessibilityLabel: "RF",
+                            accessibilityValue: snap.rfLevel01 == nil ? "No data" : "\(rfBars) of 5"
+                        )
                     }
-                    .padding(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(resolvedSecondaryColor.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    if config.showAudio {
+                        meterRow(
+                            icon: "speaker.wave.2.fill",
+                            label: "Audio",
+                            bars: audioBars,
+                            total: 8,
+                            accessibilityLabel: "Audio level",
+                            accessibilityValue: isMuted ? "Muted"
+                                : snap.audioLevel01 == nil ? "No data"
+                                : "\(audioBars) of 8"
+                        )
+                    }
                 }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(resolvedSecondaryColor.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
 
-                if !snap.warnings.isEmpty {
-                    Text(snap.warnings.map { $0.rawValue }.joined(separator: " • "))
-                        .font(.caption)
-                        .foregroundStyle(resolvedSecondaryColor)
-                        .lineLimit(2)
+            if !snap.warnings.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) { warningChips(snap.warnings) }
+                    VStack(alignment: .leading, spacing: 4) { warningChips(snap.warnings) }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            Text(applyCapitalization("No recent data for \(device?.name ?? "Sennheiser") — CH \(config.channelIndex)."))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func warningChips(_ warnings: [SennheiserWarning]) -> some View {
+        ForEach(warnings, id: \.self) { warning in
+            SennheiserWarningChip(
+                text: applyCapitalization(warning.displayLabel),
+                systemImage: warning.systemImage,
+                tint: warning.tint,
+                textColor: resolvedPrimaryColor,
+                font: contentFont
+            )
+        }
+    }
+
+    /// Battery symbol follows the level; at or below 20% a "LOW" word is shown, not just a colour.
+    private func batteryRow(percent: Int?) -> some View {
+        let isLow = percent.map { $0 <= 20 } ?? false
+        let symbol: String = {
+            guard let p = percent else { return "battery.100percent" }
+            switch p {
+            case ..<13: return "battery.0percent"
+            case ..<38: return "battery.25percent"
+            case ..<63: return "battery.50percent"
+            case ..<88: return "battery.75percent"
+            default: return "battery.100percent"
+            }
+        }()
+
+        return HStack(alignment: .center, spacing: 8) {
+            Image(systemName: symbol)
+                .font(captionFont)
+                .foregroundStyle(isLow ? Color.red : resolvedSecondaryColor)
+
+            Text(applyCapitalization("Battery"))
                 .font(captionFont)
                 .foregroundStyle(resolvedSecondaryColor)
+
+            Spacer(minLength: 8)
+
+            if isLow {
+                Text(applyCapitalization("LOW"))
+                    .font(captionFont.weight(.bold))
+                    .foregroundStyle(Color.red)
+            }
+
+            Text(percent.map { "\($0)%" } ?? "—")
+                .font(captionFont.monospacedDigit())
+                .foregroundStyle(resolvedPrimaryColor)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Battery")
+        .accessibilityValue(percent.map { "\($0) percent\(isLow ? ", low" : "")" } ?? "Unknown")
     }
 
     private func statusRow(icon: String, label: String, trailing: String) -> some View {
@@ -1870,7 +1968,7 @@ struct SennheiserWirelessTileView: View {
         )
     }
 #endif
-    private func meterRow(icon: String, label: String, bars: Int, total: Int) -> some View {
+    private func meterRow(icon: String, label: String, bars: Int, total: Int, accessibilityLabel: String, accessibilityValue: String) -> some View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: icon)
                 .font(captionFont)
@@ -1890,6 +1988,9 @@ struct SennheiserWirelessTileView: View {
                 }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
     }
 
     private func barCount(from level01: Double?, maxBars: Int) -> Int {
@@ -1899,12 +2000,65 @@ struct SennheiserWirelessTileView: View {
         return max(0, min(bars, maxBars))
     }
 
-    private func isRecentSnapshot(_ date: Date) -> Bool {
-        let threshold = max(6.0, config.pollIntervalSeconds * 3.0)
-        return Date().timeIntervalSince(date) < threshold
+}
+
+// MARK: - Warning chips
+
+private extension SennheiserWarning {
+    var displayLabel: String {
+        switch self {
+        case .lowBattery: return "Low battery"
+        case .rfLow: return "Low RF"
+        case .audioClip: return "Clip"
+        case .muted: return "MUTED"
+        case .offline: return "Offline"
+        }
     }
 
+    var systemImage: String {
+        switch self {
+        case .lowBattery: return "battery.25percent"
+        case .rfLow: return "antenna.radiowaves.left.and.right.slash"
+        case .audioClip: return "waveform.badge.exclamationmark"
+        case .muted: return "mic.slash.fill"
+        case .offline: return "bolt.horizontal.circle"
+        }
+    }
 
+    var tint: Color {
+        switch self {
+        case .lowBattery, .rfLow, .muted: return .orange
+        case .audioClip, .offline: return .red
+        }
+    }
+}
+
+/// Icon + word for one warning, so the state never relies on colour alone.
+private struct SennheiserWarningChip: View {
+    let text: String
+    let systemImage: String
+    let tint: Color
+    let textColor: Color
+    let font: Font
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+            Text(text)
+                .fontWeight(.semibold)
+                .foregroundStyle(textColor)
+        }
+        .font(font)
+        .lineLimit(1)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(tint.opacity(0.18), in: Capsule(style: .continuous))
+        .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(0.6), lineWidth: 1))
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+    }
 }
 
 // MARK: - Inspector / Settings UI

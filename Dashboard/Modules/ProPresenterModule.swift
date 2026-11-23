@@ -481,6 +481,9 @@ final class ProPresenterService: ObservableObject {
         var status: ProPresenterSlideStatus = .empty
         var lastError: String? = nil
         var lastUpdated: Date? = nil
+        /// When a poll last succeeded (`lastUpdated` is also set by failed polls). Tiles see
+        /// it at most every `successRefreshInterval`, enough for their stale badge.
+        var lastSuccessAt: Date? = nil
         var isPolling: Bool = false
         var lastSourceKey: String? = nil
 
@@ -638,9 +641,28 @@ final class ProPresenterService: ObservableObject {
     /// alone doesn't count.
     nonisolated static func cellNeedsUpdate(_ current: State, to next: State) -> Bool {
         if (current.lastUpdated == nil) != (next.lastUpdated == nil) { return true }
+        if (current.lastSuccessAt == nil) != (next.lastSuccessAt == nil) { return true }
+        if let currentSuccess = current.lastSuccessAt, let nextSuccess = next.lastSuccessAt,
+           nextSuccess.timeIntervalSince(currentSuccess) >= successRefreshInterval {
+            return true
+        }
         var comparable = current
         comparable.lastUpdated = next.lastUpdated
+        comparable.lastSuccessAt = next.lastSuccessAt
         return comparable != next
+    }
+
+    /// How stale a tile's `lastSuccessAt` may get before the cell refreshes it. Kept well
+    /// under the shortest `staleAfter` (5 s) so steady polling never reads as stale.
+    nonisolated static let successRefreshInterval: TimeInterval = 2
+
+    /// Seconds without a successful poll before a tile's data counts as stale: four poll
+    /// intervals, never under 5 s. Reads the interval the same way the poll loop does.
+    static func staleAfter(for config: ProPresenterModuleConfig) -> TimeInterval {
+        let interval = config.pollIntervalOverride
+            ?? UserDefaults.standard.object(forKey: "propresenter_pollInterval") as? Double
+            ?? 0.5
+        return max(5, 4 * max(0.1, interval))
     }
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var pollingOwnerByModuleID: [UUID: UUID] = [:]
@@ -2034,6 +2056,7 @@ final class ProPresenterService: ObservableObject {
             s.status = normalized
             s.lastError = nil
             s.lastUpdated = Date()
+            s.lastSuccessAt = s.lastUpdated
             s.lastResponseSummary = "OK (JSON received)"
             s.lastJSONPreview = jsonPreview
             var dict1 = stateByModuleID
@@ -2118,6 +2141,7 @@ final class ProPresenterService: ObservableObject {
                 )
                 s.lastError = nil
                 s.lastUpdated = Date()
+                s.lastSuccessAt = s.lastUpdated
                 s.lastResponseSummary = "No active presentation"
                 var dict2 = stateByModuleID
                 dict2[moduleID] = s
@@ -3176,6 +3200,8 @@ struct ProPresenterModuleView: View {
 	var body: some View {
 		let state = service.stateCell(for: moduleID).state
 		let connected = state.status.isConnected || (state.lastUpdated != nil && state.lastError == nil)
+		// Only a polling, live tile judges its data; otherwise the status reads as live.
+		let liveStatusActive = effectiveLiveMode && state.isPolling
 		let arrangementSuffix: String = {
 			guard config.showPresentationName, config.showArrangementName else { return "" }
 			let arrangement = state.status.arrangementName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -3310,9 +3336,12 @@ struct ProPresenterModuleView: View {
         VStack(alignment: .leading, spacing: 10) {
             // Header
             HStack(spacing: 10) {
-                Image(systemName: "rectangle.on.rectangle.angled")
+                // Shape as well as colour says connected vs offline.
+                Image(systemName: effectiveLiveMode ? (connected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill") : probeIcon)
                     .font(.system(size: baseFontSize * 0.9, weight: .semibold))
                     .foregroundStyle(effectiveLiveMode ? (connected ? .green : .red) : probeColor)
+                    .accessibilityLabel("ProPresenter connection")
+                    .accessibilityValue(effectiveLiveMode ? (connected ? "Connected" : "Offline") : probeStatusText)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(applyCapitalization(resolvedProfileDisplay()))
@@ -3366,6 +3395,7 @@ struct ProPresenterModuleView: View {
             }
             // Primary content — only shown in live mode or when frozen data exists
             if effectiveLiveMode || state.lastUpdated != nil {
+            VStack(alignment: .leading, spacing: 10) {
 			if shouldShowPrimaryCard {
 				let isTimerLike = (config.dataMode == .timerVideoCountdown || config.dataMode == .timersCurrent)
 				let font: Font = isTimerLike
@@ -3607,6 +3637,16 @@ struct ProPresenterModuleView: View {
                     )
                 }
             }
+            }
+            // Slide content goes dim and badged when the last good poll is old or failed,
+            // so an old slide never passes as "Current".
+            .liveDataStatus(
+                isConnected: !liveStatusActive || connected,
+                lastUpdate: liveStatusActive ? state.lastSuccessAt : nil,
+                staleAfter: ProPresenterService.staleAfter(for: config),
+                reason: liveStatusActive ? state.lastError : nil,
+                badgeFont: .system(size: headerFontSize)
+            )
 
             // Optional debug (per data mode)
             if config.showDebugInfo {
