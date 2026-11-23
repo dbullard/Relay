@@ -257,6 +257,41 @@ struct TextModuleView: View {
 }
 
 #if os(macOS)
+/// Converts a Text module's content for the tile's AppKit renderer.
+///
+/// `NSAttributedString(AttributedString)` keeps only Foundation/AppKit attributes. A new
+/// module's default text is styled with SwiftUI attributes (white, system 16), and saved
+/// content loses SwiftUI attributes when encoded, so a plain conversion drew that text in
+/// AppKit's default black: invisible on a dark tile until the first edit wrote AppKit
+/// attributes. This keeps a SwiftUI colour when there is one and otherwise fills any
+/// missing colour or font with the editor's own defaults.
+enum TextModuleDisplayText {
+    static let defaultFontSize: CGFloat = 16
+    static let defaultColor = NSColor.white
+
+    static func attributedString(for content: AttributedString) -> NSAttributedString {
+        var adjusted = content
+        for run in content.runs where run.appKit.foregroundColor == nil {
+            if let swiftUIColor = run.swiftUI.foregroundColor {
+                adjusted[run.range].appKit.foregroundColor = NSColor(swiftUIColor)
+            }
+        }
+
+        let converted = NSMutableAttributedString(adjusted)
+        let fullRange = NSRange(location: 0, length: converted.length)
+        guard fullRange.length > 0 else { return converted }
+        converted.enumerateAttributes(in: fullRange, options: []) { attrs, range, _ in
+            if attrs[.foregroundColor] == nil {
+                converted.addAttribute(.foregroundColor, value: defaultColor, range: range)
+            }
+            if attrs[.font] == nil {
+                converted.addAttribute(.font, value: NSFont.systemFont(ofSize: defaultFontSize), range: range)
+            }
+        }
+        return converted
+    }
+}
+
 /// Read-only rich text renderer for better fidelity than `Text(AttributedString)`.
 private final class PassthroughScrollView: NSScrollView {
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -302,14 +337,14 @@ private struct RichTextDisplay: NSViewRepresentable {
         scroll.autoresizingMask = [.width]
         scroll.documentView = textView
 
-        textView.textStorage?.setAttributedString(NSAttributedString(attributedText))
+        textView.textStorage?.setAttributedString(TextModuleDisplayText.attributedString(for: attributedText))
         applyParagraphStyle(to: textView)
         return scroll
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
-        let incoming = NSAttributedString(attributedText)
+        let incoming = TextModuleDisplayText.attributedString(for: attributedText)
         if textView.attributedString() != incoming {
             textView.textStorage?.setAttributedString(incoming)
         }
