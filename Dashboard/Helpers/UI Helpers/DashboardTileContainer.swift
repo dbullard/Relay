@@ -2450,6 +2450,10 @@ struct DashboardTileContainer: View {
             tab.tiles, selectedIDs: selectedTileIDs, gridSize: gridSize
         ) else { return }
 
+        if tiles != tab.tiles {
+            actions.undoSnapshot("Align to Grid")
+        }
+
         var updatedTab = tab
         updatedTab.tiles = tiles
         actions.setTab(updatedTab)
@@ -2482,6 +2486,9 @@ struct DashboardTileContainer: View {
             let size = DashboardTileSnappingHelper.effectiveSize(for: t, defaultTileSize: defaultTileSize)
             currentX += size.width + gap
         }
+        if updatedTab.tiles != tab.tiles {
+            actions.undoSnapshot("Tidy Up Tiles")
+        }
         actions.setTab(updatedTab)
 
         actions.persist(reconcileGraphNodes: false)
@@ -2512,6 +2519,9 @@ struct DashboardTileContainer: View {
 
             let size = DashboardTileSnappingHelper.effectiveSize(for: t, defaultTileSize: defaultTileSize)
             currentY += size.height + gap
+        }
+        if updatedTab.tiles != tab.tiles {
+            actions.undoSnapshot("Tidy Up Tiles")
         }
         actions.setTab(updatedTab)
 
