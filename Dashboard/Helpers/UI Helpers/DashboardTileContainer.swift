@@ -94,7 +94,9 @@ struct DashboardTileContainer: View {
     /// A click on one tile of a multi-selection collapses the selection to it,
     /// but only once a double-click (which edits the whole selection) is ruled out.
     @State private var pendingSelectionCollapse: Task<Void, Never>?
-    @State private var lastDoubleTapAt: Date?
+    /// Recognises a double-click from two single taps, so one exclusive tap gesture
+    /// handles both (see the tap gesture in `tileContainerView`).
+    @State private var tapSequence = DashboardTileTapSequence()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func moduleKindDiagnosticsKey(_ kind: DashboardModuleKind) -> String {
@@ -710,7 +712,13 @@ struct DashboardTileContainer: View {
 
         // Match the resize handles' hit radius (constant on screen at any zoom) so
         // the move-drag gesture defers to them anywhere the resize cursor is shown.
-        let hitRadius = DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: size)
+        // The radius is capped by tile size, and an iPad handle sizes itself from the
+        // stored size while the macOS surface uses the rendered one; taking the
+        // smaller keeps this from blocking a move where no handle would pick it up.
+        let hitRadius = min(
+            DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: size),
+            DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: tile.size ?? defaultTileSize)
+        )
         let layout = DashboardTileResizeHandleLayout(size: size)
 
         func near(_ target: CGPoint) -> Bool {
@@ -1094,23 +1102,14 @@ struct DashboardTileContainer: View {
             // Let explicit child controls, like rundown column resize handles,
             // own their drag gestures without also moving the entire tile.
             .gesture(dragGesture, including: isLiveMode ? .subviews : .gesture)
+            // One exclusive single-tap gesture handles both click and double-click.
+            // Exclusive (`.gesture`), so a Button or text field inside the tile wins
+            // its own clicks and they don't select or open the tile. Single-count,
+            // so a click selects at once: a `TapGesture(count: 2)` here would make
+            // every click wait ~300ms for it to fail. `tapSequence` spots the
+            // second click of a double-click instead.
             .gesture(
-                TapGesture(count: 2).onEnded {
-                    lastDoubleTapAt = Date()
-                    pendingSelectionCollapse?.cancel()
-                    pendingSelectionCollapse = nil
-                    if !(selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id)) {
-                        actions.primarySelect(tileID: tile.id)
-                    }
-                    actions.editRequested(tileID: tile.id, selectFirstModule: true)
-                },
-                including: editingGestureMask
-            )
-            // Simultaneous, so a click selects at once instead of waiting ~300ms
-            // for the double-tap above to fail. The double-tap still fires on the
-            // second click.
-            .simultaneousGesture(
-                TapGesture().onEnded { handleSingleTap() },
+                TapGesture().onEnded { handleTileTap() },
                 including: editingGestureMask
             )
             .contextMenu {
@@ -1172,6 +1171,19 @@ struct DashboardTileContainer: View {
         #endif
     }
 
+    private func handleTileTap() {
+        guard tapSequence.registerTap(at: Date(), doubleTapInterval: Self.doubleTapInterval) == .double else {
+            handleSingleTap()
+            return
+        }
+        pendingSelectionCollapse?.cancel()
+        pendingSelectionCollapse = nil
+        if !(selectedTileIDs.count > 1 && selectedTileIDs.contains(tile.id)) {
+            actions.primarySelect(tileID: tile.id)
+        }
+        actions.editRequested(tileID: tile.id, selectFirstModule: true)
+    }
+
     private func handleSingleTap() {
         #if os(macOS)
         let extendsSelection = NSEvent.modifierFlags.contains(.shift)
@@ -1191,12 +1203,8 @@ struct DashboardTileContainer: View {
         pendingSelectionCollapse?.cancel()
         pendingSelectionCollapse = Task { @MainActor in
             try? await Task.sleep(for: .seconds(interval))
+            // A double-click cancels this (see `handleTileTap`).
             guard !Task.isCancelled else { return }
-            // The double-tap and the second click's single tap can arrive in either
-            // order, so also check for a recent double-tap here.
-            if let lastDoubleTapAt, Date().timeIntervalSince(lastDoubleTapAt) < interval * 2 {
-                return
-            }
             actions.primarySelect(tileID: tileID)
         }
     }
@@ -2627,5 +2635,28 @@ struct DashboardTileContainer: View {
         actions.setTab(updatedTab)
 
         actions.persist(reconcileGraphNodes: false)
+    }
+}
+
+/// Turns a stream of single taps into single- and double-tap events, so a tile can
+/// use one exclusive single-count tap gesture (instant select, child controls win)
+/// and still recognise a double-click.
+struct DashboardTileTapSequence {
+    enum Kind: Equatable {
+        case single
+        case double
+    }
+
+    private var lastSingleTapAt: Date?
+
+    /// A tap within `doubleTapInterval` of the previous single tap completes a
+    /// double-tap; a third quick tap starts over as a single tap.
+    mutating func registerTap(at now: Date, doubleTapInterval: TimeInterval) -> Kind {
+        if let lastSingleTapAt, now.timeIntervalSince(lastSingleTapAt) <= doubleTapInterval {
+            self.lastSingleTapAt = nil
+            return .double
+        }
+        lastSingleTapAt = now
+        return .single
     }
 }

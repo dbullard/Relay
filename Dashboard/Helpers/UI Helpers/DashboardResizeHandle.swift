@@ -24,8 +24,8 @@ struct ResizeHandleController {
     let onDragBegan: () -> Void
     let onDragChanged: (CGPoint) -> Void
     let onDragEnded: () -> Void
-    /// Hit radius in canvas points (constant on screen; see `DashboardTileResizeHitTarget`).
-    let hitRadius: CGFloat
+    /// Canvas zoom, for the constant on-screen hit radius (see `DashboardTileResizeHitTarget`).
+    let viewportZoom: CGFloat
 }
 #endif
 
@@ -130,6 +130,10 @@ struct ResizeHandle: View {
     let showsIndicator: Bool
     let isEnabled: Bool
     let dragState: ResizeHandleDragState
+    /// The tile's rendered size, for the hit radius's tile-size cap. `size` is the
+    /// stored size, which is nil (so `defaultSize`) for auto-sized tiles that render
+    /// taller; the move-drag guard and the handles layer use the rendered size.
+    let hitTestTileSize: CGSize?
     init(
         size: CGSize?,
         defaultSize: CGSize,
@@ -148,7 +152,8 @@ struct ResizeHandle: View {
         onResizeChanged: @escaping (_ size: CGSize, _ newOffsetY: CGFloat?, _ newOffsetX: CGFloat?) -> Void = { _, _, _ in },
         showsIndicator: Bool = false,
         isEnabled: Bool = true,
-        dragState: ResizeHandleDragState
+        dragState: ResizeHandleDragState,
+        hitTestTileSize: CGSize? = nil
     ) {
         self.size = size
         self.defaultSize = defaultSize
@@ -168,6 +173,7 @@ struct ResizeHandle: View {
         self.showsIndicator = showsIndicator
         self.isEnabled = isEnabled
         self.dragState = dragState
+        self.hitTestTileSize = hitTestTileSize
     }
     private func resetDragState() {
         dragState.reset()
@@ -257,7 +263,7 @@ struct ResizeHandle: View {
 
     /// Hit radius in canvas points, constant on screen at any zoom.
     var hitRadius: CGFloat {
-        DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: size ?? defaultSize)
+        DashboardTileResizeHitTarget.hitRadius(viewportZoom: viewportZoom, tileSize: hitTestTileSize ?? size ?? defaultSize)
     }
 
     @ViewBuilder
@@ -359,7 +365,7 @@ extension ResizeHandle {
             onDragEnded: {
                 finishResizeDrag()
             },
-            hitRadius: hitRadius
+            viewportZoom: viewportZoom
         )
     }
 }
@@ -574,9 +580,11 @@ struct DashboardResizeInteractionSurface: NSViewRepresentable {
             guard isEnabled else { return nil }
             let layoutPoint = CGPoint(x: point.x - halo, y: (bounds.height - point.y) - halo)
             let layout = DashboardTileResizeHandleLayout(size: size)
-            // Constant on-screen radius. Points further than `halo` outside the tile
-            // never reach this view, since its frame only extends that far.
-            let hitRadius = controllers.values.map(\.hitRadius).max() ?? DashboardTileResizeHandleLayout.hitHalo
+            // Constant on-screen radius, capped by `size` (the rendered tile size, the
+            // same size the move-drag guard uses). Points further than `halo` outside
+            // the tile never reach this view, since its frame only extends that far.
+            let zoom = controllers.values.first?.viewportZoom ?? 1
+            let hitRadius = DashboardTileResizeHitTarget.hitRadius(viewportZoom: zoom, tileSize: size)
             guard let hit = layout.closestHandle(
                 to: layoutPoint,
                 within: hitRadius,

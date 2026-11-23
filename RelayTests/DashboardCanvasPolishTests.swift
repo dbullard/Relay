@@ -142,3 +142,32 @@ final class DashboardTileAccessibilityAdjustmentTests: XCTestCase {
         XCTAssertFalse(DashboardTileAccessibilityAdjustment.overlaps(moved, obstacles: [CGRect(x: 100, y: 0, width: 50, height: 50)]))
     }
 }
+
+@MainActor
+final class DashboardTileTapSequenceTests: XCTestCase {
+    private let t0 = Date(timeIntervalSinceReferenceDate: 1_000)
+
+    func testFirstTapIsSingle() {
+        var sequence = DashboardTileTapSequence()
+        XCTAssertEqual(sequence.registerTap(at: t0, doubleTapInterval: 0.3), .single)
+    }
+
+    func testSecondQuickTapIsDouble() {
+        var sequence = DashboardTileTapSequence()
+        _ = sequence.registerTap(at: t0, doubleTapInterval: 0.3)
+        XCTAssertEqual(sequence.registerTap(at: t0.addingTimeInterval(0.2), doubleTapInterval: 0.3), .double)
+    }
+
+    func testSlowSecondTapIsSingle() {
+        var sequence = DashboardTileTapSequence()
+        _ = sequence.registerTap(at: t0, doubleTapInterval: 0.3)
+        XCTAssertEqual(sequence.registerTap(at: t0.addingTimeInterval(0.5), doubleTapInterval: 0.3), .single)
+    }
+
+    func testThirdQuickTapStartsOver() {
+        var sequence = DashboardTileTapSequence()
+        _ = sequence.registerTap(at: t0, doubleTapInterval: 0.3)
+        _ = sequence.registerTap(at: t0.addingTimeInterval(0.1), doubleTapInterval: 0.3)
+        XCTAssertEqual(sequence.registerTap(at: t0.addingTimeInterval(0.2), doubleTapInterval: 0.3), .single)
+    }
+}
