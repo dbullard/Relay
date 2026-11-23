@@ -447,7 +447,8 @@ struct ActionGraphNodeView<Settings: View>: View {
                 )
             }
             .buttonStyle(.plain)
-            .disabled(isLinkingTarget || isActionRunning)
+            // Only the app-control refresh blocks re-running; a send in flight can be re-sent.
+            .disabled(isLinkingTarget || isRunning)
         }
     }
 

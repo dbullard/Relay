@@ -600,16 +600,19 @@ struct GraphLinksCanvasView: View, Equatable {
 /// and pointer path to removing one wire. Delete/Backspace does the same.
 struct GraphSelectedLinkOverlay: View {
     let store: GraphInteractionStore
+    /// The drawn links and their nodes' persisted positions, from the last graph render.
+    let links: [GraphLinkSpec]
+    let positions: [UUID: CGPoint]
     let onDelete: (UUID) -> Void
 
     var body: some View {
         if let linkId = store.selectedLinkId,
-           let spec = store.linkHitSpecs.first(where: { $0.linkId == linkId }) {
+           let spec = links.first(where: { $0.linkId == linkId }) {
             let drag = store.dragPositions
             let pan = store.pan
             let zoom = store.zoom
             let curve = GraphLinkGeometry.curves(for: [spec]) { nodeId in
-                drag[nodeId] ?? store.linkHitPositions[nodeId] ?? .zero
+                drag[nodeId] ?? positions[nodeId] ?? .zero
             }[0]
             let mid = GraphLinkGeometry.point(at: 0.5, from: curve.from, to: curve.to)
             Button {

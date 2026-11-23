@@ -660,6 +660,7 @@ private func deleteGraphNode(nodeId: UUID, key: String) {
 private func duplicateSelectedGraphNodes() {
     guard tab.graph != nil else { return }
     guard !selectedGraphNodeIds.isEmpty else { return }
+    interaction.setSelectedLinkId(nil)
 
     let groups = computedModuleGroups()
     let canvasBackedIds = Set(groups.filter { $0.isCanvasBacked }.map { groupNodeId(for: $0.key) })
@@ -777,6 +778,8 @@ private func postGraphSelectionCount() {
         // Clear transient interaction state, and have the live view rebuild its caches
         // (see `graphUndoRestoreTick`; this copy's tiles snapshot may be stale).
         graphUndoRestoreTick &+= 1
+        interaction.setSelectedLinkId(nil)
+        interaction.setHoveredLinkId(nil)
         linkingFromNodeId = nil
         linkingFromPoint = nil
         linkingCurrentPoint = nil
@@ -1254,9 +1257,12 @@ private func connectNodes(from sourceNodeId: UUID, to targetNodeId: UUID) {
     currentButtonOutputConfigId = isMultiButtonNodeId(sourceNodeId) ? buttonsForButtonNode(sourceNodeId).first?.id : nil
     finalizePendingGraphEditUndo()
     let validation = linkValidation(fromNodeId: sourceNodeId, toReceiverNodeId: targetNodeId)
-    commitLinkDrop(fromNodeId: sourceNodeId, hit: LinkReceiverHit(nodeId: targetNodeId, validation: validation))
+    let linked = commitLinkDrop(fromNodeId: sourceNodeId, hit: LinkReceiverHit(nodeId: targetNodeId, validation: validation))
     currentButtonOutputConfigId = nil
-    AccessibilityNotification.Announcement("Linked \(graphNodeDisplayName(sourceNodeId)) to \(graphNodeDisplayName(targetNodeId))").post()
+    // A refusal is already announced (with its reason) by showLinkRejection.
+    if linked {
+        AccessibilityNotification.Announcement("Linked \(graphNodeDisplayName(sourceNodeId)) to \(graphNodeDisplayName(targetNodeId))").post()
+    }
 }
 
 /// "Connect to…" and "Delete Link" for a node's context menu. The menus build their
@@ -3159,21 +3165,6 @@ private func graphSceneView(
         addNodePopover(in: geoSize, currentGroups: groups)
     }
     .coordinateSpace(.named("GraphSceneSpace"))
-    .overlay(alignment: .bottom) {
-        if !isLiveMode {
-            GraphViewportZoomControls(
-                store: interaction,
-                viewportSize: geoSize,
-                onActualSize: {
-                    centerGraphBounds(in: geoSize, zoomLevel: 1.0)
-                },
-                onFitToWindow: {
-                    fitGraphToViewport(geoSize)
-                }
-            )
-            .padding(.bottom, 12)
-        }
-    }
     .contentShape(Rectangle())
     .simultaneousGesture(
             DragGesture(minimumDistance: 2)
@@ -3234,6 +3225,17 @@ private func graphSceneView(
                 }
         )
     .simultaneousGesture(
+        SpatialTapGesture(count: 2, coordinateSpace: .named("GraphSceneSpace"))
+            .onEnded { value in
+                guard !showAddNodePopover, graphLinkHit(atViewPoint: value.location) != nil else { return }
+                let tapGraphPoint = graphPoint(fromViewPoint: value.location)
+                let onNode = allVisibleGraphNodeIds.contains { id in
+                    nodeRect(center: nodePosition(for: id), size: nodeHitTestSize(for: id)).contains(tapGraphPoint)
+                }
+                if !onNode { openAddNodeOverlay() }
+            }
+    )
+    .simultaneousGesture(
         SpatialTapGesture(coordinateSpace: .named("GraphSceneSpace"))
             .onEnded { value in
                 if suppressNextBackgroundTap { return }
@@ -3247,7 +3249,7 @@ private func graphSceneView(
                 if tappedNode { return }
                 selectedGraphNodeIds.removeAll()
                 // A click on a wire (within a few points) selects it; Delete removes it.
-                interaction.setSelectedLinkId(graphLinkHit(atViewPoint: value.location))
+                interaction.setSelectedLinkId(showAddNodePopover ? nil : graphLinkHit(atViewPoint: value.location))
                 #if os(macOS)
                 focusGraphSurface()
                 #else
@@ -3255,12 +3257,36 @@ private func graphSceneView(
                 #endif
             }
     )
+    // Outside the scene's gestures, so clicking the controls never selects a wire or
+    // starts a marquee.
+    .overlay(alignment: .bottom) {
+        if !isLiveMode {
+            GraphViewportZoomControls(
+                store: interaction,
+                viewportSize: geoSize,
+                onActualSize: {
+                    centerGraphBounds(in: geoSize, zoomLevel: 1.0)
+                },
+                onFitToWindow: {
+                    fitGraphToViewport(geoSize)
+                }
+            )
+            .padding(.bottom, 12)
+        }
+    }
     .overlay {
         GraphMarqueeOverlay(store: interaction)
             .zIndex(900)
     }
     .overlay {
-        GraphSelectedLinkOverlay(store: interaction, onDelete: { deleteGraphLink(id: $0) })
+        // Links are passed in (not read from the store's unobserved cache) so the toolbar
+        // goes away as soon as an undo or delete removes its link.
+        GraphSelectedLinkOverlay(
+            store: interaction,
+            links: interaction.linkHitSpecs,
+            positions: interaction.linkHitPositions,
+            onDelete: { deleteGraphLink(id: $0) }
+        )
     }
     .overlay(alignment: .bottom) { linkRejectionToast }
     .overlay { automationEmptyStateOverlay }
@@ -3349,8 +3375,21 @@ private func applyGraphLifecycle<Content: View>(
         guard isWorkEnabled else { return }
         showAddNodePopover = false
     }
-    .onChange(of: selectedGraphNodeIds, initial: true) { _, _ in
+    .onChange(of: selectedGraphNodeIds, initial: true) { _, newValue in
         postGraphSelectionCount()
+        // Nodes and a link are never selected together, so Delete can't hit the wrong one.
+        if !newValue.isEmpty {
+            interaction.setSelectedLinkId(nil)
+        }
+    }
+    .onChange(of: showAddNodePopover, initial: false) { _, isShowing in
+        guard !isShowing else { return }
+        // The click that closed the overlay (a row, the backdrop) also reaches the scene's
+        // tap gesture; don't let it select a wire underneath.
+        suppressNextBackgroundTap = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            suppressNextBackgroundTap = false
+        }
     }
 
     // Trigger execution lives only in GraphAutomationRuntime (in Canvas and Automation view).
@@ -5887,16 +5926,22 @@ private func showLinkRejection(_ message: String) {
 }
 
 /// Adds the link if the drop target accepts it; otherwise says why it was refused.
-private func commitLinkDrop(fromNodeId: UUID, hit: LinkReceiverHit?) {
-    guard let hit else { return }
+/// Returns whether the link exists afterwards.
+@discardableResult
+private func commitLinkDrop(fromNodeId: UUID, hit: LinkReceiverHit?) -> Bool {
+    guard let hit else { return false }
     if hit.validation.isAllowed {
-        addOrReplaceLink(fromNodeId: fromNodeId, toReceiverNodeId: hit.nodeId)
+        if addOrReplaceLink(fromNodeId: fromNodeId, toReceiverNodeId: hit.nodeId) {
+            return true
+        }
+        showLinkRejection("every output of \(graphNodeDisplayName(fromNodeId)) is already linked. Remove a link or add an output first.")
     } else if let reason = hit.validation.failureReason {
         showLinkRejection(reason.message(
             sourceName: graphNodeDisplayName(fromNodeId),
             receiverName: graphNodeDisplayName(hit.nodeId)
         ))
     }
+    return false
 }
 
 /// Name for a node in menus and messages ("OSC Send", a console's name, a trigger's name).
@@ -6010,6 +6055,9 @@ var body: some View {
         }
         .onDisappear {
             finalizePendingGraphEditUndo()
+            dropRunningActionStatuses()
+            interaction.setSelectedLinkId(nil)
+            interaction.setHoveredLinkId(nil)
             addNodeSearchIsFocused = false
             graphIsFocused = false
             #if os(macOS)
@@ -6022,6 +6070,7 @@ var body: some View {
             clearLinkHoverState()
         }
         .onChange(of: tab.id, initial: false) { _, _ in
+            interaction.setSelectedLinkId(nil)
             activateGraphRuntime()
             #if os(macOS)
             dismissGraphTextInput()
@@ -6029,6 +6078,7 @@ var body: some View {
         }
         .animation(.none, value: liveModeFromStorage)
         .onChange(of: isWorkEnabled, initial: false) { _, enabled in
+            dropRunningActionStatuses()
             guard enabled else {
                 // Unmount once hidden; `onDisappear` does the interaction cleanup.
                 hasMountedGraphContent = false
@@ -6040,8 +6090,12 @@ var body: some View {
             dismissGraphTextInput()
             #endif
         }
-        .onChange(of: tab.graph?.links, initial: false) { _, _ in
+        .onChange(of: tab.graph?.links, initial: false) { _, links in
             refreshSendAllListenerForGraphChange()
+            if let selected = interaction.untrackedSelectedLinkId,
+               !(links ?? []).contains(where: { $0.id == selected }) {
+                interaction.setSelectedLinkId(nil)
+            }
         }
         .onChange(of: linkingFromNodeId, initial: false) { _, fromNodeId in
             linkDragIncompatibleNodeIds = fromNodeId.map { incompatibleReceiverNodeIds(for: $0) } ?? []
@@ -9138,11 +9192,13 @@ private func syncAutomationRuntimeActiveTab() {
     }
 }
 
-private func addOrReplaceLink(fromNodeId: UUID, toReceiverNodeId: UUID) {
+/// Returns false when no link was made (refused, or the source's outputs are all in use).
+@discardableResult
+private func addOrReplaceLink(fromNodeId: UUID, toReceiverNodeId: UUID) -> Bool {
     if tab.graph == nil { tab.graph = DashboardGraph() }
 
     guard linkValidation(fromNodeId: fromNodeId, toReceiverNodeId: toReceiverNodeId).isAllowed else {
-        return
+        return false
     }
 
     // MVP: one link per sender->receiver pair (replace if exists)
@@ -9194,7 +9250,7 @@ private func addOrReplaceLink(fromNodeId: UUID, toReceiverNodeId: UUID) {
         }
 
         if existingLinks.count >= limit && !alreadyLinked {
-            return
+            return false
         }
     }
 
@@ -9209,7 +9265,7 @@ private func addOrReplaceLink(fromNodeId: UUID, toReceiverNodeId: UUID) {
         tab.graph?.nodeIdByPortId[fromPort] = fromNodeId
         tab.graph?.nodeIdByPortId[toPort] = toReceiverNodeId
         syncAutomationRuntimeActiveTab()
-        return
+        return true
     }
 
     if isVariableNodeId(toReceiverNodeId) {
@@ -9239,6 +9295,7 @@ private func addOrReplaceLink(fromNodeId: UUID, toReceiverNodeId: UUID) {
     registerGraphUndo(actionName: "Link Nodes", before: snapshotGraphForUndo())
     tab.graph?.links.append(link)
     syncAutomationRuntimeActiveTab()
+    return true
 }
 
 // MARK: - Link removal helpers
@@ -10768,12 +10825,31 @@ private func liveDownstreamActionsMessage(_ actions: [(nodeId: UUID, key: String
     return "Live Mode is on. These connected actions run now: \(titles.joined(separator: ", "))."
 }
 
+/// Drops "Sending…" entries: while the graph is hidden it stops hearing results, so a
+/// run that finishes then would otherwise show "Sending…" forever.
+private func dropRunningActionStatuses() {
+    let running = actionRunStatuses.filter { $0.value.isRunning }.map(\.key)
+    guard !running.isEmpty else { return }
+    for id in running {
+        actionRunStatuses.removeValue(forKey: id)
+    }
+}
+
 private func handleActionRunStatus(_ note: Notification) {
     let ui = note.userInfo ?? [:]
     guard let id = ui[ActionNodeUserInfoKeys.nodeId] as? UUID,
           let status = ui[ActionNodeUserInfoKeys.runStatus] as? GraphActionRunStatus else { return }
     if actionRunStatuses[id] != status {
         actionRunStatuses[id] = status
+    }
+    // A result that never arrives (graph hidden mid-run, a hung request) mustn't leave
+    // "Sending…" up for good.
+    if status == .running {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            if actionRunStatuses[id] == .running {
+                actionRunStatuses.removeValue(forKey: id)
+            }
+        }
     }
     // A success fades after a few seconds; a failure stays until dismissed or the next run.
     if case .succeeded = status {
