@@ -36,6 +36,21 @@ final class TimeModuleCountdownOverrunTests: XCTestCase {
         XCTAssertEqual(shown, ["3", "2", "1", "+0", "+1", "+2"])
     }
 
+    func testResumingAPausedOverrunContinuesFromThePausedValue() {
+        // Paused at OVER +0:42; resumed later, it carries on from +0:42, not from zero or 5:00.
+        let resumeAt = start.addingTimeInterval(1_000)
+        let end = TimeModuleClock.countdownEndDate(resumingAt: resumeAt, remainingSeconds: 0, overrunSeconds: 42)
+        XCTAssertEqual(TimeModuleClock.countdownRemaining(endDate: end, now: resumeAt), 0)
+        XCTAssertEqual(TimeModuleClock.countdownOverrun(endDate: end, now: resumeAt), 42)
+        XCTAssertEqual(TimeModuleClock.countdownOverrun(endDate: end, now: resumeAt.addingTimeInterval(8.3)), 50)
+    }
+
+    func testResumingBeforeZeroAnchorsAheadByTheTimeLeft() {
+        let end = TimeModuleClock.countdownEndDate(resumingAt: start, remainingSeconds: 300, overrunSeconds: 0)
+        XCTAssertEqual(TimeModuleClock.countdownRemaining(endDate: end, now: start), 300)
+        XCTAssertEqual(TimeModuleClock.countdownOverrun(endDate: end, now: start), 0)
+    }
+
     func testOverrunCatchesUpAfterMissedTicks() {
         let end = start.addingTimeInterval(10)
         XCTAssertEqual(TimeModuleClock.countdownOverrun(endDate: end, now: end.addingTimeInterval(600.2)), 600)
