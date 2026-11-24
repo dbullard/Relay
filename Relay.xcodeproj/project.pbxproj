@@ -446,6 +446,7 @@
 				WhatsNew/WhatsNewClient.swift,
 				WhatsNew/WhatsNewFeatureRow.swift,
 				WhatsNew/WhatsNewFeedView.swift,
+				WhatsNew/WhatsNewGitHubReleases.swift,
 				WhatsNew/WhatsNewModels.swift,
 				WhatsNew/WhatsNewSheet.swift,
 				WhatsNew/WhatsNewStore.swift,

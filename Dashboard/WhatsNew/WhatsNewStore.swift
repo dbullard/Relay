@@ -86,9 +86,15 @@ final class WhatsNewStore: ObservableObject {
     }
 
     func refresh() async {
-        guard let client = WhatsNewClient(baseURL: RelayBuildConfig.apiBaseURL) else { return }
         do {
-            let feed = try await client.fetchFeed(channel: RelayBuildConfig.whatsNewFeedChannel)
+            let feed: WhatsNewFeed
+            if let client = WhatsNewClient(baseURL: RelayBuildConfig.apiBaseURL) {
+                feed = try await client.fetchFeed(channel: RelayBuildConfig.whatsNewFeedChannel)
+            } else {
+                // The open-source build has no Relay server; its release notes are the
+                // GitHub releases that in-app updates also come from.
+                feed = try await WhatsNewClient.fetchGitHubFeed()
+            }
             releases = feed.releases
             persistCache(feed)
         } catch {
@@ -104,7 +110,9 @@ final class WhatsNewStore: ObservableObject {
         guard let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
         let dir = cachesDir.appendingPathComponent("Relay", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("whatsnew-feed.json")
+        // A new name: "whatsnew-feed.json" holds the old paid app's server feed (1.x
+        // releases), which the GitHub-based feed must never fall back to.
+        return dir.appendingPathComponent("whatsnew-github-feed.json")
     }
 
     private static func loadCachedReleases(from url: URL?) -> [WhatsNewRelease]? {

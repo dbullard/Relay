@@ -42,7 +42,8 @@ struct WhatsNewFeedView: View {
                     .foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(release.features, id: \.title) { feature in
+                // By position: release-note bullets can share a title (or have none).
+                ForEach(Array(release.features.enumerated()), id: \.offset) { _, feature in
                     WhatsNewFeatureRow(feature: feature)
                 }
             }

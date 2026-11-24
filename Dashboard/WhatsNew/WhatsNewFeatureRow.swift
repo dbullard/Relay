@@ -13,16 +13,26 @@ struct WhatsNewFeatureRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(feature.title)
+                Text(Self.inlineMarkdown(feature.title))
                     .font(.subheadline.weight(.semibold))
-                Text(feature.description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if !feature.description.isEmpty {
+                    Text(Self.inlineMarkdown(feature.description))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer(minLength: 0)
         }
         .padding(.vertical, 6)
+    }
+
+    /// Release notes use inline Markdown (bold, code, links); show it formatted, not raw.
+    private static func inlineMarkdown(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(text)
     }
 
     private var iconColor: Color {
