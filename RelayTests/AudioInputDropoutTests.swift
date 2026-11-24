@@ -26,6 +26,11 @@ final class AudioInputDropoutTests: XCTestCase {
     }
 
     func testMissingDeviceReportsNoSignalToSPLAndFFTSubscribers() async {
+        // On a headless CI Mac the first CoreAudio call can take several seconds while the
+        // audio system starts, and it blocks this input's start queue. Pay that cost before
+        // the timed part so the test measures the processor, not the machine's audio startup.
+        _ = AudioDeviceEnumerator.inputDevices()
+
         let config = AudioInputConfig(name: "Missing", deviceUID: "relay.test.missing.\(UUID().uuidString)")
         let processor = AudioInputProcessor(config: config)
         let (splID, spl) = processor.addSPLSubscriber()
@@ -35,7 +40,9 @@ final class AudioInputDropoutTests: XCTestCase {
         let fftTask = Task { for await f in fft { await recorder.add(f) } }
         processor.start()
 
-        let gotStale = await waitUntil(timeout: 5) {
+        // Normally reported about a second after start (the watchdog's first tick); the
+        // generous limit absorbs slow CI machines without hiding a real hang.
+        let gotStale = await waitUntil(timeout: 15) {
             let p = await recorder.payloads, f = await recorder.frames
             return p.contains(where: \.isStale) && f.contains(where: \.isStale)
         }
