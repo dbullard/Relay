@@ -56,6 +56,19 @@ final class WhatsNewStoreTests: XCTestCase {
         XCTAssertTrue(store.hasUnseenUpdates)
     }
 
+    func test_newestUnseenRelease_isTheHighestVersion_whateverTheFeedOrder() throws {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("whatsnew-test-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try JSONEncoder().encode(WhatsNewFeed(releases: sampleReleases.reversed())).write(to: tempURL)
+        let store = makeStore(cacheFileURL: tempURL)
+        store.markSeen(version: "2.0.0")
+
+        XCTAssertEqual(store.newestUnseenRelease?.version, "2.4.0")
+        store.markSeen(version: "2.4.0")
+        XCTAssertNil(store.newestUnseenRelease)
+    }
+
     func test_unseenReleases_isEmpty_whenLastSeenVersionIsCurrent() throws {
         let tempURL = try writeSampleFeedFixture()
         defer { try? FileManager.default.removeItem(at: tempURL) }

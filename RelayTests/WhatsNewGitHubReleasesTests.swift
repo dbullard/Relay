@@ -51,4 +51,11 @@ final class WhatsNewGitHubReleasesTests: XCTestCase {
         XCTAssertEqual(split.title, "Show Guides is now **⌘'**.")
         XCTAssertEqual(split.description, "")
     }
+
+    func testReleaseLinksToItsGitHubNotes() {
+        let release = WhatsNewRelease(version: "2.1.0", date: "", features: [])
+        XCTAssertEqual(release.notesURL?.absoluteString, "https://github.com/dbullard/Relay/releases/tag/v2.1.0")
+        let tagged = WhatsNewRelease(version: "v2.0", date: "", features: [])
+        XCTAssertEqual(tagged.notesURL?.absoluteString, "https://github.com/dbullard/Relay/releases/tag/v2.0")
+    }
 }

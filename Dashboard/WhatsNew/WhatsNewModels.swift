@@ -18,6 +18,16 @@ struct WhatsNewFeed: Codable, Equatable {
 }
 
 extension WhatsNewRelease {
+    /// How many items of a release the app lists before linking to the full notes.
+    static let highlightLimit = 5
+
+    /// The release's page on GitHub, where its full notes live.
+    var notesURL: URL? {
+        let tag = version.hasPrefix("v") ? version : "v\(version)"
+        guard let encoded = tag.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+        return URL(string: "https://github.com/dbullard/Relay/releases/tag/\(encoded)")
+    }
+
     /// Formats `date` for display. Accepts a plain "yyyy-MM-dd" string or a full ISO 8601
     /// timestamp (with or without fractional seconds) — the server accepts either — and
     /// renders it as a locale-appropriate long date. Falls back to the raw string if it

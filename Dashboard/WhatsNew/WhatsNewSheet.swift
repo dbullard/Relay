@@ -17,11 +17,7 @@ struct WhatsNewSheet: View {
                 } else {
                     VStack(alignment: .leading, spacing: 24) {
                         ForEach(releases, id: \.version) { release in
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(release.features, id: \.title) { feature in
-                                    WhatsNewFeatureRow(feature: feature)
-                                }
-                            }
+                            WhatsNewReleaseFeatures(release: release)
                         }
                     }
                     .padding(20)
@@ -49,7 +45,7 @@ struct WhatsNewSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("What's New")
                 .font(.title2.weight(.bold))
-            Text("Here's what changed in this update.")
+            Text(releases.count == 1 ? "Highlights of Relay \(releases[0].version)." : "Here's what changed in this update.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

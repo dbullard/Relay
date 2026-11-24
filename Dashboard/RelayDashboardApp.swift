@@ -124,7 +124,7 @@ struct RelayDashboardApp: App {
             }
         }
         .sheet(isPresented: $showingWhatsNewSheet, onDismiss: { whatsNewStore.markLatestReleaseSeen() }) {
-            WhatsNewSheet(releases: whatsNewStore.unseenReleases) {
+            WhatsNewSheet(releases: whatsNewStore.newestUnseenRelease.map { [$0] } ?? []) {
                 whatsNewStore.markLatestReleaseSeen()
                 showingWhatsNewSheet = false
             }

@@ -41,11 +41,28 @@ struct WhatsNewFeedView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 0) {
-                // By position: release-note bullets can share a title (or have none).
-                ForEach(Array(release.features.enumerated()), id: \.offset) { _, feature in
-                    WhatsNewFeatureRow(feature: feature)
-                }
+            WhatsNewReleaseFeatures(release: release)
+        }
+    }
+}
+
+/// A release's highlights: its first few items, then a link to the full notes on GitHub.
+/// Release notes can run to dozens of bullets; the app shows only the top of the list.
+struct WhatsNewReleaseFeatures: View {
+    let release: WhatsNewRelease
+    var limit: Int = WhatsNewRelease.highlightLimit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // By position: release-note bullets can share a title (or have none).
+            ForEach(Array(release.features.prefix(limit).enumerated()), id: \.offset) { _, feature in
+                WhatsNewFeatureRow(feature: feature)
+            }
+            if release.features.count > limit, let url = release.notesURL {
+                Link("See all \(release.features.count) changes on GitHub", destination: url)
+                    .font(.caption)
+                    .padding(.top, 6)
+                    .padding(.leading, 54)
             }
         }
     }

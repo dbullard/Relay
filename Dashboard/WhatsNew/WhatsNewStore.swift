@@ -45,6 +45,15 @@ final class WhatsNewStore: ObservableObject {
         return visibleReleases.filter { $0.version.isNewerRelayVersion(than: seen) }
     }
 
+    /// The newest unseen release: the one the auto-popup shows. Older unseen releases stay
+    /// in Home's What's New.
+    var newestUnseenRelease: WhatsNewRelease? {
+        unseenReleases.reduce(nil) { newest, release in
+            guard let newest else { return release }
+            return release.version.isNewerRelayVersion(than: newest.version) ? release : newest
+        }
+    }
+
     var hasUnseenUpdates: Bool {
         !unseenReleases.isEmpty
     }
