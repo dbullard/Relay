@@ -8523,7 +8523,8 @@ private func inspectorView(for tileBinding: Binding<DashboardTileModel>) -> some
         showingRosters || showingSettings || showingKeyboardShortcuts ||
         showExternalDevicesSettingsSheet || isShowingNewDashboardSizePrompt ||
         showingTileGroupSheet || showingAutosaveAnnouncement ||
-        DashboardHomeScreenState.shared.isPresented
+        DashboardHomeScreenState.shared.isPresented ||
+        DashboardHomeScreenState.shared.isLaunchSheetPresented
     }
 
     private func dismissBlockingModalsForTermination() {

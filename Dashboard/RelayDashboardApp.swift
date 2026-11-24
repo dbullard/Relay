@@ -276,7 +276,13 @@ struct RelayDashboardApp: App {
             .onChange(of: launchScreenDismissed, initial: true) { _, dismissed in
                 DashboardHomeScreenState.shared.isPresented = !dismissed
             }
+            .onChange(of: showingWhatsNewSheet || showingPreviousImportOffer, initial: true) { _, shown in
+                DashboardHomeScreenState.shared.isLaunchSheetPresented = shown
+            }
             .onReceive(NotificationCenter.default.publisher(for: .dashboardDismissBlockingModalsRequested)) { _ in
+                // Quit and Close Window can't proceed while these launch sheets are up.
+                showingWhatsNewSheet = false
+                showingPreviousImportOffer = false
                 // Also clear this so a subsequent `.settingsDidDismiss` (posted when
                 // DashboardRootView reacts to us force-closing Settings below) can't
                 // reopen the launch screen out from under a Quit/Close-Window in progress.

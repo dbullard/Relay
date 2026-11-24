@@ -1146,6 +1146,11 @@ final class DashboardHomeScreenState: ObservableObject {
     /// to bring the home screen back instead of leaving the blank dashboard exposed underneath.
     var openPickerLaunchedFromHome: Bool = false
 
+    /// True while a launch-time sheet owned by the app (the What's New pop-up or the
+    /// previous-Relay import offer) is on screen. AppKit ignores `terminate` while a
+    /// sheet is attached, so Quit has to wait for these to close, like Home.
+    var isLaunchSheetPresented: Bool = false
+
     static let shared = DashboardHomeScreenState()
 }
 
