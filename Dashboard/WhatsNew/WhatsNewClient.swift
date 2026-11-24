@@ -36,4 +36,16 @@ final class WhatsNewClient {
         }
         return try JSONDecoder().decode(WhatsNewFeed.self, from: data)
     }
+
+    /// Fetches the feed from the repository's GitHub releases (no Relay server needed).
+    static func fetchGitHubFeed(session: URLSession = .shared) async throws -> WhatsNewFeed {
+        var request = URLRequest(url: WhatsNewGitHubReleases.releasesURL)
+        request.httpMethod = "GET"
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw ClientError(message: "Couldn't load release notes from GitHub.")
+        }
+        return try WhatsNewGitHubReleases.feed(fromReleasesJSON: data)
+    }
 }
