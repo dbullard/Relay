@@ -721,8 +721,17 @@ private final class RelayAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if DashboardSaveState.shared.hasUnsavedChanges {
-            AppTerminationCoordinator.shared.beginInteractiveTermination()
-            DashboardDocumentController.shared.quitApplication()
+            let coordinator = AppTerminationCoordinator.shared
+            coordinator.beginInteractiveTermination()
+            // The document flow can decide on the spot (an untouched blank dashboard needs
+            // no prompt). Return that answer directly: replying before .terminateLater left
+            // AppKit waiting forever and ignoring every later Quit.
+            if let decided = coordinator.runInsideShouldTerminate({
+                DashboardDocumentController.shared.quitApplication()
+            }) {
+                coordinator.clear()
+                return decided ? .terminateNow : .terminateCancel
+            }
             return .terminateLater
         }
 
@@ -968,30 +977,56 @@ final class AppTerminationCoordinator {
 
     private(set) var isAwaitingReply: Bool = false
     private(set) var shouldAllowImmediateTermination: Bool = false
+    /// True while `applicationShouldTerminate(_:)` is still running, before it returns.
+    private var isInsideShouldTerminate = false
+    /// A decision made before `applicationShouldTerminate(_:)` returned.
+    private var synchronousDecision: Bool?
 
     func beginInteractiveTermination() {
         isAwaitingReply = true
         shouldAllowImmediateTermination = false
     }
 
+    /// Runs `body` (which hands the quit to the document flow) inside
+    /// `applicationShouldTerminate(_:)`. Returns the flow's decision if it made one before
+    /// returning (true = quit, false = cancel), or nil if it will reply later.
+    func runInsideShouldTerminate(_ body: () -> Void) -> Bool? {
+        isInsideShouldTerminate = true
+        synchronousDecision = nil
+        body()
+        isInsideShouldTerminate = false
+        let decision = synchronousDecision
+        synchronousDecision = nil
+        return decision
+    }
+
     func continueTermination() {
         guard isAwaitingReply else {
-            // Reached via the Cmd+Q monitor bypass, not through a normal
-            // applicationShouldTerminate(_:) → .terminateLater cycle, so there's no
-            // pending reply to answer. By this point dismissBlockingModalsForTermination()
-            // has already run, so no sheet remains and this reaches applicationShouldTerminate
-            // normally, returning .terminateNow immediately.
+            // Reached from the app's own Quit (menu, Cmd+Q monitor, Home's Quit), not from a
+            // pending applicationShouldTerminate(_:) → .terminateLater cycle. The document
+            // flow has already handled unsaved changes before calling this, so let
+            // applicationShouldTerminate answer .terminateNow instead of asking again.
+            shouldAllowImmediateTermination = true
             NSApp.terminate(nil)
             return
         }
-        shouldAllowImmediateTermination = true
         isAwaitingReply = false
+        if isInsideShouldTerminate {
+            // applicationShouldTerminate hasn't returned yet; it returns .terminateNow itself.
+            synchronousDecision = true
+            return
+        }
+        shouldAllowImmediateTermination = true
         NSApp.reply(toApplicationShouldTerminate: true)
     }
 
     func cancelTermination() {
         guard isAwaitingReply else { return }
         clear()
+        if isInsideShouldTerminate {
+            synchronousDecision = false
+            return
+        }
         NSApp.reply(toApplicationShouldTerminate: false)
     }
 
