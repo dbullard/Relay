@@ -25,11 +25,18 @@ final class AudioInputDropoutTests: XCTestCase {
         return await condition()
     }
 
-    func testMissingDeviceReportsNoSignalToSPLAndFFTSubscribers() async {
-        // On a headless CI Mac the first CoreAudio call can take several seconds while the
-        // audio system starts, and it blocks this input's start queue. Pay that cost before
-        // the timed part so the test measures the processor, not the machine's audio startup.
+    func testMissingDeviceReportsNoSignalToSPLAndFFTSubscribers() async throws {
+        // On a headless CI Mac the first CoreAudio call can take tens of seconds while the
+        // audio system starts, and later calls stay slow enough to block this input's start
+        // queue past any sensible limit. Pay that cost first, and skip where CoreAudio is
+        // that slow: there the test would time the machine, not the processor. On a normal
+        // Mac the call returns almost at once and the test runs.
+        let warmUpStart = Date()
         _ = AudioDeviceEnumerator.inputDevices()
+        let warmUpSeconds = Date().timeIntervalSince(warmUpStart)
+        if warmUpSeconds > 3 {
+            throw XCTSkip("CoreAudio took \(Int(warmUpSeconds)) s to list devices; too slow on this machine for a timing test")
+        }
 
         let config = AudioInputConfig(name: "Missing", deviceUID: "relay.test.missing.\(UUID().uuidString)")
         let processor = AudioInputProcessor(config: config)
